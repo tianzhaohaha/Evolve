@@ -1,0 +1,49 @@
+nohup: ignoring input
+Process Process-2:
+Traceback (most recent call last):
+  File "/home/jcgu/qyliu/OPDevolve/dire_recons.py", line 190, in hold_gpu
+    import torch
+ModuleNotFoundError: No module named 'torch'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jcgu/miniconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/jcgu/miniconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jcgu/qyliu/OPDevolve/dire_recons.py", line 192, in hold_gpu
+    raise RuntimeError("PyTorch is required to allocate and compute on GPU") from exc
+RuntimeError: PyTorch is required to allocate and compute on GPU
+Process Process-1:
+Traceback (most recent call last):
+  File "/home/jcgu/qyliu/OPDevolve/dire_recons.py", line 190, in hold_gpu
+    import torch
+ModuleNotFoundError: No module named 'torch'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jcgu/miniconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/jcgu/miniconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jcgu/qyliu/OPDevolve/dire_recons.py", line 192, in hold_gpu
+    raise RuntimeError("PyTorch is required to allocate and compute on GPU") from exc
+RuntimeError: PyTorch is required to allocate and compute on GPU
+Process Process-3:
+Traceback (most recent call last):
+  File "/home/jcgu/qyliu/OPDevolve/dire_recons.py", line 190, in hold_gpu
+    import torch
+ModuleNotFoundError: No module named 'torch'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jcgu/miniconda3/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/home/jcgu/miniconda3/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/jcgu/qyliu/OPDevolve/dire_recons.py", line 192, in hold_gpu
+    raise RuntimeError("PyTorch is required to allocate and compute on GPU") from exc
+RuntimeError: PyTorch is required to allocate and compute on GPU

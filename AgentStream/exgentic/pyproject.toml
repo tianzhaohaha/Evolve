@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "exgentic"
+dynamic = ["version"]
+description = "Exgentic - General agent evaluation"
+authors = [{name = "Exgentic Team"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typing-extensions>=4,<5",
+    "pydantic-settings>=2,<3",
+    "nicegui>=3,<4",
+    "cloudpickle>=3,<4",
+    "diskcache>=5,<6",
+    "filelock>=3,<4",
+    "click>=8.1.7,<9",
+    "json-schema-to-pydantic>=0.4,<1",
+    "litellm>=1.65.0,!=1.82.7,!=1.82.8,<2",
+    "mcp>=1.24,<2",
+    "pydantic>=2.9.2,<3",
+    "python-dotenv>=1,<2",
+    "rich>=13,<14",
+    "rich-click>=1,<2",
+]
+
+[project.scripts]
+exgentic = "exgentic.interfaces.cli.main:main"
+
+[project.optional-dependencies]
+# Observability
+otel = [
+    "opentelemetry-api>=1,<2",
+    "opentelemetry-sdk>=1,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1,<2",
+    "opentelemetry-exporter-otlp-proto-grpc>=1,<2",
+    "opentelemetry-semantic-conventions-ai>=0.4.0,<1",
+]
+analysis = [
+    "matplotlib>=3,<4",
+    "numpy>=2,<3",
+    "pandas>=3,<4",
+    "scipy>=1,<2",
+    "statsmodels>=0.14,<1",
+]
+amem = [
+    "sentence-transformers>=3,<5",
+    "scikit-learn>=1,<2",
+]
+
+# Development
+dev = [
+    "pytest>=7.0.0,<10",
+    "pytest-asyncio>=0.21.0,<2",
+    "pytest-mock>=3.0.0,<4",
+    "pre-commit>=3.0.0,<5",
+    "ruff>=0.1.0,<1",
+    "codespell>=2.0.0,<3",
+    "detect-secrets>=1.0.0,<2",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = "^v(?P<version>.*)$"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/exgentic/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/exgentic"]
+include = [
+    "src/exgentic/benchmarks/**/requirements.txt",
+    "src/exgentic/benchmarks/**/setup.sh",
+    "src/exgentic/benchmarks/**/system-deps.txt",
+    "src/exgentic/agents/**/requirements.txt",
+    "src/exgentic/agents/**/setup.sh",
+    "src/exgentic/agents/**/system-deps.txt",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/docs",
+    "/examples",
+]
+
+[tool.uv]
+override-dependencies = [
+  "rich>=13.9.4,<14",
+]
+
+[tool.codespell]
+skip = "tests/benchmarks/recordings/*,uv.lock"
+ignore-words-list = "requestor"
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1,<10",
+]
