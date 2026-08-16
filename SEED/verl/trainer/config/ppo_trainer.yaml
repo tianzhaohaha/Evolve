@@ -357,6 +357,17 @@ env:
     n: 1 # the group number of envs (for GRPO and GiGPO).
   alfworld:
     eval_dataset: eval_in_distribution
+  alfworld_stream:
+    # Stream-controlled ALFWorld: the 6 task types act as domains.
+    stream_mode: random             # random (SEED-original) | isolated | sequential | interleaved
+    stream_seed: 44
+    num_tasks_per_type: 30          # train-stream game files per task type (seed-42 selection)
+    val_tasks_per_type: 8           # disjoint held-out val game files per task type
+    task_types: null                # null -> all 6; or subset list/comma string (isolated runs)
+    block_passes: 1
+    on_exhausted: cycle
+    online_metrics_enable: True
+    online_metrics_path: ""         # "" -> <trainer.default_local_dir>/agentstream_online_metrics.jsonl
   search:
     log_requests: false
     search_url: "http://127.0.0.1:8000/retrieve" # also support multiple urls: ["http://127.0.0.1:8000/retrieve", "http://127.0.0.1:8001/retrieve"]
@@ -376,3 +387,24 @@ env:
     generalization_level: 0
     simplifications_preset: easy
     jar_path: null
+  agentstream:
+    # Root of the AgentStream checkout containing src/exgentic (see its README).
+    exgentic_root: ${oc.env:AGENTSTREAM_EXGENTIC_ROOT,""}
+    runner: venv                    # exgentic runner for benchmark isolation
+    exgentic_output_dir: outputs/agentstream_sessions
+    benchmarks: [bfcl]              # any of: bfcl,tau2,appworld,hle,browsecompplus,swebench
+    benchmark_kwargs: {}            # per-slug overrides, e.g. {tau2: {subset: retail}}
+    stream_mode: random             # random (SEED-original) | isolated | sequential | interleaved
+    stream_seed: 44                 # AgentStream run seed (ordering); selection is fixed at 42
+    num_tasks_per_benchmark: 50
+    protocol: split                 # split (SEED train/eval) | online (AgentStream protocol)
+    val_tasks_per_benchmark: 16     # held-out val tasks (split protocol / online holdout)
+    val_source: holdout             # online protocol val tasks: holdout | stream | both
+    on_exhausted: cycle             # cycle | stop when the ordered stream runs out
+    block_passes: 1                 # sequential/isolated: repeat each benchmark block N times
+    max_steps: null                 # null -> env.max_steps
+    reward_success: 10.0            # same terminal reward scale as ALFWorld/AppWorld
+    reward_use_score: False         # additionally add the raw benchmark score
+    online_metrics_enable: True
+    online_metrics_path: ""         # "" -> <trainer.default_local_dir>/agentstream_online_metrics.jsonl
+    val_stream_seed: 1042

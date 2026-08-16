@@ -1135,6 +1135,11 @@ def make_envs(config):
         envs = GymCardEnvironmentManager(_envs, projection_f, config)
         val_envs = GymCardEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs
+    elif "alfworld_stream" in config.env.env_name.lower():
+        # Stream-controlled ALFWorld (task types as domains); must precede the
+        # plain "alfworld" branch. Self-contained in env_package/alfworld_stream.
+        from agent_system.environments.env_package.alfworld_stream import make_alfworld_stream_envs
+        return make_alfworld_stream_envs(config, require_think=projection_require_think)
     elif "alfworld" in config.env.env_name.lower():
         from agent_system.environments.env_package.alfworld import build_alfworld_envs, alfworld_projection
         if config.env.env_name == 'alfworld/AlfredThorEnv':
@@ -1253,6 +1258,10 @@ def make_envs(config):
         time.sleep((config.data.train_batch_size * group_n + config.data.val_batch_size) * 0.1)
 
         return envs, val_envs
+    elif "agentstream" in config.env.env_name.lower():
+        # Self-contained integration; all logic lives in env_package/agentstream.
+        from agent_system.environments.env_package.agentstream import make_agentstream_envs
+        return make_agentstream_envs(config, require_think=projection_require_think)
     else:
         print("Environment not supported")
         exit(1)

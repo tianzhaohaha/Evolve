@@ -1,28 +1,77 @@
 #!/usr/bin/env bash
 
-# Internal implementation shared by the public ALFWorld SFT launchers.
+# Internal implementation shared by the public AgentStream launchers.
+# Adapted from examples/seed_trainer/_common/alfworld.sh; the SEED algorithm
+# surface is identical — only the environment block changes.
+#
+# Required environment:
+#   MODEL_PATH                     policy checkpoint (HF format)
+#   AGENTSTREAM_EXGENTIC_ROOT      path to AgentStream/exgentic checkout
+# Stream controls (all optional, sensible defaults below):
+#   AS_BENCHMARKS   comma list, e.g. "bfcl,tau2,appworld"
+#   AS_STREAM_MODE  random | isolated | sequential | interleaved
+#   AS_PROTOCOL     split | online
+#   AS_STREAM_SEED  AgentStream run seed (ordering; selection fixed at 42)
+#   AS_NUM_TASKS    tasks per benchmark in the stream (AgentStream NUM_TASKS)
+#   AS_VAL_TASKS    held-out validation tasks per benchmark
+#   AS_VAL_SOURCE   online protocol validation source: holdout | stream | both
+#   AS_BLOCK_PASSES sequential/isolated block repetition factor
 
 set -x
 
-# Runtime backend.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env}"
+
+if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+fi
+
+CONDA_ENV="${CONDA_ENV:-seed}"
+if [[ -n "$CONDA_ENV" && "${CONDA_DEFAULT_ENV:-}" != "$CONDA_ENV" ]] && command -v conda >/dev/null 2>&1; then
+    eval "$(conda shell.bash hook)"
+    conda activate "$CONDA_ENV"
+fi
+
+cd "$PROJECT_ROOT"
+
 ENGINE=vllm
 
 ulimit -u 65536
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 
-# Model, data, and rollout scale.
 MODELS_ROOT=${MODELS_ROOT:-}
 if [[ -z "${MODEL_PATH:-}" ]]; then
     : "${MODELS_ROOT:?Please set MODEL_PATH through a public launcher, or set MODELS_ROOT}"
     MODEL_PATH="$MODELS_ROOT/Qwen2.5-3B-Instruct"
 fi
-TRAIN_DATA_SIZE=${TRAIN_DATA_SIZE:-16}
-VAL_DATA_SIZE=${VAL_DATA_SIZE:-128}
+: "${AGENTSTREAM_EXGENTIC_ROOT:?Please set AGENTSTREAM_EXGENTIC_ROOT to the AgentStream/exgentic checkout}"
+export AGENTSTREAM_EXGENTIC_ROOT
+
+# Stream configuration.
+AS_BENCHMARKS=${AS_BENCHMARKS:-bfcl}
+AS_STREAM_MODE=${AS_STREAM_MODE:-random}
+AS_PROTOCOL=${AS_PROTOCOL:-split}
+AS_STREAM_SEED=${AS_STREAM_SEED:-44}
+AS_NUM_TASKS=${AS_NUM_TASKS:-50}
+AS_VAL_TASKS=${AS_VAL_TASKS:-16}
+AS_VAL_SOURCE=${AS_VAL_SOURCE:-holdout}
+AS_BLOCK_PASSES=${AS_BLOCK_PASSES:-1}
+AS_RUNNER=${AS_RUNNER:-venv}
+AS_MAX_STEPS=${AS_MAX_STEPS:-30}
+
+# Rollout scale. AgentStream sessions are heavier than ALFWorld games:
+# default to a smaller parallel width; tune per benchmark tier.
+TRAIN_DATA_SIZE=${TRAIN_DATA_SIZE:-8}
+VAL_DATA_SIZE=${VAL_DATA_SIZE:-32}
 GROUP_SIZE=${GROUP_SIZE:-8}
 POLICY_ROLLOUT_N=${POLICY_ROLLOUT_N:-1}
-NUM_CPUS_PER_ENV_WORKER=${NUM_CPUS_PER_ENV_WORKER:-0.1}
-PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-256}
-PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-32}
+NUM_CPUS_PER_ENV_WORKER=${NUM_CPUS_PER_ENV_WORKER:-0.2}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-64}
+PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}
 TENSOR_MODEL_PARALLEL_SIZE=${TENSOR_MODEL_PARALLEL_SIZE:-1}
 N_GPUS_PER_NODE=${N_GPUS_PER_NODE:-8}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-160}
@@ -31,7 +80,11 @@ TEST_FREQ=${TEST_FREQ:-5}
 RL_RESUME_MODE=${RL_RESUME_MODE:-auto}
 RL_RESUME_FROM_PATH=${RL_RESUME_FROM_PATH:-null}
 
-# SEED advantage and OPD teacher/OPD loss schedule.
+# Long tool-schema prompts need a wider context than ALFWorld.
+MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-8192}
+MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-1024}
+
+# SEED advantage and OPD teacher/OPD loss schedule (same defaults as alfworld).
 SEED_MODE=${SEED_MODE:-mean_std_norm}
 SEED_STEP_ADV_W=${SEED_STEP_ADV_W:-0.0}
 SEED_EPISODE_SKILL_TEACHER_ADV_W=${SEED_EPISODE_SKILL_TEACHER_ADV_W:-0.0}
@@ -51,12 +104,10 @@ SEED_SKILL_GEN_MAX_OUTPUT_CHARS=${SEED_SKILL_GEN_MAX_OUTPUT_CHARS:-1200}
 SEED_SKILL_GEN_REWARD_CLIP=${SEED_SKILL_GEN_REWARD_CLIP:-2.0}
 SEED_SKILL_GEN_FAILED_REWARD_MODE=${SEED_SKILL_GEN_FAILED_REWARD_MODE:-zero}
 
-# SEED episode filtering and teacher prompt construction.
 SEED_FAILED_ONLY=${SEED_FAILED_ONLY:-False}
 SEED_FAILED_ONLY_AFTER_STEPS=${SEED_FAILED_ONLY_AFTER_STEPS:-null}
 SEED_FAILURE_SUCCESS_THRESHOLD=${SEED_FAILURE_SUCCESS_THRESHOLD:-1.0}
 
-# SEED episode + critical-step skill analysis with the on-policy vLLM policy.
 SEED_ENABLE_ANALYSIS=${SEED_ENABLE_ANALYSIS:-True}
 SEED_SELECTOR=${SEED_SELECTOR:-llm}
 SEED_ANALYSIS_BACKEND=${SEED_ANALYSIS_BACKEND:-policy_vllm}
@@ -66,26 +117,15 @@ SEED_ANALYSIS_MAX_COMPLETION_TOKENS=${SEED_ANALYSIS_MAX_COMPLETION_TOKENS:-4096}
 SEED_ANALYSIS_MAX_MODEL_LEN=${SEED_ANALYSIS_MAX_MODEL_LEN:-20480}
 SEED_ANALYSIS_MAX_STEP_SKILLS_PER_TRAJ=${SEED_ANALYSIS_MAX_STEP_SKILLS_PER_TRAJ:-5}
 
-# Experiment naming and output location.
-PROJECT_NAME=${PROJECT_NAME:-agentic_alfworld}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-seed_qwen2.5_3b_alfworld_sft}
+PROJECT_NAME=${PROJECT_NAME:-agentic_agentstream}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-seed_agentstream_${AS_STREAM_MODE}_${AS_PROTOCOL}_s${AS_STREAM_SEED}}
 DEFAULT_LOCAL_DIR=${DEFAULT_LOCAL_DIR:-$MODELS_ROOT/ckpt/$EXPERIMENT_NAME}
 
-# Prompt observation history.
 history_length=${history_length:-5}
 
 real_train_batch_size=$((TRAIN_DATA_SIZE * POLICY_ROLLOUT_N))
 if (( real_train_batch_size % N_GPUS_PER_NODE != 0 )); then
     echo "TRAIN_DATA_SIZE * POLICY_ROLLOUT_N ($real_train_batch_size) must be divisible by N_GPUS_PER_NODE ($N_GPUS_PER_NODE)." >&2
-    exit 1
-fi
-if (( PPO_MINI_BATCH_SIZE * POLICY_ROLLOUT_N % N_GPUS_PER_NODE != 0 )); then
-    echo "PPO_MINI_BATCH_SIZE * POLICY_ROLLOUT_N must be divisible by N_GPUS_PER_NODE." >&2
-    exit 1
-fi
-normalized_ppo_mini_batch_size=$((PPO_MINI_BATCH_SIZE * POLICY_ROLLOUT_N / N_GPUS_PER_NODE))
-if (( normalized_ppo_mini_batch_size % PPO_MICRO_BATCH_SIZE_PER_GPU != 0 )); then
-    echo "Normalized PPO mini-batch ($normalized_ppo_mini_batch_size) must be divisible by PPO micro-batch ($PPO_MICRO_BATCH_SIZE_PER_GPU)." >&2
     exit 1
 fi
 
@@ -100,8 +140,8 @@ python3 -m verl.trainer.main_ppo \
     data.val_files=$HOME/data/verl-agent/text/test.parquet \
     data.train_batch_size=$TRAIN_DATA_SIZE \
     data.val_batch_size=$VAL_DATA_SIZE \
-    data.max_prompt_length=2048 \
-    data.max_response_length=512 \
+    data.max_prompt_length=$MAX_PROMPT_LENGTH \
+    data.max_response_length=$MAX_RESPONSE_LENGTH \
     data.filter_overlong_prompts=True \
     data.truncation=left \
     data.return_raw_chat=True \
@@ -164,11 +204,21 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.skill_gen.failed_reward_mode=$SEED_SKILL_GEN_FAILED_REWARD_MODE \
     algorithm.seed.normalize_teacher_adv=False \
     env.history_length=$history_length \
-    env.env_name=${ALFWORLD_ENV_NAME:-alfworld/AlfredTWEnv} \
+    env.env_name=agentstream/mixed \
     env.seed=0 \
-    env.max_steps=30 \
+    env.max_steps=$AS_MAX_STEPS \
     env.rollout.n=$GROUP_SIZE \
     env.resources_per_worker.num_cpus=$NUM_CPUS_PER_ENV_WORKER \
+    env.agentstream.exgentic_root=$AGENTSTREAM_EXGENTIC_ROOT \
+    env.agentstream.runner=$AS_RUNNER \
+    "env.agentstream.benchmarks=[$AS_BENCHMARKS]" \
+    env.agentstream.stream_mode=$AS_STREAM_MODE \
+    env.agentstream.stream_seed=$AS_STREAM_SEED \
+    env.agentstream.num_tasks_per_benchmark=$AS_NUM_TASKS \
+    env.agentstream.protocol=$AS_PROTOCOL \
+    env.agentstream.val_tasks_per_benchmark=$AS_VAL_TASKS \
+    env.agentstream.val_source=$AS_VAL_SOURCE \
+    env.agentstream.block_passes=$AS_BLOCK_PASSES \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name=$PROJECT_NAME \
