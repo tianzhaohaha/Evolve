@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from argparse import Action
-from queue import Queue
+from queue import Empty, Queue
 from threading import Event, Lock, Semaphore
 from typing import Any, Generic, Optional, TypeVar
 
@@ -13,6 +14,23 @@ from ...core.session import Session
 from ...core.types import Observation
 
 DONE = object()
+
+# The rendezvous queues must never block forever: a wedged benchmark runner (or
+# an abandoned external driver) has to surface as an error instead of a silent
+# hang that freezes the driving process. <= 0 disables a bound.
+_OBSERVATION_TIMEOUT = float(os.environ.get("EXGENTIC_PROXY_OBSERVATION_TIMEOUT", "600"))
+_ACTION_TIMEOUT = float(os.environ.get("EXGENTIC_PROXY_ACTION_TIMEOUT", "3600"))
+
+
+def _bounded_get(queue: Queue, timeout: float, waiting_for: str) -> Any:
+    if timeout and timeout > 0:
+        try:
+            return queue.get(timeout=timeout)
+        except Empty:
+            raise TimeoutError(
+                f"Proxy session timed out after {timeout}s waiting for {waiting_for}"
+            ) from None
+    return queue.get()
 
 
 class BaseProxySession(Session, ABC):
@@ -33,11 +51,11 @@ class BaseProxySession(Session, ABC):
     def step(self, action: Action) -> Optional[Observation]:
         self.step_count += 1
         self._from_agent.put(action)
-        next_obs = self._to_agent.get()
+        next_obs = _bounded_get(self._to_agent, _OBSERVATION_TIMEOUT, "the next observation")
         return next_obs
 
     def start(self) -> Optional[Observation]:
-        result = self._to_agent.get()
+        result = _bounded_get(self._to_agent, _OBSERVATION_TIMEOUT, "the initial observation")
         return result
 
     def done(self) -> bool:
@@ -68,7 +86,12 @@ class BaseProxySession(Session, ABC):
         self._to_agent.put(obs)
 
     def wait_for_action(self) -> Optional[Any]:
-        item = self._from_agent.get()
+        try:
+            item = _bounded_get(self._from_agent, _ACTION_TIMEOUT, "the next action")
+        except TimeoutError:
+            # The external driver abandoned this session; wind the runner down
+            # the same way close() would instead of parking the thread forever.
+            item = DONE
         if item is DONE:
             self.completed = True
             return None

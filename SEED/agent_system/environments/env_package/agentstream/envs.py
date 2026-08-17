@@ -68,6 +68,12 @@ class AgentStreamWorker:
         except Exception as exc:
             # Never kill the vectorized loop: surface the failure as a payload
             # the manager can render; the episode terminates with zero reward.
+            # Tear the half-open session down so the first step() call sees a
+            # finished driver instead of an exgentic session that may hang.
+            try:
+                self.driver.mark_failed()
+            except Exception:
+                pass
             return {
                 "slug": slug,
                 "task_id": str(task_id),
@@ -111,20 +117,57 @@ class AgentStreamEnvs:
         if not ray.is_initialized():
             ray.init()
 
-        worker_cls = ray.remote(**resources_per_worker)(AgentStreamWorker)
+        self._worker_cls = ray.remote(**resources_per_worker)(AgentStreamWorker)
         output_dir = os.path.abspath(os.path.expanduser(cfg.exgentic_output_dir))
-        self.workers = []
-        for i in range(self.num_processes):
-            self.workers.append(
-                worker_cls.remote(
-                    worker_id=i,
-                    exgentic_root=cfg.exgentic_root,
-                    runner=cfg.runner,
-                    output_dir=output_dir,
-                    run_id=run_id,
-                    max_steps=max_steps,
-                )
-            )
+        self._worker_kwargs = dict(
+            exgentic_root=cfg.exgentic_root,
+            runner=cfg.runner,
+            output_dir=output_dir,
+            run_id=run_id,
+            max_steps=max_steps,
+        )
+        self.workers = [self._make_worker(i) for i in range(self.num_processes)]
+
+    def _make_worker(self, worker_id: int):
+        return self._worker_cls.remote(worker_id=worker_id, **self._worker_kwargs)
+
+    def _replace_worker(self, i: int, reason: str) -> None:
+        """Kill an unresponsive worker actor and start a fresh one in its slot.
+
+        ray.kill also tears down the actor's exgentic serve subprocess tree, so
+        a wedged benchmark server cannot poison later resets on this slot.
+        """
+        print(f"[agentstream] worker {i} unresponsive ({reason}); killing actor and recreating")
+        try:
+            ray.kill(self.workers[i], no_restart=True)
+        except Exception:
+            pass
+        self.workers[i] = self._make_worker(i)
+
+    def _gather(self, futures: List[Any], timeout_s: float, fallback) -> List[Any]:
+        """Collect worker futures without letting one straggler freeze the batch.
+
+        Workers that miss ``timeout_s`` (or died) are killed + recreated and
+        their slot degrades to ``fallback(i)``; ``timeout_s <= 0`` restores the
+        original unbounded ray.get.
+        """
+        if not timeout_s or timeout_s <= 0:
+            return ray.get(futures)
+        index_of = {ref: i for i, ref in enumerate(futures)}
+        ready, pending = ray.wait(futures, num_returns=len(futures), timeout=float(timeout_s))
+        results: List[Any] = [None] * len(futures)
+        for ref in ready:
+            i = index_of[ref]
+            try:
+                results[i] = ray.get(ref)
+            except Exception as exc:
+                self._replace_worker(i, f"{type(exc).__name__}: {exc}")
+                results[i] = fallback(i)
+        for ref in pending:
+            i = index_of[ref]
+            self._replace_worker(i, f"no result within {timeout_s}s")
+            results[i] = fallback(i)
+        return results
 
     # -- gym-style API ---------------------------------------------------------
 
@@ -149,7 +192,21 @@ class AgentStreamEnvs:
             session_kwargs = self.hub.session_kwargs(slug, task_id)
             futures.append(worker.reset.remote(slug, task_id, bm_kwargs, session_kwargs))
 
-        payloads = ray.get(futures)
+        timeout_s = self.cfg.reset_timeout_s
+
+        def timeout_payload(i: int) -> Dict[str, Any]:
+            slug, task_id = batch.refs[i]
+            return {
+                "slug": slug,
+                "task_id": str(task_id),
+                "task": "",
+                "context": "",
+                "actions_text": "",
+                "observation": f"[environment error during reset] worker timed out after {timeout_s}s",
+                "reset_error": True,
+            }
+
+        payloads = self._gather(futures, timeout_s, timeout_payload)
 
         infos: List[Dict[str, Any]] = []
         for i, payload in enumerate(payloads):
@@ -176,7 +233,26 @@ class AgentStreamEnvs:
         futures = [
             worker.step.remote(action_payloads[i]) for i, worker in enumerate(self.workers)
         ]
-        results = ray.get(futures)
+
+        timeout_s = self.cfg.step_timeout_s
+
+        def timeout_result(i: int) -> Tuple[str, bool, Dict[str, Any]]:
+            slug, task_id = "", ""
+            if self._current_batch is not None:
+                slug, task_id = self._current_batch.refs[i]
+            info = {
+                "won": False,
+                "score": 0.0,
+                "slug": slug,
+                "task_id": str(task_id),
+                "step_count": 0,
+                "action_error": False,
+                "post_done": False,
+                "env_timeout": True,
+            }
+            return "", True, info
+
+        results = self._gather(futures, timeout_s, timeout_result)
 
         obs_list: List[str] = []
         reward_list: List[float] = []
@@ -209,7 +285,7 @@ class AgentStreamEnvs:
             except Exception:
                 pass
         try:
-            ray.get(futures)
+            ray.get(futures, timeout=300)
         except Exception:
             pass
         try:

@@ -406,6 +406,8 @@ env:
     on_exhausted: cycle             # cycle | stop when the ordered stream runs out
     block_passes: 1                 # sequential/isolated: repeat each benchmark block N times
     max_steps: null                 # null -> env.max_steps
+    reset_timeout_s: 600            # per-batch env reset budget; straggler workers are killed+replaced (<=0 disables)
+    step_timeout_s: 600             # per-batch env step budget; same straggler handling
     reward_success: 10.0            # same terminal reward scale as ALFWorld/AppWorld
     reward_use_score: False         # additionally add the raw benchmark score
     online_metrics_enable: True

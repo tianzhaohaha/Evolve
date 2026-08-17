@@ -129,6 +129,14 @@ class AgentStreamConfig:
     # trainer already supports invalid-action penalties; this stays 0 here.
     format_penalty: float = 0.0
 
+    # --- robustness -----------------------------------------------------------
+    # Wall-clock budget for one vectorized reset()/step() fan-out over all env
+    # workers. A worker missing the deadline is killed and recreated and its
+    # slot degrades to a zero-reward error episode instead of blocking the
+    # whole batch on ray.get (<= 0 restores the unbounded wait).
+    reset_timeout_s: float = 600.0
+    step_timeout_s: float = 600.0
+
     # --- online metrics -------------------------------------------------------
     online_metrics_enable: bool = True
     online_metrics_path: str = ""  # defaults to <trainer.default_local_dir>/agentstream_online_metrics.jsonl
@@ -187,6 +195,9 @@ def parse_agentstream_config(config: Any) -> AgentStreamConfig:
     cfg.reward_success = float(pick("reward_success", cfg.reward_success))
     cfg.reward_use_score = bool(pick("reward_use_score", cfg.reward_use_score))
     cfg.format_penalty = float(pick("format_penalty", cfg.format_penalty))
+
+    cfg.reset_timeout_s = float(pick("reset_timeout_s", cfg.reset_timeout_s))
+    cfg.step_timeout_s = float(pick("step_timeout_s", cfg.step_timeout_s))
 
     cfg.online_metrics_enable = bool(pick("online_metrics_enable", cfg.online_metrics_enable))
     cfg.online_metrics_path = str(pick("online_metrics_path", cfg.online_metrics_path))

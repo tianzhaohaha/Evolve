@@ -85,6 +85,10 @@ print(render(json.loads(sys.argv[1])))
 ' "$AS_BENCHMARK_KWARGS_JSON")
 AS_RUNNER=${AS_RUNNER:-venv}
 AS_MAX_STEPS=${AS_MAX_STEPS:-30}
+# Straggler handling: env workers missing these budgets are killed + replaced
+# and their slot becomes a zero-reward error episode (<=0 disables).
+AS_RESET_TIMEOUT=${AS_RESET_TIMEOUT:-600}
+AS_STEP_TIMEOUT=${AS_STEP_TIMEOUT:-600}
 
 # Rollout scale. AgentStream sessions are heavier than ALFWorld games:
 # default to a smaller parallel width; tune per benchmark tier.
@@ -252,6 +256,8 @@ python3 -m verl.trainer.main_ppo \
     env.agentstream.val_source=$AS_VAL_SOURCE \
     env.agentstream.block_passes=$AS_BLOCK_PASSES \
     env.agentstream.on_exhausted=$AS_ON_EXHAUSTED \
+    env.agentstream.reset_timeout_s=$AS_RESET_TIMEOUT \
+    env.agentstream.step_timeout_s=$AS_STEP_TIMEOUT \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name=$PROJECT_NAME \

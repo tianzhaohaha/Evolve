@@ -12,7 +12,7 @@ SEED 论文流程与脚本阶段的对应关系：
 
 默认正式配置位于 `examples/agentstream_trainer/agentstream_full.env`：
 
-- benchmark：`bfcl,appworld`
+- benchmark：`bfcl,appworld,tau2`
 - 每个 benchmark 6 个任务，每个任务 2 条 Stage-1 rollout
 - SFT：1 epoch
 - RL_OPD：每种 stream 模式 2 epoch
@@ -334,3 +334,30 @@ echo $! | tee logs/agentstream/stage3_sequential_ep10.pid
 ```
 
 当前 sequential/interleaved checkpoint 尚未保存 `TaskStreamScheduler` 的 cursor/pass/RNG，因此默认保持 `AGENTSTREAM_RL_RESUME_MODE=disable`。在补齐 scheduler checkpoint 前，不建议用 resume 验证严格连续的任务流。
+
+## 环境 straggler 超时
+
+Stage 3 的每次向量化 reset/step 都会并发驱动全部 env worker（tau2 的 reset 还依赖外部 user-simulator API）。为避免单个卡死的环境阻塞整个 batch，默认启用以下超时；超时的 worker 会被强杀重建，该 slot 以零奖励错误 episode 降级：
+
+```bash
+AGENTSTREAM_RL_RESET_TIMEOUT=600   # 单批 reset 预算（秒），<=0 关闭
+AGENTSTREAM_RL_STEP_TIMEOUT=600    # 单批 step 预算（秒），<=0 关闭
+```
+
+exgentic 侧的配套开关（通过环境变量传入训练进程即可，会自动透传给 benchmark 子进程）：
+
+```bash
+EXGENTIC_PROXY_OBSERVATION_TIMEOUT=600   # tau2 代理会合：等待下一条 observation
+EXGENTIC_PROXY_ACTION_TIMEOUT=3600       # tau2 代理会合：等待下一条 action
+EXGENTIC_VENV_TRANSPORT_TIMEOUT=1800     # venv 服务单次 RPC 上限
+```
+
+如果日志出现 `[agentstream] worker N unresponsive`，说明发生了一次 straggler 降级；偶发属正常（外部 API 抖动、端口竞态重试失败），频繁出现时应检查对应 benchmark 的 session 日志。
+
+注意：benchmark venv 内安装的是 exgentic 的**拷贝**（非 editable）。修改 `AgentStream/exgentic` 源码后（包括上述 proxy 超时、health token），需要把新版 exgentic 重装进已存在的 venv 才会在 `exgentic serve` 子进程中生效：
+
+```bash
+for v in ~/.exgentic/benchmarks/*/venv; do
+  uv pip install --python "$v/bin/python" --no-cache --reinstall "$AGENTSTREAM_EXGENTIC_ROOT"
+done
+```

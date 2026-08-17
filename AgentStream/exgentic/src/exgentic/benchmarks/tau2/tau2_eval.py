@@ -608,6 +608,11 @@ class TAU2Evaluator(Evaluator):
             llm_args_user={
                 "temperature": self._llm_temperature_user,
                 "caching": settings.litellm_caching,
+                # Bound every user-simulator call explicitly: an unbounded
+                # provider hang here blocks the whole proxy rendezvous, which
+                # in turn stalls the external driver waiting on start()/step().
+                "timeout": settings.to_litellm_config().timeout,
+                "num_retries": 2,
             },
             num_trials=self._num_trials,
             max_steps=self._max_steps,

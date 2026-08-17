@@ -119,20 +119,29 @@ def inject_exgentic_env(env: dict[str, str]) -> None:
     env.setdefault("EXGENTIC_OUTPUT_DIR", str(Path(settings.output_dir).resolve()))
 
 
-def make_close(transport: Any, stop_fn: Any) -> Any:
+def make_close(transport: Any, stop_fn: Any, close_timeout: float = 30.0) -> Any:
     """Create a close function for an ObjectProxy.
 
     Attempts a graceful ``close()`` on the remote object, then shuts
     down the transport and calls *stop_fn* to tear down the underlying
-    process/container.
+    process/container. The graceful close is bounded by *close_timeout*
+    (when the transport supports it) so a wedged server cannot stall the
+    teardown for the full transport timeout — *stop_fn* always runs.
     """
 
     def _close() -> None:
         try:
-            transport.call("close")
+            call_bounded = getattr(transport, "call_bounded", None)
+            if call_bounded is not None:
+                call_bounded("close", close_timeout)
+            else:
+                transport.call("close")
         except Exception:
             pass
-        transport.close()
+        try:
+            transport.close()
+        except Exception:
+            pass
         stop_fn()
 
     return _close

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import threading
 import time
 from typing import Any, Optional
@@ -75,9 +76,17 @@ def _error_response(exc: Exception) -> RPCResponse:
 def create_app(host: ObjectHost) -> FastAPI:
     app = FastAPI()
 
+    # Optional identity token (set by subprocess runners): lets the spawning
+    # client verify that the /health answer comes from ITS server, not from a
+    # different process that won a find_free_port() race on the same port.
+    identity_token = os.environ.get("EXGENTIC_SERVE_TOKEN") or None
+
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        payload = {"status": "ok"}
+        if identity_token:
+            payload["token"] = identity_token
+        return payload
 
     @app.post("/call")
     def handle_call(req: CallRequest) -> RPCResponse:
@@ -125,8 +134,12 @@ class HTTPTransport(Transport):
         self._base_url = base_url.rstrip("/")
         self._client = httpx.Client(timeout=timeout)
 
-    def _rpc(self, endpoint: str, payload: dict) -> Any:
-        resp = self._client.post(f"{self._base_url}{endpoint}", json=payload)
+    def _rpc(self, endpoint: str, payload: dict, timeout: Any = None) -> Any:
+        resp = self._client.post(
+            f"{self._base_url}{endpoint}",
+            json=payload,
+            timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
+        )
         resp.raise_for_status()
         data = RPCResponse(**resp.json())
         if data.status == "error":
@@ -151,6 +164,22 @@ class HTTPTransport(Transport):
             },
         )
 
+    def call_bounded(self, method: str, timeout: float, *args: Any, **kwargs: Any) -> Any:
+        """Like call(), but with a per-request timeout overriding the client default.
+
+        Used for teardown paths (e.g. close) that must not inherit the long
+        transport timeout when the server is wedged.
+        """
+        return self._rpc(
+            "/call",
+            {
+                "method": method,
+                "args": _encode(args),
+                "kwargs": _encode(kwargs),
+            },
+            timeout=timeout,
+        )
+
     def get(self, name: str) -> Any:
         return self._rpc("/get", {"name": name})
 
@@ -167,12 +196,31 @@ class HTTPTransport(Transport):
 # ── Utilities ────────────────────────────────────────────────────────
 
 
-def _wait_for_health(url: str, timeout: float = 15.0) -> None:
+class ServiceIdentityError(RuntimeError):
+    """The service answering on a port is not the one we spawned (port collision)."""
+
+
+def _wait_for_health(url: str, timeout: float = 15.0, token: str | None = None) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if httpx.get(f"{url}/health", timeout=2.0).status_code == 200:
-                return
+            resp = httpx.get(f"{url}/health", timeout=2.0)
+            if resp.status_code == 200:
+                if token is None:
+                    return
+                try:
+                    served_token = resp.json().get("token")
+                except Exception:
+                    served_token = None
+                # Servers predating the token protocol return no token; accept
+                # them. A *different* token means another process owns the port
+                # (find_free_port raced) — waiting longer can never fix that.
+                if served_token is None or served_token == token:
+                    return
+                raise ServiceIdentityError(
+                    f"Service at {url} answered with a foreign identity token; "
+                    "the port is owned by another exgentic serve process"
+                )
         except httpx.HTTPError:
             pass
         time.sleep(0.1)

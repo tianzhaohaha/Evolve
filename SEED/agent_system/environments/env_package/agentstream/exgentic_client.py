@@ -256,6 +256,11 @@ class SessionDriver:
                 pass
             self._session = None
 
+    def mark_failed(self) -> None:
+        """Abort a half-open reset: finish the episode and drop the session."""
+        self._finished = True
+        self.close_session()
+
     def reset(
         self,
         slug: str,
@@ -274,6 +279,14 @@ class SessionDriver:
         benchmark = self._benchmark(slug, bm_kwargs)
         self._session = benchmark.get_session(**session_kwargs)
         observation = self._session.start()
+        if observation is None:
+            # Proxy-style sessions (tau2) hand back a single terminal None when
+            # their runner dies before producing the first observation; stepping
+            # such a session would block forever on the next queue rendezvous.
+            raise RuntimeError(
+                f"{slug} session start() returned no initial observation "
+                "(benchmark runner terminated before the first turn)"
+            )
         self._action_types = list(self._session.actions)
 
         return {

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +31,15 @@ from ._utils import (
     prepare_subprocess_env,
     serialize_kwargs,
 )
-from .service import HTTPTransport, _wait_for_health
+from .service import HTTPTransport, ServiceIdentityError, _wait_for_health
 from .transport import ObjectProxy
 
 _HEALTH_TIMEOUT = float(os.environ.get("EXGENTIC_VENV_HEALTH_TIMEOUT", "30"))
-_TRANSPORT_TIMEOUT = 1800.0
+_TRANSPORT_TIMEOUT = float(os.environ.get("EXGENTIC_VENV_TRANSPORT_TIMEOUT", "1800"))
+# find_free_port() is check-then-use: with many concurrent runners two of them
+# can pick the same port. Health responses carry an identity token, so a
+# collision is detected deterministically and retried on a fresh port.
+_SPAWN_ATTEMPTS = 3
 
 
 def _uv(*args: str, check: bool = True, **kwargs: Any) -> subprocess.CompletedProcess:
@@ -158,42 +163,60 @@ class VenvRunner:
         inject_exgentic_env(env)
 
         exgentic_bin = self._get_venv_dir() / "bin" / "exgentic"
-        cmd = [
-            str(exgentic_bin),
-            "serve",
-            "--cls",
-            cls_ref,
-            kwargs_flag,
-            kwargs_value,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(self._port),
-        ]
 
-        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
-            self._process = subprocess.Popen(
-                cmd,
-                env=env,
-                stdout=stdout_file,
-                stderr=stderr_file,
-            )
-            atexit.register(self._stop_process)
-
+        url = ""
+        collision_exc: Exception | None = None
+        for _attempt in range(_SPAWN_ATTEMPTS):
+            token = uuid.uuid4().hex
+            env["EXGENTIC_SERVE_TOKEN"] = token
             url = f"http://127.0.0.1:{self._port}"
-            try:
-                _wait_for_health(url, timeout=self._health_timeout)
-            except TimeoutError:
-                self._stop_process()
-                stdout_file.seek(0)
-                stderr_file.seek(0)
-                stdout = stdout_file.read()
-                stderr = stderr_file.read()
-                raise TimeoutError(
-                    f"Venv service did not become healthy within {self._health_timeout}s.\n"
-                    f"stdout:\n{stdout.decode(errors='replace')}\n"
-                    f"stderr:\n{stderr.decode(errors='replace')}"
-                ) from None
+            cmd = [
+                str(exgentic_bin),
+                "serve",
+                "--cls",
+                cls_ref,
+                kwargs_flag,
+                kwargs_value,
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self._port),
+            ]
+
+            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+                self._process = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                )
+                atexit.register(self._stop_process)
+
+                try:
+                    _wait_for_health(url, timeout=self._health_timeout, token=token)
+                except ServiceIdentityError as exc:
+                    # Another process owns this port; our own server can never
+                    # bind it. Retry with a fresh port.
+                    self._stop_process()
+                    self._port = find_free_port()
+                    collision_exc = exc
+                    continue
+                except TimeoutError:
+                    self._stop_process()
+                    stdout_file.seek(0)
+                    stderr_file.seek(0)
+                    stdout = stdout_file.read()
+                    stderr = stderr_file.read()
+                    raise TimeoutError(
+                        f"Venv service did not become healthy within {self._health_timeout}s.\n"
+                        f"stdout:\n{stdout.decode(errors='replace')}\n"
+                        f"stderr:\n{stderr.decode(errors='replace')}"
+                    ) from None
+            break
+        else:
+            raise RuntimeError(
+                f"Venv service could not claim a local port after {_SPAWN_ATTEMPTS} attempts"
+            ) from collision_exc
 
         transport = HTTPTransport(url, timeout=_TRANSPORT_TIMEOUT)
         proxy = ObjectProxy(transport)

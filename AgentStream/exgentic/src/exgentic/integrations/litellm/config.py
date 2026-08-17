@@ -111,4 +111,8 @@ def _configure_inference(config: LitellmSettings) -> None:
 
     litellm.drop_params = config.drop_params
     litellm.modify_params = config.modify_params
+    # litellm.completion() honors the module-level `request_timeout` global;
+    # `litellm.timeout` is not read by it. Set both so the intended cap holds
+    # regardless of the installed litellm version.
+    litellm.request_timeout = config.timeout
     litellm.timeout = config.timeout
