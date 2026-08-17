@@ -1,10 +1,9 @@
 # SEED × AgentStream 集成 — 交接说明（供后续 Agent 使用）
 
 > **本文档的用途**：本仓库在原版 SEED 之上完成了一套"任务流模式（Isolated / Sequential /
-> Interleaved）× 多 benchmark"的集成，全部代码已通过静态检查与纯逻辑自测，但**尚未在真实
-> 训练环境中运行过**（编写代码的服务器没有 GPU / conda 训练环境 / benchmark 数据）。
-> 你的任务是在已按两个 repo README 配好环境的机器上，按下文 Phase 顺序运行验证并修复
-> 运行期问题。修复时请遵守本集成的设计原则（见 §1）。
+> Interleaved）× 多 benchmark"的集成。静态检查、调度器自测、BFCL Session reset/step 和
+> BFCL `random + split` 普通 RL 的单步 GPU 闭环已经通过；Stage-1 SFT、RL_OPD 以及三种正式
+> stream 模式仍需按本文的正式验证入口验收。修复时请遵守本集成的设计原则（见 §1）。
 
 ---
 
@@ -98,6 +97,8 @@ shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SE
 | `run_agentstream_random.sh` | 对照组：SEED 原始随机采样 + split 协议 |
 | `run_agentstream_isolated.sh` | 按 benchmark 循环，每个独立一次训练（对齐 AgentStream isolated 语义） |
 | `run_agentstream_sequential.sh` / `run_agentstream_interleaved.sh` | 单次训练跑整条流 |
+| `agentstream_full.env` | 可提交的正式验证配置，不含密钥；统一定义 SFT/RL 规模、GPU、benchmark 与 OPD 参数 |
+| `run_agentstream_sft_glm_self.sh` | 从 AgentStream Stage-1 SFT 模型启动单个 `random/isolated/sequential/interleaved` RL_OPD 模式 |
 | `run_alfworld_stream.sh` | alfworld_stream 全模式入口（isolated 自动按任务类型循环）；包装 `seed_trainer/_common/alfworld.sh` |
 | `analyze_results.py` | 跨 run 对比在线 JSONL：GRPO 组内**先按任务平均**、仅 `first_pass` 计入、`--csv` 长格式导出。agentstream 与 alfworld_stream 共用 schema |
 
@@ -108,6 +109,51 @@ shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SE
 | `pipeline.py` | 采样（与 RL 相同 seed-42 选择，不漏进 holdout）→ 基线 rollout（线程池，每线程一个 `SessionDriver`，`session_kwargs` 主线程预取）→ 技能标注（**直接复用** `scripts/sft/_common/pipeline.py::build_candidate_skill_record`，即 SEED 原版分析器提示）→ parquet 导出。轨迹 `task_id` 用 `slug/id` 前缀防跨 benchmark 的 skill_id 冲突 |
 | `prepare_data.sh` | 环境变量约定与 alfworld 版一致（RUN_MODE=smoke\|full、POLICY_*/SKILL_*、teacher_naming）。**刻意简化：不管理 vLLM 生命周期**，要求 `POLICY_BASE_URL` 已就绪（不可达即报错并打印启动命令） |
 | `train_sft.sh` | `_common/trainer.sh` 薄包装（`DATASET_NAME=agentstream`, `MODEL_TAG=qwen25_3b`）；输出目录命名与 prepare 默认输出对接 |
+| `run_all.sh` | 正式全流程入口：按配置管理 Stage-1 本地 vLLM → SFT 数据 → SFT 训练/导出 → 各 stream 模式独立 RL_OPD |
+| `README.md` | 分阶段 `nohup` 运行手册：Stage 1 数据、Stage 2 SFT、各 Stage 3 RL_OPD 模式的启动、日志、PID 与验收命令 |
+
+### 2.6 正式全流程入口
+
+默认配置使用 `bfcl,appworld` 两个 Tier-1 域、每域 6 个任务、SFT 1 epoch、RL 每模式 2 epoch，
+用于低成本但真实的跨域正式验证。凭据和 `MODELS_ROOT/CHECKPOINTS_ROOT` 仍从仓库 `.env` 读取，
+可提交配置 `examples/agentstream_trainer/agentstream_full.env` 不存放密钥。
+
+```bash
+cd /home/jcgu/qyliu/OPDevolve/SEED
+bash scripts/sft/agentstream/run_all.sh
+```
+
+需要逐阶段后台运行并在阶段间人工检查时，直接使用
+`scripts/sft/agentstream/README.md` 中可复制的 `nohup` 命令。
+
+总入口默认依次执行：
+
+1. 启动一个仅供 Stage-1 rollout 使用的本地 vLLM，生成 hindsight-skill SFT 数据后停止；
+2. 训练 1 epoch SFT 并导出统一 HF checkpoint；
+3. 从同一个 SFT checkpoint **独立**启动 `sequential / interleaved / isolated` RL_OPD。
+
+`random` 是 SEED 原始随机采样对照，不属于 AgentStream 的三种 stream 模式。需要一起运行时设置
+`AGENTSTREAM_RL_MODES=random,sequential,interleaved,isolated`。
+
+可以在命令行覆盖配置，而不编辑脚本：
+
+```bash
+# 只验证 sequential + interleaved，并把 RL 增加到 4 epoch
+AGENTSTREAM_RL_MODES=sequential,interleaved \
+AGENTSTREAM_RL_EPOCHS=4 \
+bash scripts/sft/agentstream/run_all.sh
+
+# 复用已经生成的 SFT checkpoint，只跑一个模式
+bash examples/agentstream_trainer/run_agentstream_sft_glm_self.sh sequential
+
+# 仅重新运行 SFT 训练，不重新收集轨迹或启动 RL
+AGENTSTREAM_RUN_PREPARE=false AGENTSTREAM_RUN_RL=false \
+bash scripts/sft/agentstream/run_all.sh
+```
+
+正式配置使用独立的 `AGENTSTREAM_*` 命名空间，不会继承 `.env` 中 ALFWorld 专用的
+`MODEL_PATH`、batch size 或 `RL_RESUME_FROM_PATH`。默认 `AGENTSTREAM_RL_RESUME_MODE=disable`，
+确保四种模式从同一个 SFT checkpoint 公平起跑。
 
 ## 3. 关键协议 / 概念映射（理解代码前必读）
 
@@ -139,6 +185,12 @@ shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SE
 - 配置解析（含 isolated 单 benchmark 守卫、benchmark_kwargs 覆盖合并）、投影解析
   （围栏/坏 JSON/缺 think）、`render_prompt` 三分支、`analyze_results.py`
   （合成数据：组内平均/首 pass 过滤/CSV）。
+- BFCL host/venv bridge：400 个任务发现、Session reset、动态 action schema 和单步 action 已通过。
+- BFCL `random + split` 最小 RL：4 条 episode 完成 rollout、reward、advantage、reference log-prob
+  和 actor update，最终达到 `training/global_step=1`。期间修复了小 batch 补齐量大于原 batch
+  时 `np.random.choice(replace=False)` 的运行期错误。
+- 正式配置入口已通过 `bash -n`；四种模式均已做 `DRY_RUN` 配置解析，确认 OPD 开启、2 epoch、
+  resume 禁用且不继承 ALFWorld checkpoint。
 
 ### 4.2 需要实际运行验证的点（按 Phase 顺序，附预期与风险）
 
@@ -159,7 +211,7 @@ python examples/agentstream_trainer/smoke_env.py \
 4. `run_scope` 上下文在长驻进程中的行为（会话输出目录是否落在 `exgentic_output_dir`）。
 5. 对其余 5 个 benchmark 重复冒烟（tau2 需 user-simulator 端点可达；swebench 需 Docker）。
 
-**Phase 1 — RL 小规模冒烟（GPU）**
+**Phase 1 — RL 小规模冒烟（GPU，BFCL random 已完成）**
 
 ```bash
 AS_BENCHMARKS=bfcl TRAIN_DATA_SIZE=2 VAL_DATA_SIZE=4 GROUP_SIZE=2 \
@@ -183,7 +235,7 @@ bash examples/agentstream_trainer/run_agentstream_random.sh
     全零 → GRPO 组内 advantage 全零无学习信号，需换子集（如 `tau2 subset=mock/retail`、
     bfcl simple 类）或加大基座。tau2/hle 的 LLM 依赖（user-sim / judge）建议指到本地 vLLM。
 
-**Phase 2 — SFT 管线**
+**Phase 2 — SFT 管线（待正式验证）**
 
 ```bash
 RUN_MODE=smoke AS_BENCHMARKS=bfcl bash scripts/sft/agentstream/prepare_data.sh
@@ -223,6 +275,10 @@ python examples/agentstream_trainer/analyze_results.py \
     <run1>/agentstream_online_metrics.jsonl <run2>/... --csv all.csv
 ```
 
+正式验收时还必须确认：SFT parquet 非空且 skill `parse_ok`；导出的 HF 模型可被 vLLM 加载；
+RL_OPD 日志中 `seed/analysis_num_requests`、`seed/teacher_batch_size` 和
+`actor/opd_active_token_ratio` 均大于 0；sequential/interleaved 的任务顺序与在线指标符合预期。
+
 ## 5. 已知取舍与后续工作（非 bug）
 
 - swebench / hle / browsecompplus 为 Tier 2/3：分别有 Docker 并发、LLM judge 成本/噪声、
@@ -232,4 +288,8 @@ python examples/agentstream_trainer/analyze_results.py \
   每 step 消耗 `train_batch_size` 个流位置）。
 - 在线协议的严格单 pass 对齐：若要完全模拟 AgentStream 单 pass 评测，设
   `on_exhausted=stop` 并让总步数 = `ceil(stream_length / train_batch_size)`。
-- SFT 阶段与 RL 阶段的 `benchmark_kwargs` 需人工保持一致（两处配置无共享来源）。
+- 通过正式 `run_all.sh` 时，SFT 与 RL 共用 `AGENTSTREAM_BENCHMARK_KWARGS_JSON`；若绕过总入口
+  单独调用底层脚本，则仍需人工保证两阶段的 benchmark kwargs 一致。
+- trainer checkpoint 当前保存模型、优化器和 dataloader，但未保存 `TaskStreamScheduler` 的
+  cursor/pass/RNG。正式配置默认禁用 resume；在补齐 scheduler checkpoint 前，不应把
+  sequential/interleaved 的中断恢复视为严格连续的任务流。

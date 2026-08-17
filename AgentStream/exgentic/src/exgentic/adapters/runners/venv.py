@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,7 @@ from ._utils import (
 from .service import HTTPTransport, _wait_for_health
 from .transport import ObjectProxy
 
-_HEALTH_TIMEOUT = 30.0
+_HEALTH_TIMEOUT = float(os.environ.get("EXGENTIC_VENV_HEALTH_TIMEOUT", "30"))
 _TRANSPORT_TIMEOUT = 1800.0
 
 
@@ -170,30 +171,29 @@ class VenvRunner:
             str(self._port),
         ]
 
-        self._process = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        atexit.register(self._stop_process)
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            self._process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=stdout_file,
+                stderr=stderr_file,
+            )
+            atexit.register(self._stop_process)
 
-        url = f"http://127.0.0.1:{self._port}"
-        try:
-            _wait_for_health(url, timeout=self._health_timeout)
-        except TimeoutError:
-            proc = self._process
-            if proc is not None:
-                proc.terminate()
-                stdout, stderr = proc.communicate(timeout=5)
-            else:
-                stdout, stderr = b"", b""
-            self._stop_process()
-            raise TimeoutError(
-                f"Venv service did not become healthy within {self._health_timeout}s.\n"
-                f"stdout:\n{stdout.decode(errors='replace')}\n"
-                f"stderr:\n{stderr.decode(errors='replace')}"
-            ) from None
+            url = f"http://127.0.0.1:{self._port}"
+            try:
+                _wait_for_health(url, timeout=self._health_timeout)
+            except TimeoutError:
+                self._stop_process()
+                stdout_file.seek(0)
+                stderr_file.seek(0)
+                stdout = stdout_file.read()
+                stderr = stderr_file.read()
+                raise TimeoutError(
+                    f"Venv service did not become healthy within {self._health_timeout}s.\n"
+                    f"stdout:\n{stdout.decode(errors='replace')}\n"
+                    f"stderr:\n{stderr.decode(errors='replace')}"
+                ) from None
 
         transport = HTTPTransport(url, timeout=_TRANSPORT_TIMEOUT)
         proxy = ObjectProxy(transport)

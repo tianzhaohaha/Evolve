@@ -16,10 +16,19 @@ A unified tracking interface that supports logging data to different backend
 """
 
 import dataclasses
+import logging
+import re
 from enum import Enum
 from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Union
+
+
+_SECRET_RE = re.compile(
+    r"(?i)(api[-_ ]?key|authorization|bearer|token|password|secret)(\s*[:=]\s*|\s+)([^\s,;]+)"
+)
+_BASE64_RE = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{256,}={0,2}(?![A-Za-z0-9+/=])")
+_logger = logging.getLogger(__name__)
 
 
 class Tracking:
@@ -252,6 +261,37 @@ def _flatten_dict(raw: Dict[str, Any], *, sep: str) -> Dict[str, Any]:
     ans = pd.json_normalize(raw, sep=sep).to_dict(orient="records")[0]
     assert isinstance(ans, dict)
     return ans
+
+
+@dataclasses.dataclass
+class WandbTextSamplesLogger:
+    max_chars: int = 4000
+
+    def _safe_value(self, value):
+        if not isinstance(value, str):
+            return value
+        value = _SECRET_RE.sub(
+            lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+            value,
+        )
+        value = _BASE64_RE.sub("[REDACTED_BASE64]", value)
+        if len(value) > self.max_chars:
+            value = f"{value[:self.max_chars]}... [truncated {len(value) - self.max_chars} chars]"
+        return value
+
+    def log(self, loggers, key, columns, rows, step):
+        if "wandb" not in loggers or not rows:
+            return
+
+        try:
+            import wandb
+
+            table = wandb.Table(columns=columns)
+            for row in rows:
+                table.add_data(*(self._safe_value(value) for value in row))
+            wandb.log({key: table}, step=step)
+        except Exception as exc:
+            _logger.warning("Failed to log WandB text samples for %s: %s", key, exc)
 
 
 @dataclasses.dataclass

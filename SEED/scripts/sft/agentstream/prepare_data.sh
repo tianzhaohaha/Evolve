@@ -34,13 +34,17 @@ fi
 
 RUN_MODE="${RUN_MODE:-full}"  # full or smoke
 AS_BENCHMARKS="${AS_BENCHMARKS:-bfcl,tau2,appworld}"
-AS_BENCHMARK_KWARGS_JSON="${AS_BENCHMARK_KWARGS_JSON:-{}}"
+if [[ -z "${AS_BENCHMARK_KWARGS_JSON:-}" ]]; then
+    AS_BENCHMARK_KWARGS_JSON='{}'
+fi
 AS_RUNNER="${AS_RUNNER:-venv}"
 MAX_STEPS="${MAX_STEPS:-30}"
 HISTORY_LENGTH="${HISTORY_LENGTH:-5}"
 PARALLEL_SESSIONS="${PARALLEL_SESSIONS:-8}"
 SFT_VAL_RATIO="${SFT_VAL_RATIO:-0.1}"
 SEED="${SEED:-2026}"
+INSPECTION_SAMPLES="${INSPECTION_SAMPLES:-3}"
+INSPECTION_MAX_CHARS="${INSPECTION_MAX_CHARS:-4000}"
 
 # Policy endpoint (must already be running).
 MODEL_PATH="${MODEL_PATH:-${POLICY_MODEL_PATH:-${MODELS_ROOT:-Qwen2.5-3B-Instruct}}}"
@@ -95,6 +99,8 @@ args=(
     --skill-gen-workers "$SKILL_GEN_WORKERS"
     --sft-val-ratio "$SFT_VAL_RATIO"
     --seed "$SEED"
+    --inspection-samples "$INSPECTION_SAMPLES"
+    --inspection-max-chars "$INSPECTION_MAX_CHARS"
     --policy-base-url "$POLICY_BASE_URL"
     --policy-api-key "$POLICY_API_KEY"
     --policy-model "$POLICY_MODEL"

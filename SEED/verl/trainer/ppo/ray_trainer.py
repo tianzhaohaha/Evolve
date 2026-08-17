@@ -61,7 +61,7 @@ from verl.utils.metric import (
 )
 from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seqlen_unbalance
 from verl.utils.torch_functional import masked_mean
-from verl.utils.tracking import ValidationGenerationsLogger
+from verl.utils.tracking import ValidationGenerationsLogger, WandbTextSamplesLogger
 from verl.workers.rollout.async_server import AsyncLLMServerManager
 from gigpo import core_gigpo
 from seed import analysis as core_seed
@@ -3006,6 +3006,54 @@ class RayPPOTrainer:
         global_balance_stats = log_seqlen_unbalance(seqlen_list=global_seqlen_lst, partitions=global_partition_lst, prefix=logging_prefix)
         metrics.update(global_balance_stats)
 
+    def _log_rollout_samples(self, batch: DataProto) -> None:
+        sample_count = int(self.config.trainer.get("log_rollout_samples", 0))
+        interval = int(self.config.trainer.get("log_rollout_samples_freq", 0))
+        if sample_count <= 0 or interval <= 0:
+            return
+        if self.global_steps != 1 and self.global_steps % interval != 0:
+            return
+
+        sample_count = min(sample_count, batch.batch["responses"].size(0))
+        outputs = self.tokenizer.batch_decode(
+            batch.batch["responses"][:sample_count],
+            skip_special_tokens=True,
+        )
+        scores = batch.batch["token_level_scores"][:sample_count].sum(-1).detach().cpu().tolist()
+
+        def field(name, index, default=""):
+            values = batch.non_tensor_batch.get(name)
+            if values is None:
+                return default
+            value = values[index]
+            return value.item() if isinstance(value, np.generic) else value
+
+        observations = batch.non_tensor_batch.get("obs_text_base")
+        if observations is None:
+            observations = batch.non_tensor_batch.get("obs_text")
+        rows = [
+            (
+                self.global_steps,
+                field("sample_id", index),
+                field("rollout_id", index),
+                field("step_num", index),
+                "" if observations is None else str(observations[index]),
+                outputs[index],
+                scores[index],
+                field("is_action_valid", index),
+            )
+            for index in range(sample_count)
+        ]
+        WandbTextSamplesLogger(
+            max_chars=int(self.config.trainer.get("log_rollout_samples_max_chars", 4000))
+        ).log(
+            self.config.trainer.logger,
+            "rollout/samples",
+            ["step", "sample_id", "rollout_id", "turn", "observation", "response", "score", "valid"],
+            rows,
+            self.global_steps,
+        )
+
     def fit(self):
         """
         The training loop of PPO.
@@ -3398,6 +3446,8 @@ class RayPPOTrainer:
                                 dump_path=rollout_data_dir,
                                 rollout_extra_infos_dict=rollout_extra_infos_dict,
                             )
+
+                    self._log_rollout_samples(batch)
 
                     # validate
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):

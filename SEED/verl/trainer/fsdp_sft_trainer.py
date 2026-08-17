@@ -59,7 +59,7 @@ from verl.utils.fsdp_utils import (
 )
 from verl.utils.torch_functional import get_cosine_schedule_with_warmup, get_wsd_schedule_with_warmup
 from verl.utils.py_functional import convert_to_regular_types
-from verl.utils.tracking import Tracking
+from verl.utils.tracking import Tracking, WandbTextSamplesLogger
 from verl.utils.ulysses import (
     gather_outpus_and_unpad,
     get_ulysses_sequence_parallel_world_size,
@@ -157,14 +157,14 @@ class FSDPSFTTrainer:
             drop_last=True,
         )
 
-        self.val_sampler = DistributedSampler(self.val_dataset, shuffle=False, num_replicas=world_size, rank=rank, drop_last=True)
+        self.val_sampler = DistributedSampler(self.val_dataset, shuffle=False, num_replicas=world_size, rank=rank, drop_last=False)
         self.val_dataloader = DataLoader(
             dataset=self.val_dataset,
             batch_size=config.data.micro_batch_size_per_gpu,
             sampler=self.val_sampler,
             num_workers=8,
             pin_memory=True,
-            drop_last=True,
+            drop_last=False,
         )
 
     def _build_model_optimizer(self):
@@ -523,6 +523,28 @@ class FSDPSFTTrainer:
 
         torch.distributed.barrier()
 
+    def _log_data_samples(self, step):
+        sample_count = int(self.config.trainer.get("log_data_samples", 0))
+        interval = int(self.config.trainer.get("log_data_samples_freq", 0))
+        if sample_count <= 0 or interval <= 0 or (step != 1 and step % interval != 0):
+            return
+        if not hasattr(self.train_dataset, "prompts") or not hasattr(self.train_dataset, "responses"):
+            return
+
+        rows = [
+            (index, self.train_dataset.prompts[index], self.train_dataset.responses[index])
+            for index in range(min(sample_count, len(self.train_dataset)))
+        ]
+        WandbTextSamplesLogger(
+            max_chars=int(self.config.trainer.get("log_data_samples_max_chars", 4000))
+        ).log(
+            self.config.trainer.logger,
+            "sft/data_samples",
+            ["sample_index", "prompt", "target"],
+            rows,
+            step,
+        )
+
     def fit(self):
         rank = self.device_mesh.get_rank()
 
@@ -561,6 +583,7 @@ class FSDPSFTTrainer:
                 metric = self.training_step(data)
                 if rank == 0:
                     tracking.log(data=metric, step=global_step)
+                    self._log_data_samples(global_step)
 
                 # for early exit validation
                 if global_step >= self.total_training_steps:

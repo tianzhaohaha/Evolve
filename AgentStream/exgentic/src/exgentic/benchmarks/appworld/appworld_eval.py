@@ -54,6 +54,10 @@ APPWORLD_TOTAL_TASKS = {
     "test_challenge": 417,
 }
 
+
+def _appworld_root() -> str:
+    return str(Path(settings.cache_dir).expanduser() / "benchmarks" / "appworld")
+
 if TYPE_CHECKING:
     from appworld.environment import AppWorld  # type: ignore
 
@@ -113,8 +117,7 @@ class AppWorldSession(Session):
         from appworld.environment import AppWorld  # type: ignore
 
         # Point appworld at the correct data directory before loading the task.
-        cache = Path(settings.cache_dir).expanduser()
-        update_root(str(cache / "appworld"))
+        update_root(_appworld_root())
 
         # Patch appworld's SQLite connection helper to allow cross-thread usage.
         # The venv runner serves via uvicorn which may dispatch requests across
@@ -562,9 +565,7 @@ class AppWorldEvaluator(Evaluator):
     def _ensure_appworld_root(self) -> None:
         from appworld import update_root  # type: ignore
 
-        cache = Path(settings.cache_dir).expanduser()
-        root = str(cache / "appworld")
-        update_root(root)
+        update_root(_appworld_root())
 
     def list_tasks(self) -> list[str]:
         from appworld.task import load_task_ids  # type: ignore

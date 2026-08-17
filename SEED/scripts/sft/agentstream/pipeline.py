@@ -21,6 +21,7 @@ import argparse
 import json
 import logging
 import random
+import re
 import sys
 import threading
 import time
@@ -63,7 +64,14 @@ OUTPUT_FILES = [
     "sft_episode_skill_val.parquet",
     "metrics.json",
     "run_config.json",
+    "inspection/rollouts.json",
+    "inspection/skills.json",
 ]
+
+_SECRET_RE = re.compile(
+    r"(?i)(api[-_ ]?key|authorization|bearer|token|password|secret)(\s*[:=]\s*|\s+)([^\s,;]+)"
+)
+_BASE64_RE = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{256,}={0,2}(?![A-Za-z0-9+/=])")
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,6 +93,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skill-gen-workers", type=int, default=64)
     parser.add_argument("--sft-val-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--inspection-samples", type=int, default=3)
+    parser.add_argument("--inspection-max-chars", type=int, default=4000)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--stop-after-baseline-rollouts", action="store_true")
@@ -101,6 +111,93 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument(f"--{prefix}-retry-delay", type=float, default=1.0)
         parser.add_argument(f"--{prefix}-extra-body-json", default=None)
     return parser.parse_args()
+
+
+def _inspection_text(value: Any, max_chars: int) -> str:
+    text = str(value or "")
+    text = _SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", text)
+    text = _BASE64_RE.sub("[REDACTED_BASE64]", text)
+    if len(text) > max_chars:
+        text = f"{text[:max_chars]}... [truncated {len(text) - max_chars} chars]"
+    return text
+
+
+def _select_inspection_rows(rows: Sequence[Dict[str, Any]], sample_count: int) -> List[Dict[str, Any]]:
+    by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for row in sorted(
+        rows,
+        key=lambda item: (
+            str(item.get("task_type", "")),
+            str(item.get("task_id", item.get("skill_id", ""))),
+            int(item.get("rollout_id", item.get("source_rollout_id", 0))),
+        ),
+    ):
+        by_type.setdefault(str(row.get("task_type", "")), []).append(row)
+
+    selected = []
+    while len(selected) < sample_count and any(by_type.values()):
+        for task_type in sorted(by_type):
+            if by_type[task_type]:
+                selected.append(by_type[task_type].pop(0))
+                if len(selected) == sample_count:
+                    break
+    return selected
+
+
+def write_inspection_samples(
+    output_dir: Path,
+    rollouts: Sequence[Dict[str, Any]],
+    skills: Sequence[Dict[str, Any]],
+    *,
+    sample_count: int,
+    max_chars: int,
+) -> None:
+    if sample_count <= 0:
+        return
+
+    inspection_dir = output_dir / "inspection"
+    inspection_dir.mkdir(parents=True, exist_ok=True)
+    selected_rollouts = _select_inspection_rows(rollouts, sample_count)
+    rollout_samples = []
+    for rollout in selected_rollouts:
+        rollout_samples.append(
+            {
+                "task_id": rollout.get("task_id"),
+                "rollout_id": rollout.get("rollout_id"),
+                "task_type": rollout.get("task_type"),
+                "success": bool(rollout.get("success", False)),
+                "score": float(rollout.get("score", 0.0)),
+                "num_steps": int(rollout.get("num_steps", 0)),
+                "task_description": _inspection_text(rollout.get("task_description"), max_chars),
+                "steps": [
+                    {
+                        "step_idx": step.get("step_idx"),
+                        "observation": _inspection_text(step.get("observation"), max_chars),
+                        "model_response": _inspection_text(step.get("model_response"), max_chars),
+                        "is_action_valid": bool(step.get("info", {}).get("is_action_valid", False)),
+                        "policy_api_error": bool(step.get("info", {}).get("policy_api_error")),
+                    }
+                    for step in rollout.get("steps", [])
+                ],
+            }
+        )
+
+    selected_skills = _select_inspection_rows(skills, sample_count)
+    skill_samples = [
+        {
+            "skill_id": skill.get("skill_id"),
+            "task_type": skill.get("task_type"),
+            "source_success": bool(skill.get("source_success", False)),
+            "source_num_steps": int(skill.get("source_num_steps", 0)),
+            "parse_ok": bool(skill.get("parse_ok", False)),
+            "episode_summary": _inspection_text(skill.get("episode_summary"), max_chars),
+            "episode_skill": _inspection_text(skill.get("episode_skill"), max_chars),
+            "analysis_error": _inspection_text(skill.get("analysis_error"), max_chars),
+        }
+        for skill in selected_skills
+    ]
+    write_json(inspection_dir / "rollouts.json", rollout_samples)
+    write_json(inspection_dir / "skills.json", skill_samples)
 
 
 def prepare_output_dir(output_dir: Path, *, resume: bool, overwrite: bool) -> None:
@@ -516,11 +613,26 @@ def main() -> None:
     finally:
         hub.close()
 
+    write_inspection_samples(
+        output_dir,
+        rollouts,
+        [],
+        sample_count=args.inspection_samples,
+        max_chars=args.inspection_max_chars,
+    )
+
     if args.stop_after_baseline_rollouts:
         logging.info("Baseline rollouts complete; stopping before skill generation.")
         return
 
     candidates = generate_skills(rollouts, args, output_dir, skill_endpoint)
+    write_inspection_samples(
+        output_dir,
+        rollouts,
+        candidates,
+        sample_count=args.inspection_samples,
+        max_chars=args.inspection_max_chars,
+    )
     sft_records = export_sft(candidates, output_dir, args.sft_val_ratio, args.seed)
 
     write_json(

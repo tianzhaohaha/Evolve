@@ -150,7 +150,7 @@ class BenchmarkHub:
 # Worker side: one live session per environment slot
 # ---------------------------------------------------------------------------
 
-def render_action_schemas(actions: List[Any]) -> str:
+def render_action_schemas(actions: List[Any], *, compact: bool = False) -> str:
     """Human/LLM-readable list of available actions with JSON schemas."""
     blocks: List[str] = []
     for action_type in actions:
@@ -163,7 +163,17 @@ def render_action_schemas(actions: List[Any]) -> str:
                 type_name = prop.get("type", prop.get("anyOf", "any"))
                 req = "required" if prop_name in required else "optional"
                 desc = prop.get("description", "")
-                arg_lines.append(f"    - {prop_name} ({type_name}, {req}): {desc}".rstrip())
+                if compact:
+                    arg_lines.append(f"{prop_name}:{type_name} ({req})")
+                else:
+                    arg_lines.append(f"    - {prop_name} ({type_name}, {req}): {desc}".rstrip())
+            if compact:
+                args_text = ", ".join(arg_lines) if arg_lines else "none"
+                description = " ".join(str(action_type.description).split())
+                if len(description) > 200:
+                    description = description[:200].rstrip() + "..."
+                blocks.append(f"- {action_type.name}: {description}\n  args: {args_text}")
+                continue
             args_text = "\n".join(arg_lines) if arg_lines else "    (no arguments)"
         except Exception:
             args_text = "    (schema unavailable)"
@@ -271,7 +281,7 @@ class SessionDriver:
             "task_id": self._task_id,
             "task": str(self._session.task),
             "context": self._safe_context(),
-            "actions_text": render_action_schemas(self._action_types),
+            "actions_text": render_action_schemas(self._action_types, compact=slug == "appworld"),
             "observation": observation_to_text(observation),
         }
 

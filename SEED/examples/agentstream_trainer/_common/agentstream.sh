@@ -60,6 +60,29 @@ AS_NUM_TASKS=${AS_NUM_TASKS:-50}
 AS_VAL_TASKS=${AS_VAL_TASKS:-16}
 AS_VAL_SOURCE=${AS_VAL_SOURCE:-holdout}
 AS_BLOCK_PASSES=${AS_BLOCK_PASSES:-1}
+AS_ON_EXHAUSTED=${AS_ON_EXHAUSTED:-cycle}
+if [[ -z "${AS_BENCHMARK_KWARGS_JSON:-}" ]]; then
+    AS_BENCHMARK_KWARGS_JSON='{}'
+fi
+AS_BENCHMARK_KWARGS_HYDRA=$(python3 -c '
+import json
+import re
+import sys
+
+def render(value):
+    if isinstance(value, dict):
+        fields = []
+        for key, item in value.items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", str(key)):
+                raise ValueError(f"Unsupported Hydra mapping key: {key!r}")
+            fields.append(f"{key}:{render(item)}")
+        return "{" + ",".join(fields) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(render(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=True)
+
+print(render(json.loads(sys.argv[1])))
+' "$AS_BENCHMARK_KWARGS_JSON")
 AS_RUNNER=${AS_RUNNER:-venv}
 AS_MAX_STEPS=${AS_MAX_STEPS:-30}
 
@@ -72,6 +95,7 @@ POLICY_ROLLOUT_N=${POLICY_ROLLOUT_N:-1}
 NUM_CPUS_PER_ENV_WORKER=${NUM_CPUS_PER_ENV_WORKER:-0.2}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-64}
 PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}
+LOG_PROB_MICRO_BATCH_SIZE_PER_GPU=${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU:-32}
 TENSOR_MODEL_PARALLEL_SIZE=${TENSOR_MODEL_PARALLEL_SIZE:-1}
 N_GPUS_PER_NODE=${N_GPUS_PER_NODE:-8}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-160}
@@ -79,6 +103,9 @@ SAVE_FREQ=${SAVE_FREQ:-10}
 TEST_FREQ=${TEST_FREQ:-5}
 RL_RESUME_MODE=${RL_RESUME_MODE:-auto}
 RL_RESUME_FROM_PATH=${RL_RESUME_FROM_PATH:-null}
+WANDB_ROLLOUT_SAMPLES=${WANDB_ROLLOUT_SAMPLES:-3}
+WANDB_ROLLOUT_SAMPLE_FREQ=${WANDB_ROLLOUT_SAMPLE_FREQ:-10}
+WANDB_ROLLOUT_SAMPLE_MAX_CHARS=${WANDB_ROLLOUT_SAMPLE_MAX_CHARS:-4000}
 
 # Long tool-schema prompts need a wider context than ALFWorld.
 MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-8192}
@@ -116,10 +143,12 @@ SEED_ANALYSIS_CONTEXT_LENGTH=${SEED_ANALYSIS_CONTEXT_LENGTH:-16384}
 SEED_ANALYSIS_MAX_COMPLETION_TOKENS=${SEED_ANALYSIS_MAX_COMPLETION_TOKENS:-4096}
 SEED_ANALYSIS_MAX_MODEL_LEN=${SEED_ANALYSIS_MAX_MODEL_LEN:-20480}
 SEED_ANALYSIS_MAX_STEP_SKILLS_PER_TRAJ=${SEED_ANALYSIS_MAX_STEP_SKILLS_PER_TRAJ:-5}
+SEED_ANALYSIS_PROMPT_VERSION=${SEED_ANALYSIS_PROMPT_VERSION:-seed}
+SEED_ANALYSIS_INCLUDE_EPISODE_SUMMARY=${SEED_ANALYSIS_INCLUDE_EPISODE_SUMMARY:-True}
 
 PROJECT_NAME=${PROJECT_NAME:-agentic_agentstream}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-seed_agentstream_${AS_STREAM_MODE}_${AS_PROTOCOL}_s${AS_STREAM_SEED}}
-DEFAULT_LOCAL_DIR=${DEFAULT_LOCAL_DIR:-$MODELS_ROOT/ckpt/$EXPERIMENT_NAME}
+DEFAULT_LOCAL_DIR=${DEFAULT_LOCAL_DIR:-${CHECKPOINTS_ROOT:-$MODELS_ROOT/ckpt}/$EXPERIMENT_NAME}
 
 history_length=${history_length:-5}
 
@@ -159,7 +188,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$LOG_PROB_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$TENSOR_MODEL_PARALLEL_SIZE \
     actor_rollout_ref.rollout.n=$POLICY_ROLLOUT_N \
     actor_rollout_ref.rollout.name=$ENGINE \
@@ -171,7 +200,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_batched_tokens=$SEED_ANALYSIS_MAX_MODEL_LEN \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$LOG_PROB_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
@@ -195,6 +224,8 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.analysis_context_length=$SEED_ANALYSIS_CONTEXT_LENGTH \
     algorithm.seed.analysis_max_completion_tokens=$SEED_ANALYSIS_MAX_COMPLETION_TOKENS \
     algorithm.seed.analysis_max_step_skills_per_traj=$SEED_ANALYSIS_MAX_STEP_SKILLS_PER_TRAJ \
+    algorithm.seed.analysis_prompt_version=$SEED_ANALYSIS_PROMPT_VERSION \
+    algorithm.seed.analysis_include_episode_summary=$SEED_ANALYSIS_INCLUDE_EPISODE_SUMMARY \
     algorithm.seed.skill_gen.max_samples=$SEED_SKILL_GEN_MAX_SAMPLES \
     algorithm.seed.skill_gen.valid_json_bonus=$SEED_SKILL_GEN_VALID_JSON_BONUS \
     algorithm.seed.skill_gen.non_empty_skill_bonus=$SEED_SKILL_GEN_NON_EMPTY_SKILL_BONUS \
@@ -212,6 +243,7 @@ python3 -m verl.trainer.main_ppo \
     env.agentstream.exgentic_root=$AGENTSTREAM_EXGENTIC_ROOT \
     env.agentstream.runner=$AS_RUNNER \
     "env.agentstream.benchmarks=[$AS_BENCHMARKS]" \
+    "+env.agentstream.benchmark_kwargs=$AS_BENCHMARK_KWARGS_HYDRA" \
     env.agentstream.stream_mode=$AS_STREAM_MODE \
     env.agentstream.stream_seed=$AS_STREAM_SEED \
     env.agentstream.num_tasks_per_benchmark=$AS_NUM_TASKS \
@@ -219,6 +251,7 @@ python3 -m verl.trainer.main_ppo \
     env.agentstream.val_tasks_per_benchmark=$AS_VAL_TASKS \
     env.agentstream.val_source=$AS_VAL_SOURCE \
     env.agentstream.block_passes=$AS_BLOCK_PASSES \
+    env.agentstream.on_exhausted=$AS_ON_EXHAUSTED \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name=$PROJECT_NAME \
@@ -232,5 +265,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.resume_from_path=$RL_RESUME_FROM_PATH \
     trainer.val_before_train=False \
     trainer.default_local_dir=$DEFAULT_LOCAL_DIR \
+    trainer.log_rollout_samples=$WANDB_ROLLOUT_SAMPLES \
+    trainer.log_rollout_samples_freq=$WANDB_ROLLOUT_SAMPLE_FREQ \
+    trainer.log_rollout_samples_max_chars=$WANDB_ROLLOUT_SAMPLE_MAX_CHARS \
     trainer.rollout_data_dir=$DEFAULT_LOCAL_DIR \
     "$@"
