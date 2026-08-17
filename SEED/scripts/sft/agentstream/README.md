@@ -12,13 +12,20 @@ SEED 论文流程与脚本阶段的对应关系：
 
 默认正式配置位于 `examples/agentstream_trainer/agentstream_full.env`：
 
-- benchmark：`bfcl,appworld,tau2`
-- 每个 benchmark 6 个任务，每个任务 2 条 Stage-1 rollout
-- SFT：1 epoch
-- RL_OPD：每种 stream 模式 2 epoch
+- benchmark：`bfcl,appworld,tau2`（bfcl 使用 `multi_turn_base` 子集，与原始 AgentStream 对齐；tau2 使用 `retail`）
+- 每个 benchmark 50 个任务（seed-42 选择），每个任务 8 条 Stage-1 rollout
+- SFT：2 epoch
+- RL_OPD：sequential/interleaved 各 80 步，isolated 每个 benchmark 20 步
+- 步数上限：全局 40，按 benchmark 覆盖 `{"bfcl":25,"tau2":30,"appworld":40}`（`AGENTSTREAM_MAX_STEPS_JSON`）
+- 奖励：`10 × success + score`（`reward_use_score=True`，纳入 benchmark 的连续分数）
 - GPU：2–7；Stage 1 本地 vLLM 只使用 GPU 2
 - RL 模式：`sequential`、`interleaved`、`isolated`
-- checkpoint resume：关闭
+
+> **配置断代提醒**：bfcl 子集、prompt 模板（带历史模板现每步携带 Task context）、
+> 步数与奖励定义近期同时变更。旧的 Stage 1 数据与 Stage 2 SFT 模型和新配置不兼容，
+> 需从 Stage 1 重跑；重跑时建议更换输出目录版本号（`AGENTSTREAM_SFT_DATA_DIR`、
+> `AGENTSTREAM_SFT_MODEL_DIR`、`AGENTSTREAM_EXPERIMENT_PREFIX`），不要用
+> `AGENTSTREAM_PREPARE_RESUME=true` 在旧数据目录上续跑，否则新旧任务集会混在一起。
 
 所有命令均从 SEED 根目录执行：
 
@@ -229,7 +236,7 @@ tail -f logs/agentstream/stage3_interleaved.log
 
 ## Stage 3：Isolated Self-Evolving OPD RL
 
-Interleaved 完成并检查通过后再执行。Isolated 会依次启动 BFCL 和 AppWorld 两个独立训练，权重不共享：
+Interleaved 完成并检查通过后再执行。Isolated 会按 benchmark 列表依次启动多个独立训练（默认 bfcl、appworld、tau2 三个），权重互不共享，各自产生独立的 checkpoint 目录和 WandB run：
 
 ```bash
 nohup env \
@@ -244,7 +251,7 @@ echo $! | tee logs/agentstream/stage3_isolated.pid
 tail -f logs/agentstream/stage3_isolated.log
 ```
 
-预期产生两个目录：
+预期每个 benchmark 各产生一个目录（默认三个）：
 
 ```bash
 find /home/jcgu/qyliu/OPDevolve/SEED/checkpoints -maxdepth 1 -type d \
@@ -285,7 +292,7 @@ grep -E \
 - `seed/opd_loss_enabled:1`
 - `actor/opd_active_token_ratio > 0`
 - `actor/opd_loss` 是有限值
-- `training/global_step` 最终达到 2
+- `training/global_step` 最终达到配置的总步数（默认 sequential/interleaved 为 80，isolated 每个 benchmark 20）
 
 检查致命异常：
 

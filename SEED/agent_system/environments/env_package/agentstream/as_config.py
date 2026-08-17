@@ -31,6 +31,7 @@ Design goals (kept in sync with the integration plan):
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -44,12 +45,12 @@ DEFAULT_BENCHMARK_KWARGS: Dict[str, Dict[str, Any]] = {
     # Mirrors AgentStream/exgentic/scripts/*/run_experiment.py BENCHMARK_REGISTRY
     # (subset choices), minus API-model specific fields which the user overrides
     # via env.agentstream.benchmark_kwargs.
-    "bfcl": {},
+    "bfcl": {"subset": "multi_turn_base"},
     "tau2": {"subset": "telecom"},
-    "appworld": {},
+    "appworld": {"subset": "test_challenge"},
     "hle": {},
     "browsecompplus": {},
-    "swebench": {},
+    "swebench": {"subset": "princeton-nlp/SWE-bench_Verified"},
 }
 
 
@@ -122,9 +123,17 @@ class AgentStreamConfig:
 
     # --- episode shaping ------------------------------------------------------
     max_steps: Optional[int] = None  # falls back to env.max_steps
+    # Per-benchmark step-budget overrides (slug -> steps). The vectorized
+    # rollout loop still runs env.max_steps iterations, so values above the
+    # global budget have no effect: set the global budget to the largest value
+    # you need and use this mapping to end cheaper benchmarks earlier.
+    max_steps_per_benchmark: Dict[str, int] = field(default_factory=dict)
     reward_success: float = 10.0  # same scale as ALFWorld/AppWorld in SEED
     # If true, add the raw benchmark score (0..1) on top of the success bonus.
-    reward_use_score: bool = False
+    # AgentStream's headline metric is the graded score (appworld partial test
+    # pass rate etc.), so it participates in the RL signal by default —
+    # mirroring SEED's own multi-modal ALFWorld reward shape.
+    reward_use_score: bool = True
     # Penalty applied by projection when the action cannot be parsed. The
     # trainer already supports invalid-action penalties; this stays 0 here.
     format_penalty: float = 0.0
@@ -151,6 +160,10 @@ class AgentStreamConfig:
         merged = dict(DEFAULT_BENCHMARK_KWARGS.get(slug, {}))
         merged.update(self.benchmark_kwargs.get(slug, {}) or {})
         return merged
+
+    def resolved_max_steps(self, slug: str, default: int) -> int:
+        value = int(self.max_steps_per_benchmark.get(slug, 0) or 0)
+        return value if value > 0 else int(default)
 
 
 def parse_agentstream_config(config: Any) -> AgentStreamConfig:
@@ -192,6 +205,19 @@ def parse_agentstream_config(config: Any) -> AgentStreamConfig:
 
     max_steps = node.get("max_steps")
     cfg.max_steps = int(max_steps) if max_steps is not None else None
+
+    max_steps_per_benchmark = pick("max_steps_per_benchmark", {})
+    if isinstance(max_steps_per_benchmark, str):
+        text = max_steps_per_benchmark.strip()
+        max_steps_per_benchmark = json.loads(text) if text else {}
+    if not isinstance(max_steps_per_benchmark, dict):
+        raise ValueError(
+            "env.agentstream.max_steps_per_benchmark must be a mapping "
+            "(or a JSON object string), e.g. {'appworld': 40}"
+        )
+    cfg.max_steps_per_benchmark = {
+        str(k): int(v) for k, v in max_steps_per_benchmark.items()
+    }
     cfg.reward_success = float(pick("reward_success", cfg.reward_success))
     cfg.reward_use_score = bool(pick("reward_use_score", cfg.reward_use_score))
     cfg.format_penalty = float(pick("format_penalty", cfg.format_penalty))

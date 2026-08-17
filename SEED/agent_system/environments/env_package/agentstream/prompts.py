@@ -53,6 +53,7 @@ Once you've finished your reasoning, choose exactly one action and present it wi
 AGENTSTREAM_TEMPLATE = """
 {benchmark_intro}
 Your task is: {task_description}
+Task context: {task_context}
 Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history}
 You are now at step {current_step} and your current observation is: {current_observation}
 The actions you may take (name, description, arguments) are:
@@ -88,6 +89,10 @@ def render_prompt(
     return AGENTSTREAM_TEMPLATE.format(
         benchmark_intro=intro,
         task_description=task,
+        # Repeated every step, following the SEED AppWorld precedent: context
+        # carries task-defining data (credentials, domain policy) the policy
+        # cannot recover from the bounded history window.
+        task_context=context or "{}",
         step_count=step_count,
         history_length=history_len,
         action_history=history_text,

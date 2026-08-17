@@ -261,6 +261,10 @@ class SessionDriver:
         self._finished = True
         self.close_session()
 
+    def set_max_steps(self, max_steps: int) -> None:
+        """Adjust the per-episode step budget (per-benchmark overrides)."""
+        self._max_steps = int(max_steps)
+
     def reset(
         self,
         slug: str,

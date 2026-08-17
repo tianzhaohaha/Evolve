@@ -406,10 +406,13 @@ env:
     on_exhausted: cycle             # cycle | stop when the ordered stream runs out
     block_passes: 1                 # sequential/isolated: repeat each benchmark block N times
     max_steps: null                 # null -> env.max_steps
+    # Per-benchmark step budgets as a JSON object string, e.g. '{"bfcl": 15, "appworld": 40}'.
+    # Values above env.max_steps have no effect (the rollout loop bound); use this to end cheaper benchmarks earlier.
+    max_steps_per_benchmark: ${oc.env:AGENTSTREAM_MAX_STEPS_JSON,null}
     reset_timeout_s: 600            # per-batch env reset budget; straggler workers are killed+replaced (<=0 disables)
     step_timeout_s: 600             # per-batch env step budget; same straggler handling
     reward_success: 10.0            # same terminal reward scale as ALFWorld/AppWorld
-    reward_use_score: False         # additionally add the raw benchmark score
+    reward_use_score: True          # add the raw benchmark score (AgentStream's graded headline metric)
     online_metrics_enable: True
     online_metrics_path: ""         # "" -> <trainer.default_local_dir>/agentstream_online_metrics.jsonl
     val_stream_seed: 1042
