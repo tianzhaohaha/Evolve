@@ -18,7 +18,7 @@ SEED 论文流程与脚本阶段的对应关系：
 - RL_OPD：sequential/interleaved 各 80 步，isolated 每个 benchmark 20 步
 - 步数上限：全局 40，按 benchmark 覆盖 `{"bfcl":25,"tau2":30,"appworld":40}`（`AGENTSTREAM_MAX_STEPS_JSON`）
 - 奖励：`10 × success + score`（`reward_use_score=True`，纳入 benchmark 的连续分数）
-- GPU：2–7；Stage 1 本地 vLLM 只使用 GPU 2
+- GPU：2–7；Stage 1 本地 vLLM 默认只用 GPU 2，可设 `AGENTSTREAM_POLICY_GPU=2,3,4,5`（逗号列表）做多卡数据并行——每卡一个模型副本、请求自动轮询分摊，并发会话数按副本数自动放大
 - RL 模式：`sequential`、`interleaved`、`isolated`
 
 > **配置断代提醒**：bfcl 子集、prompt 模板（带历史模板现每步携带 Task context）、

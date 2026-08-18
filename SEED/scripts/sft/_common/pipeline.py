@@ -10,11 +10,13 @@ injection format.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import logging
 import os
 import random
 import sys
+import threading
 import time
 import uuid
 from collections import Counter, defaultdict
@@ -104,16 +106,33 @@ class ChatEndpoint:
 class OpenAITextClient:
     def __init__(self, endpoint: ChatEndpoint):
         self.endpoint = endpoint
-        self.client = OpenAI(
-            api_key=endpoint.api_key,
-            base_url=endpoint.base_url,
-            timeout=endpoint.timeout,
-            max_retries=0,
-        )
+        # base_url may be a comma-separated list of equivalent replicas
+        # (data-parallel serving); requests round-robin across them, and the
+        # per-request retry loop naturally fails over to the next replica.
+        base_urls = [url.strip() for url in endpoint.base_url.split(",") if url.strip()]
+        if not base_urls:
+            raise ValueError("ChatEndpoint.base_url must contain at least one URL")
+        self._clients = [
+            OpenAI(
+                api_key=endpoint.api_key,
+                base_url=url,
+                timeout=endpoint.timeout,
+                max_retries=0,
+            )
+            for url in base_urls
+        ]
+        self._client_cycle = itertools.cycle(self._clients)
+        self._cycle_lock = threading.Lock()
+        self.client = self._clients[0]
+
+    def _next_client(self) -> OpenAI:
+        with self._cycle_lock:
+            return next(self._client_cycle)
 
     def complete(self, messages: List[Dict[str, str]]) -> Tuple[str, Optional[str]]:
         last_error: Optional[BaseException] = None
         for attempt in range(max(1, self.endpoint.retries)):
+            client = self._next_client()
             try:
                 request_kwargs: Dict[str, Any] = {
                     "model": self.endpoint.model,
@@ -124,7 +143,7 @@ class OpenAITextClient:
                 }
                 if self.endpoint.extra_body:
                     request_kwargs["extra_body"] = self.endpoint.extra_body
-                response = self.client.chat.completions.create(**request_kwargs)
+                response = client.chat.completions.create(**request_kwargs)
                 choice = response.choices[0]
                 message = choice.message
                 content = getattr(message, "content", "") or ""

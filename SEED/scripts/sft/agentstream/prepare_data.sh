@@ -77,11 +77,15 @@ else
     exit 2
 fi
 
-if ! curl -fsS "${POLICY_BASE_URL}/models" >/dev/null 2>&1; then
-    echo "Policy endpoint not reachable at $POLICY_BASE_URL. Start one first, e.g.:" >&2
-    echo "  vllm serve $MODEL_PATH --port ${POLICY_BASE_URL##*:} --gpu-memory-utilization 0.6" >&2
-    exit 1
-fi
+# POLICY_BASE_URL may be a comma-separated list of data-parallel replicas.
+IFS=',' read -ra _policy_check_urls <<< "$POLICY_BASE_URL"
+for _policy_url in "${_policy_check_urls[@]}"; do
+    if ! curl -fsS "${_policy_url}/models" >/dev/null 2>&1; then
+        echo "Policy endpoint not reachable at $_policy_url. Start one first, e.g.:" >&2
+        echo "  vllm serve $MODEL_PATH --port <port> --gpu-memory-utilization 0.6" >&2
+        exit 1
+    fi
+done
 
 args=(
     "$SCRIPT_DIR/pipeline.py"
