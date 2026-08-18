@@ -167,6 +167,12 @@ python3 -m examples.data_preprocess.prepare \
     --train_data_size "$TRAIN_DATA_SIZE" \
     --val_data_size "$VAL_DATA_SIZE"
 
+# Hybrid-thinking policies (Qwen3 non-2507) roll out with thinking disabled;
+# env_manager then auto-relaxes projection require_think for qwen3 models.
+if [[ "${AGENTSTREAM_DISABLE_THINKING:-false}" == "true" ]]; then
+    set -- "$@" "+data.apply_chat_template_kwargs.enable_thinking=false"
+fi
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=seed \
     data.train_files=$HOME/data/verl-agent/text/train.parquet \

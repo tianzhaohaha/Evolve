@@ -62,6 +62,17 @@ printf "benchmarks=%s\ntasks/domain=%s\nsft_epochs=%s\nrl_modes=%s\nrl_epochs=%s
 '
 ```
 
+## 换底座模型（含 Qwen3 混合思考系列）
+
+只改 `agentstream_full.env` 里的 `AGENTSTREAM_BASE_MODEL_NAME`（可用名称见该文件注释），tag、数据目录、SFT 模型目录、实验名全部自动派生。模型需已下载到 `$AGENTSTREAM_LLMS_ROOT/<模型名>`（pipeline 不会自动下载），例如：
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-8B \
+  --local-dir /home/jcgu/qyliu/LLMs/Qwen3-8B
+```
+
+thinking 模式全流程默认关闭。Qwen3 混合思考系列（Qwen3-8B/-4B/-1.7B 等，非 2507）由 env 按模型名自动处理：Stage-1 请求体加 `chat_template_kwargs.enable_thinking=false` 并放宽 require_think，Stage-2/3 追加 hydra 覆盖 `+data.apply_chat_template_kwargs.enable_thinking=false`（Stage-3 的 projection require_think 由 env_manager 检测到 qwen3 + enable_thinking=false 后自动放宽）。需要强行改变时设 `AGENTSTREAM_DISABLE_THINKING=true|false` 覆盖。注意 Qwen3.5 系列（`qwen3_5` 新架构）当前 seed 环境的 transformers/vllm 不支持，需另开克隆环境验证升级链后再用。
+
 ## Stage 1：生成 Hindsight-Skill SFT 数据
 
 该命令会自动启动 Stage-1 本地 vLLM，生成 rollout 和 skill 数据，完成后停止该 vLLM。外部 skill teacher 的地址和凭据从仓库 `.env` 读取，不会写入日志命令。

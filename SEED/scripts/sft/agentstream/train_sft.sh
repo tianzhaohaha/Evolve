@@ -17,5 +17,11 @@ SFT_LOG_DATA_SAMPLES="${SFT_LOG_DATA_SAMPLES:-3}"
 SFT_LOG_DATA_SAMPLES_FREQ="${SFT_LOG_DATA_SAMPLES_FREQ:-10}"
 SFT_LOG_DATA_SAMPLES_MAX_CHARS="${SFT_LOG_DATA_SAMPLES_MAX_CHARS:-4000}"
 
+# Hybrid-thinking base models (Qwen3 non-2507) train with thinking disabled,
+# matching the Stage-1 rollout chat template.
+if [[ "${AGENTSTREAM_DISABLE_THINKING:-false}" == "true" ]]; then
+    set -- "$@" "+data.apply_chat_template_kwargs.enable_thinking=false"
+fi
+
 # shellcheck source=../_common/trainer.sh
 source "$PROJECT_ROOT/scripts/sft/_common/trainer.sh"

@@ -116,6 +116,9 @@ args=(
 # Extra request body for the policy endpoint, e.g. hybrid-thinking models:
 # POLICY_EXTRA_BODY_JSON='{"chat_template_kwargs":{"enable_thinking":false}}'
 [[ -n "${POLICY_EXTRA_BODY_JSON:-}" ]] && args+=(--policy-extra-body-json "$POLICY_EXTRA_BODY_JSON")
+# With enable_thinking=false the chat template injects an empty <think> block,
+# so responses legitimately omit literal <think> tags.
+[[ "${AS_NO_REQUIRE_THINK:-false}" == "true" ]] && args+=(--no-require-think)
 [[ "${RESUME:-false}" == "true" ]] && args+=(--resume)
 [[ "${OVERWRITE:-false}" == "true" ]] && args+=(--overwrite)
 [[ "${STOP_AFTER_BASELINE_ROLLOUTS:-false}" == "true" ]] && args+=(--stop-after-baseline-rollouts)
