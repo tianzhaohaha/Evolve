@@ -48,6 +48,18 @@ if [[ -z "${MODEL_PATH:-}" ]]; then
     : "${MODELS_ROOT:?Please set MODEL_PATH through a public launcher, or set MODELS_ROOT}"
     MODEL_PATH="$MODELS_ROOT/Qwen2.5-3B-Instruct"
 fi
+
+# Thinking stays disabled pipeline-wide. agentstream_full.env normally derives
+# this switch; when the launcher is invoked without it, fall back to the same
+# model-name rule so hybrid-thinking Qwen3 checkpoints never roll out with
+# native thinking silently enabled.
+if [[ -z "${AGENTSTREAM_DISABLE_THINKING:-}" ]]; then
+    case "$(basename "$MODEL_PATH")" in
+        Qwen3-*-2507*) AGENTSTREAM_DISABLE_THINKING=false ;;
+        Qwen3-*)       AGENTSTREAM_DISABLE_THINKING=true ;;
+        *)             AGENTSTREAM_DISABLE_THINKING=false ;;
+    esac
+fi
 : "${AGENTSTREAM_EXGENTIC_ROOT:?Please set AGENTSTREAM_EXGENTIC_ROOT to the AgentStream/exgentic checkout}"
 export AGENTSTREAM_EXGENTIC_ROOT
 
