@@ -109,6 +109,9 @@ args=(
     --skill-model "$SKILL_MODEL"
 )
 [[ -n "$MAX_CANDIDATES" ]] && args+=(--max-candidates "$MAX_CANDIDATES")
+# Extra request body for the policy endpoint, e.g. hybrid-thinking models:
+# POLICY_EXTRA_BODY_JSON='{"chat_template_kwargs":{"enable_thinking":false}}'
+[[ -n "${POLICY_EXTRA_BODY_JSON:-}" ]] && args+=(--policy-extra-body-json "$POLICY_EXTRA_BODY_JSON")
 [[ "${RESUME:-false}" == "true" ]] && args+=(--resume)
 [[ "${OVERWRITE:-false}" == "true" ]] && args+=(--overwrite)
 [[ "${STOP_AFTER_BASELINE_ROLLOUTS:-false}" == "true" ]] && args+=(--stop-after-baseline-rollouts)
