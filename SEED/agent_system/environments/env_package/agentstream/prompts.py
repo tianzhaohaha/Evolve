@@ -23,24 +23,6 @@ The action payload is a JSON object because AgentStream benchmarks expose
 structured tool schemas rather than a flat admissible-command list.
 """
 
-import os
-from typing import Optional
-
-# One-shot response-format example, appended to every prompt when
-# AGENTSTREAM_PROMPT_FORMAT_EXAMPLE is truthy (default off = prompts unchanged).
-# Models with a strong native tool-call format (e.g. Qwen3-*-2507's <tool_call>
-# style) tend to ignore the bare format instruction without a concrete example.
-_FORMAT_EXAMPLE_ENABLED = os.environ.get(
-    "AGENTSTREAM_PROMPT_FORMAT_EXAMPLE", ""
-).strip().lower() in {"1", "true", "yes", "on"}
-
-FORMAT_EXAMPLE_BLOCK = """
-Here is an example of a correctly formatted response (the action name and arguments are illustrative only; always pick from the available actions above):
-<think>The task requires checking the account balance first. Among the available actions, `get_balance` takes a `user_id` argument, so I will call it with the known id.</think>
-<action>{"name": "get_balance", "arguments": {"user_id": "U1024"}}</action>
-Do NOT use any other output format: no <tool_call> tags, no <thinking> tags, no <message> tags, and no text outside the <think> and <action> tags.
-"""
-
 # Per-benchmark one-line intros keep prompts short while giving the policy a
 # stable domain cue (useful for sequential/interleaved streams).
 BENCHMARK_INTROS = {
@@ -93,25 +75,18 @@ def render_prompt(
     step_count: int = 0,
     history_text: str = "",
     history_len: int = 0,
-    format_example: Optional[bool] = None,
 ) -> str:
-    """Single prompt renderer shared by the RL manager and the SFT pipeline.
-
-    ``format_example=None`` falls back to the AGENTSTREAM_PROMPT_FORMAT_EXAMPLE
-    environment switch; passing an explicit bool overrides it.
-    """
-    example_enabled = _FORMAT_EXAMPLE_ENABLED if format_example is None else bool(format_example)
+    """Single prompt renderer shared by the RL manager and the SFT pipeline."""
     intro = BENCHMARK_INTROS.get(slug, DEFAULT_INTRO)
     if step_count <= 0 or not history_text:
-        prompt = AGENTSTREAM_TEMPLATE_NO_HIS.format(
+        return AGENTSTREAM_TEMPLATE_NO_HIS.format(
             benchmark_intro=intro,
             task_description=task,
             task_context=context or "{}",
             current_observation=observation,
             available_actions=actions_text,
         )
-        return prompt + FORMAT_EXAMPLE_BLOCK if example_enabled else prompt
-    prompt = AGENTSTREAM_TEMPLATE.format(
+    return AGENTSTREAM_TEMPLATE.format(
         benchmark_intro=intro,
         task_description=task,
         # Repeated every step, following the SEED AppWorld precedent: context
@@ -125,4 +100,3 @@ def render_prompt(
         current_observation=observation,
         available_actions=actions_text,
     )
-    return prompt + FORMAT_EXAMPLE_BLOCK if example_enabled else prompt

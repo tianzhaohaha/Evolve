@@ -259,6 +259,20 @@ def apply_invalid_action_penalty(data: DataProto, invalid_action_penalty_coef=fl
     
     valid_action_ratio = np.mean(data.non_tensor_batch['is_action_valid'].astype(np.float32)).item()
     metrics = {'episode/valid_action_ratio': valid_action_ratio}
+    # Fine-grained invalid-action breakdown (only present for envs that emit it).
+    if 'action_invalid_reason' in data.non_tensor_batch:
+        reasons = data.non_tensor_batch['action_invalid_reason']
+        total = max(len(reasons), 1)
+        for reason in ('no_action_tag', 'bad_action_json', 'missing_think', 'env_action_error'):
+            metrics[f'episode/invalid_{reason}'] = float(np.sum(reasons == reason)) / total
+    if 'think_present' in data.non_tensor_batch:
+        metrics['episode/think_present_ratio'] = np.mean(
+            data.non_tensor_batch['think_present'].astype(np.float32)
+        ).item()
+    if 'used_tool_call_alias' in data.non_tensor_batch:
+        metrics['episode/tool_call_alias_ratio'] = np.mean(
+            data.non_tensor_batch['used_tool_call_alias'].astype(np.float32)
+        ).item()
     return data, metrics
 
 def compute_response_mask(data: DataProto):

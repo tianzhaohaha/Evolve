@@ -60,6 +60,7 @@ class OnlineMetricsRecorder:
         score: float,
         episode_steps: int,
         global_step: Optional[int] = None,
+        action_stats: Optional[Dict[str, int]] = None,
     ) -> None:
         first_pass = pass_idx == 0
         with self._lock:
@@ -91,5 +92,7 @@ class OnlineMetricsRecorder:
                 ),
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
+            if action_stats:
+                row["action_stats"] = dict(action_stats)
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")

@@ -24,7 +24,7 @@ to change. Only two stable SEED APIs are imported:
 from __future__ import annotations
 
 import json
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 from agent_system.memory import SimpleMemory
@@ -58,6 +58,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self._pass_indices: List[int] = []
         self._recorded: List[bool] = []
         self._episode_steps: List[int] = []
+        self._episode_action_stats: List[Dict[str, int]] = []
         self.tasks: List[str] = []
         self._contexts: List[str] = []
         self._actions_texts: List[str] = []
@@ -78,6 +79,10 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self._pass_indices = [int(info.get("pass_idx", 0)) for info in infos]
         self._recorded = [False] * batch_size
         self._episode_steps = [0] * batch_size
+        self._episode_action_stats = [
+            {"steps": 0, "valid": 0, "think_present": 0, "tool_call_alias": 0}
+            for _ in range(batch_size)
+        ]
 
         self.tasks = [str(p.get("task", "")) for p in payloads]
         self._contexts = [str(p.get("context", "")) for p in payloads]
@@ -97,7 +102,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
     # ------------------------------------------------------------------- step
 
     def step(self, text_actions: List[str]):
-        payloads, valids = self.projection_f(text_actions)
+        payloads, valids, extras = self.projection_f(text_actions)
         obs_texts, rewards, dones, infos = self.envs.step(payloads)
 
         action_strs = [
@@ -110,9 +115,25 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self.pre_text_obs = display_obs
 
         for i in range(len(infos)):
-            self._episode_steps[i] += 0 if infos[i].get("post_done", False) else 1
+            post_done = bool(infos[i].get("post_done", False))
+            self._episode_steps[i] += 0 if post_done else 1
             action_valid = bool(valids[i]) and not bool(infos[i].get("action_error", False))
             infos[i]["is_action_valid"] = to_numpy(action_valid)
+            reason = extras[i]["reason"]
+            if not reason and not action_valid:
+                reason = "env_action_error"
+            infos[i]["action_invalid_reason"] = reason
+            infos[i]["think_present"] = bool(extras[i]["think_present"])
+            infos[i]["used_tool_call_alias"] = bool(extras[i]["used_tool_call_alias"])
+            if not post_done:
+                stats = self._episode_action_stats[i]
+                stats["steps"] += 1
+                stats["valid"] += int(action_valid)
+                stats["think_present"] += int(extras[i]["think_present"])
+                stats["tool_call_alias"] += int(extras[i]["used_tool_call_alias"])
+                if reason:
+                    key = f"invalid_{reason}"
+                    stats[key] = stats.get(key, 0) + 1
             infos[i].setdefault("won", False)
 
         self._record_finished_episodes(dones, infos)
@@ -143,6 +164,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
                 success=bool(info.get("won", False)),
                 score=float(info.get("score", 0.0)),
                 episode_steps=int(info.get("step_count", self._episode_steps[i])),
+                action_stats=dict(self._episode_action_stats[i]),
             )
 
     # ------------------------------------------------------------ observations

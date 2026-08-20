@@ -39,7 +39,7 @@ from agent_system.environments.env_package.agentstream.exgentic_client import ( 
     SessionDriver,
 )
 from agent_system.environments.env_package.agentstream.projection import (  # noqa: E402
-    agentstream_projection,
+    agentstream_projection_detailed,
 )
 from agent_system.environments.env_package.agentstream.prompts import render_prompt  # noqa: E402
 from agent_system.environments.env_package.agentstream.task_stream import select_tasks  # noqa: E402
@@ -89,6 +89,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=30)
     parser.add_argument("--history-length", type=int, default=5)
     parser.add_argument("--no-require-think", action="store_true")
+    parser.add_argument("--accept-tool-call", action="store_true")
     parser.add_argument("--max-candidates", type=int, default=None)
     parser.add_argument("--skill-gen-workers", type=int, default=64)
     parser.add_argument("--sft-val-ratio", type=float, default=0.1)
@@ -175,6 +176,7 @@ def write_inspection_samples(
                         "observation": _inspection_text(step.get("observation"), max_chars),
                         "model_response": _inspection_text(step.get("model_response"), max_chars),
                         "is_action_valid": bool(step.get("info", {}).get("is_action_valid", False)),
+                        "invalid_reason": str(step.get("info", {}).get("invalid_reason", "")),
                         "policy_api_error": bool(step.get("info", {}).get("policy_api_error")),
                     }
                     for step in rollout.get("steps", [])
@@ -291,10 +293,16 @@ def run_one_rollout(
             )
             response, api_error = policy_client.complete([{"role": "user", "content": prompt}])
             response = response or ""
-            payloads, valids = agentstream_projection(
-                [response], require_think=not args.no_require_think
+            payloads, valids, extras = agentstream_projection_detailed(
+                [response],
+                require_think=not args.no_require_think,
+                accept_tool_call=args.accept_tool_call,
             )
             obs_next, done, info = driver.step(payloads[0])
+            is_valid = bool(valids[0]) and not info.get("action_error", False)
+            reason = extras[0]["reason"]
+            if not reason and not is_valid:
+                reason = "env_action_error"
             steps.append(
                 {
                     "step_idx": step_idx,
@@ -302,7 +310,10 @@ def run_one_rollout(
                     "observation_prompt": prompt,
                     "model_response": response,
                     "info": {
-                        "is_action_valid": bool(valids[0]) and not info.get("action_error", False),
+                        "is_action_valid": is_valid,
+                        "invalid_reason": reason,
+                        "think_present": extras[0]["think_present"],
+                        "used_tool_call_alias": extras[0]["used_tool_call_alias"],
                         "policy_api_error": api_error,
                     },
                 }
@@ -428,6 +439,60 @@ def collect_rollouts(
         successes=sum(1 for r in records if r.get("success")),
     )
     return records
+
+
+_INVALID_REASONS = ("no_action_tag", "bad_action_json", "missing_think", "env_action_error")
+
+
+def summarize_action_validity(
+    rollouts: Sequence[Dict[str, Any]],
+    *,
+    require_think: bool,
+    accept_tool_call: bool,
+) -> Dict[str, Any]:
+    """Per-step validity breakdown, re-classified from stored model responses.
+
+    Re-parsing (instead of trusting per-step info) also covers resumed rollouts
+    recorded before the detailed fields existed. A step that parses fine but was
+    recorded invalid means the env rejected it (env_action_error).
+    """
+    overall: Counter = Counter()
+    by_type: Dict[str, Counter] = {}
+    for rollout in rollouts:
+        counter = by_type.setdefault(str(rollout.get("task_type", "")), Counter())
+        for step in rollout.get("steps", []):
+            _, valids, extras = agentstream_projection_detailed(
+                [str(step.get("model_response", ""))],
+                require_think=require_think,
+                accept_tool_call=accept_tool_call,
+            )
+            stored_valid = bool(step.get("info", {}).get("is_action_valid", False))
+            for c in (counter, overall):
+                c["steps"] += 1
+                c["think_present"] += int(extras[0]["think_present"])
+                c["tool_call_alias"] += int(extras[0]["used_tool_call_alias"])
+                if stored_valid:
+                    c["valid"] += 1
+                else:
+                    c[f"invalid_{extras[0]['reason'] or 'env_action_error'}"] += 1
+
+    def _ratios(counter: Counter) -> Dict[str, Any]:
+        steps = counter["steps"]
+        out: Dict[str, Any] = {"steps": steps}
+        if steps:
+            out["valid_action_ratio"] = counter["valid"] / steps
+            out["think_present_ratio"] = counter["think_present"] / steps
+            out["tool_call_alias_ratio"] = counter["tool_call_alias"] / steps
+            for reason in _INVALID_REASONS:
+                out[f"invalid_{reason}"] = counter[f"invalid_{reason}"] / steps
+        return out
+
+    return {
+        "require_think": require_think,
+        "accept_tool_call": accept_tool_call,
+        "overall": _ratios(overall),
+        "by_benchmark": {slug: _ratios(c) for slug, c in sorted(by_type.items())},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +714,11 @@ def main() -> None:
             "rollouts_by_benchmark": dict(Counter(r["task_type"] for r in rollouts)),
             "success_by_benchmark": dict(
                 Counter(r["task_type"] for r in rollouts if r.get("success"))
+            ),
+            "action_validity": summarize_action_validity(
+                rollouts,
+                require_think=not args.no_require_think,
+                accept_tool_call=args.accept_tool_call,
             ),
         },
     )

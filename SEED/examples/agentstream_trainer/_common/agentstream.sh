@@ -185,6 +185,14 @@ if [[ "${AGENTSTREAM_DISABLE_THINKING:-false}" == "true" ]]; then
     set -- "$@" "+data.apply_chat_template_kwargs.enable_thinking=false"
 fi
 
+# Action-hardness switches from agentstream_full.env (default off = strict).
+if [[ "${AGENTSTREAM_RELAX_REQUIRE_THINK:-false}" == "true" ]]; then
+    set -- "$@" "+env.projection_require_think=false"
+fi
+if [[ "${AGENTSTREAM_ACCEPT_TOOL_CALL:-false}" == "true" ]]; then
+    set -- "$@" "+env.projection_accept_tool_call=true"
+fi
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=seed \
     data.train_files=$HOME/data/verl-agent/text/train.parquet \

@@ -30,7 +30,7 @@ from .envs import AgentStreamEnvs
 from .exgentic_client import BenchmarkHub
 from .manager import AgentStreamEnvironmentManager
 from .metrics import OnlineMetricsRecorder
-from .projection import agentstream_projection
+from .projection import agentstream_projection_detailed
 from .task_stream import TaskStreamScheduler, ValTaskCycler, build_splits
 
 
@@ -127,7 +127,16 @@ def make_agentstream_envs(
         )
 
     think = True if require_think is None else bool(require_think)
-    projection_f = partial(agentstream_projection, require_think=think)
+    # Opt-in switch (+env.projection_accept_tool_call=true): fall back to the
+    # first <tool_call> block when the response has no <action> tag.
+    accept_tool_call = str(
+        _select(config, "env.projection_accept_tool_call", False)
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    projection_f = partial(
+        agentstream_projection_detailed,
+        require_think=think,
+        accept_tool_call=accept_tool_call,
+    )
 
     envs = AgentStreamEnvironmentManager(
         _envs, projection_f, config, phase="train", recorder=recorder
@@ -139,6 +148,7 @@ def make_agentstream_envs(
     print(
         f"[agentstream] protocol={cfg.protocol} stream_mode={cfg.stream_mode} "
         f"stream_seed={cfg.stream_seed} benchmarks={cfg.benchmarks} "
+        f"require_think={think} accept_tool_call={accept_tool_call} "
         f"train_tasks={ {k: len(v) for k, v in train_tasks.items()} } "
         f"val_tasks={ {k: len(v) for k, v in val_tasks.items()} } "
         f"stream_length={scheduler.stream_length if cfg.stream_mode != 'random' else 'n/a (random)'}"

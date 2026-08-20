@@ -119,6 +119,8 @@ args=(
 # With enable_thinking=false the chat template injects an empty <think> block,
 # so responses legitimately omit literal <think> tags.
 [[ "${AS_NO_REQUIRE_THINK:-false}" == "true" ]] && args+=(--no-require-think)
+# Opt-in: parse the first <tool_call> block when <action> is missing.
+[[ "${AS_ACCEPT_TOOL_CALL:-false}" == "true" ]] && args+=(--accept-tool-call)
 [[ "${RESUME:-false}" == "true" ]] && args+=(--resume)
 [[ "${OVERWRITE:-false}" == "true" ]] && args+=(--overwrite)
 [[ "${STOP_AFTER_BASELINE_ROLLOUTS:-false}" == "true" ]] && args+=(--stop-after-baseline-rollouts)

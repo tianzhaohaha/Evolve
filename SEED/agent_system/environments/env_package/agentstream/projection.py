@@ -29,11 +29,13 @@ from typing import Any, Dict, List, Tuple
 
 _ACTION_RE = re.compile(r"<action>(.*?)</action>", re.DOTALL)
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+# Native tool-call alias (e.g. Qwen3-*-2507), only honored with accept_tool_call.
+_TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 # Tolerate ```json fences inside the action tag.
 _FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
 
-def _extract_json_payload(raw: str) -> Dict[str, Any]:
+def _extract_json_payload(raw: str, coerce_string_arguments: bool = False) -> Dict[str, Any]:
     text = raw.strip()
     fence = _FENCE_RE.match(text)
     if fence:
@@ -48,39 +50,79 @@ def _extract_json_payload(raw: str) -> Dict[str, Any]:
     arguments = payload.get("arguments", {})
     if arguments is None:
         arguments = {}
+    if coerce_string_arguments and isinstance(arguments, str):
+        # Native tool-call emitters sometimes serialize arguments as a JSON string.
+        arguments = json.loads(arguments)
     if not isinstance(arguments, dict):
         raise ValueError("'arguments' must be a JSON object")
     return {"name": name.strip(), "arguments": arguments}
 
 
-def agentstream_projection(
+def agentstream_projection_detailed(
     text_actions: List[str],
     require_think: bool = True,
-) -> Tuple[List[Dict[str, Any]], List[int]]:
-    """Parse policy outputs into exgentic-compatible action payloads."""
+    accept_tool_call: bool = False,
+) -> Tuple[List[Dict[str, Any]], List[int], List[Dict[str, Any]]]:
+    """Like :func:`agentstream_projection`, plus per-sample diagnostics.
+
+    ``accept_tool_call`` falls back to the first ``<tool_call>`` block when no
+    ``<action>`` tag is present (payload schema is identical). Each extras dict
+    carries ``reason`` ("" | "no_action_tag" | "bad_action_json" |
+    "missing_think"), ``think_present`` and ``used_tool_call_alias``.
+    """
     payloads: List[Dict[str, Any]] = []
     valids: List[int] = []
+    extras: List[Dict[str, Any]] = []
 
     for raw in text_actions:
         raw = raw if isinstance(raw, str) else str(raw)
         valid = 1
+        reason = ""
+        used_alias = False
         payload: Dict[str, Any] = {"name": "", "arguments": {}}
 
         match = _ACTION_RE.search(raw)
+        coerce = False
+        if match is None and accept_tool_call:
+            match = _TOOL_CALL_RE.search(raw)
+            used_alias = match is not None
+            coerce = True
         if match is None:
             valid = 0
+            reason = "no_action_tag"
         else:
             try:
-                payload = _extract_json_payload(match.group(1))
+                payload = _extract_json_payload(match.group(1), coerce_string_arguments=coerce)
             except Exception:
                 valid = 0
+                reason = "bad_action_json"
 
-        if valid and require_think:
-            think = _THINK_RE.search(raw)
-            if think is None or not think.group(1).strip():
-                valid = 0
+        think = _THINK_RE.search(raw)
+        think_present = bool(think is not None and think.group(1).strip())
+        if valid and require_think and not think_present:
+            valid = 0
+            reason = "missing_think"
 
         payloads.append(payload)
         valids.append(valid)
+        extras.append(
+            {
+                "reason": reason,
+                "think_present": think_present,
+                "used_tool_call_alias": used_alias,
+            }
+        )
 
+    return payloads, valids, extras
+
+
+def agentstream_projection(
+    text_actions: List[str],
+    require_think: bool = True,
+    accept_tool_call: bool = False,
+) -> Tuple[List[Dict[str, Any]], List[int]]:
+    """Parse policy outputs into exgentic-compatible action payloads."""
+    payloads, valids, _ = agentstream_projection_detailed(
+        text_actions, require_think=require_think, accept_tool_call=accept_tool_call
+    )
     return payloads, valids

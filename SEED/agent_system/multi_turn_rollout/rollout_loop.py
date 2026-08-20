@@ -834,6 +834,20 @@ class TrajectoryCollector:
             else:
                 batch.non_tensor_batch['is_action_valid'] = np.ones(batch_size, dtype=bool)
 
+            # Optional per-step validity diagnostics (agentstream manager).
+            if 'action_invalid_reason' in infos[0]:
+                batch.non_tensor_batch['action_invalid_reason'] = np.array(
+                    [str(info['action_invalid_reason']) for info in infos], dtype=object
+                )
+            if 'think_present' in infos[0]:
+                batch.non_tensor_batch['think_present'] = np.array(
+                    [bool(info['think_present']) for info in infos], dtype=bool
+                )
+            if 'used_tool_call_alias' in infos[0]:
+                batch.non_tensor_batch['used_tool_call_alias'] = np.array(
+                    [bool(info['used_tool_call_alias']) for info in infos], dtype=bool
+                )
+
             if 'tool_calling' in infos[0]:
                 tool_callings[active_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active_masks]
             # Create reward tensor, only assign rewards for active environments
