@@ -136,6 +136,12 @@ TEST_FREQ=${TEST_FREQ:-5}
 # ACTOR_LR=0 gives a frozen-policy control run over the same stream.
 VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-False}
 ACTOR_LR=${ACTOR_LR:-1e-6}
+# Entropy bonus coefficient (ppo_trainer.yaml default 0.001). Non-zero makes the
+# update pass materialize full-vocab fp32 softmax/logsumexp for entropy (~16 GiB
+# per 29k-token sample with a 152k vocab) and disables in-place backward for the
+# log-prob cross entropy; 0 skips that path. actor/entropy_loss stays logged
+# either way (it comes from the no-grad old-log-prob pass).
+ENTROPY_COEFF=${ENTROPY_COEFF:-0.001}
 RL_RESUME_MODE=${RL_RESUME_MODE:-auto}
 RL_RESUME_FROM_PATH=${RL_RESUME_FROM_PATH:-null}
 WANDB_ROLLOUT_SAMPLES=${WANDB_ROLLOUT_SAMPLES:-3}
@@ -225,6 +231,7 @@ python3 -m verl.trainer.main_ppo \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path=$MODEL_PATH \
     actor_rollout_ref.actor.optim.lr=$ACTOR_LR \
+    actor_rollout_ref.actor.entropy_coeff=$ENTROPY_COEFF \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$PPO_MICRO_BATCH_SIZE_PER_GPU \

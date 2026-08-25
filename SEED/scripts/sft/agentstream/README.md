@@ -13,17 +13,9 @@ SEED 论文流程与脚本阶段的对应关系：
 默认正式配置位于 `examples/agentstream_trainer/agentstream_full.env`：
 
 - benchmark：`bfcl,appworld,tau2`（bfcl 使用 `multi_turn_base` 子集，与原始 AgentStream 对齐；tau2 使用 `retail`）
-- 每个 benchmark `AGENTSTREAM_NUM_TASKS` 个任务（seed-42 选择；RL 泛化实验默认 96，对齐
-  AgentStream 协议时设 50；上限受 tau2 的 114 题约束：NUM_TASKS + VAL_TASKS ≤ 114），
-  每个任务 8 条 Stage-1 rollout。Stage-1 与 Stage-3 共用该变量，改动后重新生成 Stage-1
-  数据前请提升 `AGENTSTREAM_RUN_VERSION`
+- 每个 benchmark 50 个任务（seed-42 选择），每个任务 8 条 Stage-1 rollout
 - SFT：2 epoch
-- RL_OPD 由 `AGENTSTREAM_RL_STREAM_PROFILE` 决定：`multipass`（默认）sequential/interleaved
-  90 步、isolated 每个 benchmark 40 步，流循环多遍；`single_pass` 每题恰好一次，步数自动
-  = ⌈benchmark 数 × NUM_TASKS ÷ 每步任务数⌉（3×96÷6 = 48，isolated 96÷6 = 16），
-  每步任务数默认 = GPU 数，resume 默认关闭
-- 验证：每次覆盖全部 holdout，每题重复 `AGENTSTREAM_RL_VAL_REPEATS`（默认 2）次取均值，
-  训练前先验证一次作为 SFT 基线（`val/*` 的 step 0）
+- RL_OPD：sequential/interleaved 各 80 步，isolated 每个 benchmark 20 步
 - 步数上限：全局 40，按 benchmark 覆盖 `{"bfcl":25,"tau2":30,"appworld":40}`（`AGENTSTREAM_MAX_STEPS_JSON`）
 - 奖励：`10 × success + score`（`reward_use_score=True`，纳入 benchmark 的连续分数）
 - GPU：2–7；Stage 1 本地 vLLM 默认只用 GPU 2，可设 `AGENTSTREAM_POLICY_GPU=2,3,4,5`（逗号列表）做多卡数据并行——每卡一个模型副本、请求自动轮询分摊，并发会话数按副本数自动放大
@@ -69,6 +61,64 @@ printf "benchmarks=%s\ntasks/domain=%s\nsft_epochs=%s\nrl_modes=%s\nrl_epochs=%s
   "$AGENTSTREAM_RL_EPOCHS"
 '
 ```
+
+## WandB 离线记录与实时同步
+
+默认配置使用 `WANDB_MODE=offline`，训练指标先写入 SEED 根目录下的
+`wandb/offline-run-*`，WandB 网络故障不会中断训练。需要在训练过程中查看在线面板时，
+在另一个终端定位最新 run，并用 `nohup` 启动一次持续同步：
+
+```bash
+cd /home/jcgu/qyliu/OPDevolve/SEED
+
+WANDB_RUN_DIR=$(find wandb -maxdepth 1 -type d -name 'offline-run-*' | sort | tail -n 1)
+test -n "$WANDB_RUN_DIR" || { echo "No offline WandB run found" >&2; exit 1; }
+WANDB_RUN_NAME=${WANDB_RUN_DIR##*/}
+echo "Syncing $WANDB_RUN_DIR"
+
+nohup /home/jcgu/miniconda3/envs/seed/bin/wandb beta sync \
+  --live \
+  --yes \
+  "$WANDB_RUN_DIR" \
+  > "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.log" 2>&1 &
+echo $! | tee "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.pid"
+```
+
+`--live` 会持续读取仍在增长的 `.wandb` 文件，不需要反复执行普通的 `wandb sync`。
+不要使用 `wandb/offline-run-*` 通配符同步活跃 run，否则会同时选中历史实验。
+查看同步日志和进程：
+
+```bash
+tail -f "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.log"
+ps -fp "$(cat "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.pid")"
+```
+
+如果同步进程被中断，可对同一目录用 `nohup` 重新执行并增加
+`--no-skip-synced`；日志使用追加模式保留上一次输出：
+
+```bash
+nohup /home/jcgu/miniconda3/envs/seed/bin/wandb beta sync \
+  --live \
+  --yes \
+  --no-skip-synced \
+  "$WANDB_RUN_DIR" \
+  >> "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.log" 2>&1 &
+echo $! | tee "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.pid"
+```
+
+训练正常结束且 live 同步进程退出后，可用 `nohup` 执行一次最终同步；该命令读取到
+文件末尾后退出：
+
+```bash
+nohup /home/jcgu/miniconda3/envs/seed/bin/wandb sync \
+  "$WANDB_RUN_DIR" \
+  >> "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.log" 2>&1 &
+echo $! | tee "logs/agentstream/wandb_sync_${WANDB_RUN_NAME}.pid"
+```
+
+Isolated 模式会为每个 benchmark 依次创建独立 WandB run；切换到下一个 benchmark 后，
+需要重新执行目录发现和 `wandb beta sync --live` 命令。同步依赖 `api.wandb.ai` 可访问；
+DNS 或外网故障只影响上传，本地 offline 记录和训练本身会继续运行。
 
 ## 换底座模型（含 Qwen3 混合思考系列）
 
@@ -200,26 +250,6 @@ find "$SFT_MODEL" -maxdepth 1 -type f \
 Exported SFT model to /home/jcgu/qyliu/LLMs/Qwen2.5-3B-Instruct-agentstream-episode-skill-sft-glm-self
 AgentStream full pipeline finished.
 ```
-
-## Stage 3 通用说明
-
-- 三个模式命令完全同构，只有位置参数不同：`sequential` / `interleaved` / `isolated`
-  （isolated 在一个进程链里按 benchmark 顺序跑三次独立训练）。不要并行跑两个模式。
-- 选择 profile：在 `agentstream_full.env` 改 `AGENTSTREAM_RL_STREAM_PROFILE`，或在命令的
-  `env` 后面临时覆盖，例如 `nohup env AGENTSTREAM_RL_STREAM_PROFILE=single_pass bash …`。
-  冻结策略对照组：再加 `AGENTSTREAM_RL_ACTOR_LR=0`，并另设
-  `AGENTSTREAM_EXPERIMENT_PREFIX`（实验名不含 lr，否则会与训练 run 同名）。
-- 实验名 = `<prefix>_<mode>_<protocol>_s<seed>`，prefix 自动带 `n{NUM_TASKS}_{profile}`；
-  改任务数或 profile 会得到新的 `RUN_DIR`，不会 auto resume 到旧 checkpoint。
-- wandb：`val/{slug}_success_rate`（holdout，RL 口径）与 `online/*`（首遍累计分，
-  AgentStream 口径；`online/single/*` 为每题一次尝试版本）分开看，不要混用。
-- 停止：`$!` 只是启动链里 bash 的 PID，`python -m verl.trainer.main_ppo` 是它的子进程，
-  单独 `kill $(cat …pid)` 会留下训练进程。按进程组终止：
-
-  ```bash
-  PGID=$(ps -o pgid= -p "$(cat logs/agentstream/stage3_interleaved.pid)" | tr -d ' ')
-  kill -- -"$PGID"          # 必要时随后 ray stop --force 清理残留 worker
-  ```
 
 ## Stage 3：Sequential Self-Evolving OPD RL
 
