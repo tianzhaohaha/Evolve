@@ -51,6 +51,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self.phase = phase
         self.recorder = recorder
         self.retrieval_memory = None  # parity with other SEED managers
+        self._global_step: Optional[int] = None  # set by the trainer before each rollout
 
         self._slugs: List[str] = []
         self._task_ids: List[str] = []
@@ -164,8 +165,19 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
                 success=bool(info.get("won", False)),
                 score=float(info.get("score", 0.0)),
                 episode_steps=int(info.get("step_count", self._episode_steps[i])),
+                global_step=self._global_step,
                 action_stats=dict(self._episode_action_stats[i]),
             )
+
+    def set_global_step(self, step: int) -> None:
+        """Stamp subsequent episode rows with the trainer step (used on resume)."""
+        self._global_step = int(step)
+
+    def online_metrics_snapshot(self) -> Dict[str, float]:
+        """AgentStream first-pass cumulative averages for wandb (train phase only)."""
+        if self.recorder is None:
+            return {}
+        return self.recorder.snapshot()
 
     # ------------------------------------------------------------ observations
 

@@ -34,6 +34,39 @@ from .projection import agentstream_projection_detailed
 from .task_stream import TaskStreamScheduler, ValTaskCycler, build_splits
 
 
+def _resume_global_step(config) -> Optional[int]:
+    """Global step the trainer will resume from, or None when starting fresh.
+
+    Mirrors ``RayPPOTrainer._load_checkpoint`` / ``find_latest_ckpt_path``:
+    ``resume_mode=disable`` -> fresh; ``resume_path`` -> step parsed from an
+    existing ``global_step_N`` directory; ``auto`` -> the iteration named by
+    ``<default_local_dir>/latest_checkpointed_iteration.txt``, but only if that
+    ``global_step_N`` directory still exists (otherwise the trainer starts
+    from scratch and so do we).
+    """
+    mode = str(_select(config, "trainer.resume_mode", "auto") or "auto")
+    if mode == "disable":
+        return None
+    if mode == "resume_path":
+        path = str(_select(config, "trainer.resume_from_path", "") or "")
+        if "global_step_" not in path or not os.path.isdir(path):
+            return None
+        try:
+            return int(path.rstrip("/").split("global_step_")[-1])
+        except ValueError:
+            return None
+    folder = str(_select(config, "trainer.default_local_dir", "outputs"))
+    marker = os.path.join(folder, "latest_checkpointed_iteration.txt")
+    try:
+        with open(marker, "r", encoding="utf-8") as fh:
+            step = int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+    if not os.path.isdir(os.path.join(folder, f"global_step_{step}")):
+        return None
+    return step
+
+
 def make_agentstream_envs(
     config,
     require_think: Optional[bool] = None,
@@ -110,12 +143,17 @@ def make_agentstream_envs(
 
     recorder = None
     if cfg.online_metrics_enable:
+        # Mirror ray_trainer._load_checkpoint: restore the cumulative averages only
+        # when training actually resumes, and only up to the checkpointed step.
+        restore_up_to_step = _resume_global_step(config)
         metrics_path = cfg.online_metrics_path
         if not metrics_path:
             local_dir = str(_select(config, "trainer.default_local_dir", "outputs"))
             metrics_path = os.path.join(local_dir, "agentstream_online_metrics.jsonl")
         recorder = OnlineMetricsRecorder(
             path=metrics_path,
+            group_n=group_n,
+            restore_up_to_step=restore_up_to_step,
             run_meta={
                 "experiment": experiment_name,
                 "protocol": cfg.protocol,

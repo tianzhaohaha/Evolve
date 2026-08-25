@@ -105,18 +105,37 @@ AS_STEP_TIMEOUT=${AS_STEP_TIMEOUT:-600}
 # Rollout scale. AgentStream sessions are heavier than ALFWorld games:
 # default to a smaller parallel width; tune per benchmark tier.
 TRAIN_DATA_SIZE=${TRAIN_DATA_SIZE:-8}
-VAL_DATA_SIZE=${VAL_DATA_SIZE:-32}
+# Validation slots: every holdout task once per repeat. ValTaskCycler serves the
+# fixed holdout set round-robin, so slots = benchmarks x AS_VAL_TASKS x AS_VAL_REPEATS
+# gives each task AS_VAL_REPEATS attempts (mean@k). Do NOT use
+# actor_rollout_ref.rollout.val_kwargs.n for this: verl-agent sizes validation
+# envs as val_batch_size x 1 and asserts batch == env count.
+AS_VAL_REPEATS=${AS_VAL_REPEATS:-1}
+_as_n_bench=$(awk -F',' '{print NF}' <<< "$AS_BENCHMARKS")
+VAL_DATA_SIZE=${VAL_DATA_SIZE:-$(( _as_n_bench * AS_VAL_TASKS * AS_VAL_REPEATS ))}
 GROUP_SIZE=${GROUP_SIZE:-8}
 POLICY_ROLLOUT_N=${POLICY_ROLLOUT_N:-1}
 NUM_CPUS_PER_ENV_WORKER=${NUM_CPUS_PER_ENV_WORKER:-0.2}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-64}
 PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}
 LOG_PROB_MICRO_BATCH_SIZE_PER_GPU=${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU:-32}
+# Token-budget micro-batching for mixed-length domains (bfcl ~6k vs appworld
+# ~20k prompt tokens): fixed micro batches must be sized for the worst case,
+# dynamic batching packs by real token count instead. When enabled the fixed
+# PPO/LOG_PROB micro batch sizes above are ignored; log_prob and ref paths
+# follow via ppo_trainer.yaml interpolation. Incompatible only with the SP/ID
+# env aux loss (unused here); the OPD teacher tensors travel with the batch.
+USE_DYNAMIC_BSZ=${USE_DYNAMIC_BSZ:-False}
+PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-32768}
 TENSOR_MODEL_PARALLEL_SIZE=${TENSOR_MODEL_PARALLEL_SIZE:-1}
 N_GPUS_PER_NODE=${N_GPUS_PER_NODE:-8}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-160}
 SAVE_FREQ=${SAVE_FREQ:-10}
 TEST_FREQ=${TEST_FREQ:-5}
+# VAL_BEFORE_TRAIN=True logs the step-0 baseline on the same holdout set.
+# ACTOR_LR=0 gives a frozen-policy control run over the same stream.
+VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-False}
+ACTOR_LR=${ACTOR_LR:-1e-6}
 RL_RESUME_MODE=${RL_RESUME_MODE:-auto}
 RL_RESUME_FROM_PATH=${RL_RESUME_FROM_PATH:-null}
 WANDB_ROLLOUT_SAMPLES=${WANDB_ROLLOUT_SAMPLES:-3}
@@ -205,10 +224,12 @@ python3 -m verl.trainer.main_ppo \
     data.truncation=left \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path=$MODEL_PATH \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr=$ACTOR_LR \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$PPO_MICRO_BATCH_SIZE_PER_GPU \
+    actor_rollout_ref.actor.use_dynamic_bsz=$USE_DYNAMIC_BSZ \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$PPO_MAX_TOKEN_LEN_PER_GPU \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.01 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -295,7 +316,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=$TOTAL_EPOCHS \
     trainer.resume_mode=$RL_RESUME_MODE \
     trainer.resume_from_path=$RL_RESUME_FROM_PATH \
-    trainer.val_before_train=False \
+    trainer.val_before_train=$VAL_BEFORE_TRAIN \
     trainer.default_local_dir=$DEFAULT_LOCAL_DIR \
     trainer.log_rollout_samples=$WANDB_ROLLOUT_SAMPLES \
     trainer.log_rollout_samples_freq=$WANDB_ROLLOUT_SAMPLE_FREQ \

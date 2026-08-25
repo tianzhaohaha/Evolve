@@ -3154,12 +3154,21 @@ class RayPPOTrainer:
 
                         ################ agent-environment loop ###############
                         gen_batch.meta_info["global_step"] = int(self.global_steps)
+                        set_env_step = getattr(self.envs, "set_global_step", None)
+                        if callable(set_env_step):
+                            set_env_step(int(self.global_steps))
                         gen_batch_output = self.traj_collector.multi_turn_loop(
                                                                 gen_batch=gen_batch,
                                                                 actor_rollout_wg=self.actor_rollout_wg,
                                                                 envs=self.envs,
                                                                 is_train=True,
                                                                 )
+                        # AgentStream online-protocol metrics: first-pass cumulative
+                        # averages (all attempts + one attempt per task), see
+                        # agent_system/environments/env_package/agentstream/metrics.py.
+                        online_snapshot = getattr(self.envs, "online_metrics_snapshot", None)
+                        if callable(online_snapshot):
+                            metrics.update(online_snapshot())
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)
