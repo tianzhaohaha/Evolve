@@ -13,9 +13,17 @@ SEED 论文流程与脚本阶段的对应关系：
 默认正式配置位于 `examples/agentstream_trainer/agentstream_full.env`：
 
 - benchmark：`bfcl,appworld,tau2`（bfcl 使用 `multi_turn_base` 子集，与原始 AgentStream 对齐；tau2 使用 `retail`）
-- 每个 benchmark 50 个任务（seed-42 选择），每个任务 8 条 Stage-1 rollout
+- 每个 benchmark `AGENTSTREAM_NUM_TASKS` 个任务（seed-42 选择；RL 泛化实验默认 96，对齐
+  AgentStream 协议时设 50；上限受 tau2 的 114 题约束：NUM_TASKS + VAL_TASKS ≤ 114），
+  每个任务 8 条 Stage-1 rollout。Stage-1 与 Stage-3 共用该变量，改动后重新生成 Stage-1
+  数据前请提升 `AGENTSTREAM_RUN_VERSION`
 - SFT：2 epoch
-- RL_OPD：sequential/interleaved 各 80 步，isolated 每个 benchmark 20 步
+- RL_OPD 由 `AGENTSTREAM_RL_STREAM_PROFILE` 决定：`multipass`（默认）sequential/interleaved
+  90 步、isolated 每个 benchmark 40 步，流循环多遍；`single_pass` 每题恰好一次，步数自动
+  = ⌈benchmark 数 × NUM_TASKS ÷ 每步任务数⌉（3×96÷6 = 48，isolated 96÷6 = 16），
+  每步任务数默认 = GPU 数，resume 默认关闭
+- 验证：每次覆盖全部 holdout，每题重复 `AGENTSTREAM_RL_VAL_REPEATS`（默认 2）次取均值，
+  训练前先验证一次作为 SFT 基线（`val/*` 的 step 0）
 - 步数上限：全局 40，按 benchmark 覆盖 `{"bfcl":25,"tau2":30,"appworld":40}`（`AGENTSTREAM_MAX_STEPS_JSON`）
 - 奖励：`10 × success + score`（`reward_use_score=True`，纳入 benchmark 的连续分数）
 - GPU：2–7；Stage 1 本地 vLLM 默认只用 GPU 2，可设 `AGENTSTREAM_POLICY_GPU=2,3,4,5`（逗号列表）做多卡数据并行——每卡一个模型副本、请求自动轮询分摊，并发会话数按副本数自动放大
@@ -192,6 +200,26 @@ find "$SFT_MODEL" -maxdepth 1 -type f \
 Exported SFT model to /home/jcgu/qyliu/LLMs/Qwen2.5-3B-Instruct-agentstream-episode-skill-sft-glm-self
 AgentStream full pipeline finished.
 ```
+
+## Stage 3 通用说明
+
+- 三个模式命令完全同构，只有位置参数不同：`sequential` / `interleaved` / `isolated`
+  （isolated 在一个进程链里按 benchmark 顺序跑三次独立训练）。不要并行跑两个模式。
+- 选择 profile：在 `agentstream_full.env` 改 `AGENTSTREAM_RL_STREAM_PROFILE`，或在命令的
+  `env` 后面临时覆盖，例如 `nohup env AGENTSTREAM_RL_STREAM_PROFILE=single_pass bash …`。
+  冻结策略对照组：再加 `AGENTSTREAM_RL_ACTOR_LR=0`，并另设
+  `AGENTSTREAM_EXPERIMENT_PREFIX`（实验名不含 lr，否则会与训练 run 同名）。
+- 实验名 = `<prefix>_<mode>_<protocol>_s<seed>`，prefix 自动带 `n{NUM_TASKS}_{profile}`；
+  改任务数或 profile 会得到新的 `RUN_DIR`，不会 auto resume 到旧 checkpoint。
+- wandb：`val/{slug}_success_rate`（holdout，RL 口径）与 `online/*`（首遍累计分，
+  AgentStream 口径；`online/single/*` 为每题一次尝试版本）分开看，不要混用。
+- 停止：`$!` 只是启动链里 bash 的 PID，`python -m verl.trainer.main_ppo` 是它的子进程，
+  单独 `kill $(cat …pid)` 会留下训练进程。按进程组终止：
+
+  ```bash
+  PGID=$(ps -o pgid= -p "$(cat logs/agentstream/stage3_interleaved.pid)" | tr -d ' ')
+  kill -- -"$PGID"          # 必要时随后 ray stop --force 清理残留 worker
+  ```
 
 ## Stage 3：Sequential Self-Evolving OPD RL
 

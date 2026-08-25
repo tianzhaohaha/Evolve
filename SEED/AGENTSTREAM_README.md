@@ -42,8 +42,8 @@
 | `projection.py` | 策略文本 → 动作 dict：解析 `<action>{"name":...,"arguments":{...}}</action>`（容忍 \`\`\`json 围栏），可选 `<think>` 校验；无效输出 `valids[i]=0` 走 trainer 的 invalid-action penalty | 无 |
 | `prompts.py` | 各 benchmark intro + `render_prompt()` **唯一渲染入口**（RL manager 与 SFT 管线共用） | 无 |
 | `envs.py` | Ray 向量化环境：`AgentStreamWorker`（1 actor = 1 `SessionDriver`）+ `AgentStreamEnvs`（reset 从调度器取任务批，group_n 复制；step 扇出；终局算奖励） | ray |
-| `manager.py` | `AgentStreamEnvironmentManager(EnvironmentManagerBase)`：SEED rollout 契约实现；`_process_batch` 输出 `success_rate` + `<slug>_success_rate` / `<slug>_score`（per-benchmark val 曲线 = 遗忘/迁移测量）；训练相在线指标记录 | agent_system.base / SimpleMemory |
-| `metrics.py` | `OnlineMetricsRecorder`：每完成一个 episode 追加一行 JSONL（对齐 AgentStream `record_online_metrics`；重复 pass 标 `first_pass=false` 不计入累计均值） | 无 |
+| `manager.py` | `AgentStreamEnvironmentManager(EnvironmentManagerBase)`：SEED rollout 契约实现；`_process_batch` 输出 `success_rate` + `<slug>_success_rate` / `<slug>_score`（per-benchmark val 曲线 = 遗忘/迁移测量）；训练相在线指标记录；`set_global_step()` / `online_metrics_snapshot()` 供 trainer 每步调用（前者给 JSONL 行打 `global_step`，后者取累计均值推 wandb） | agent_system.base / SimpleMemory |
+| `metrics.py` | `OnlineMetricsRecorder`：每完成一个 episode 追加一行 JSONL（对齐 AgentStream `record_online_metrics`；重复 pass 标 `first_pass=false` 不计入累计均值）。同时维护两套首遍累计器——全部副本（mean@group_n）与每题第一条副本（`rollout_slot % group_n == 0`，对齐基线"每题一次尝试"）——`snapshot()` 以 `online/…`、`online/single/…`、`online/<slug>/…` 键返回。仅在 trainer 真正 resume 时从 JSONL 恢复累计值（只取 `global_step <=` checkpoint 步的行；按 `(slug, task, pass, slot)` 去重），从头跑则不动已有文件 | 无 |
 | `factory.py` | `make_agentstream_envs(config)` 唯一入口：hub → 任务全集 → 切分 → 调度器/循环器 → train/val envs + managers + recorder | — |
 
 ### 2.2 对照包 `agent_system/environments/env_package/alfworld_stream/`
@@ -59,7 +59,7 @@ ALFWorld 6 任务类型作为 domain 跑三模式（零新增依赖的受控对�
 shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SEED alfworld 结果对比时
 要说明这一差异。
 
-### 2.3 对既有文件的修改（仅 3 处，均默认行为不变）
+### 2.3 对既有文件的修改（仅 4 处，均默认行为不变）
 
 1. `agent_system/environments/env_manager.py` — `make_envs` 增加两个 `elif` 分支：
    - `"alfworld_stream" in env_name`（**必须排在 `"alfworld"` 分支之前**，子串包含）
@@ -68,6 +68,9 @@ shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SE
    两个默认配置块（各键含义见块内注释与 `as_config.py`）。
 3. `examples/seed_trainer/_common/alfworld.sh` — `env.env_name` 参数化为
    `${ALFWORLD_ENV_NAME:-alfworld/AlfredTWEnv}`（不设该变量时与原版完全相同）。
+4. `verl/trainer/ppo/ray_trainer.py` — 训练 rollout 前后各一个 `getattr(self.envs, ..., None)`
+   守护的钩子：`set_global_step(step)` 与 `online_metrics_snapshot()`（结果并入当步
+   metrics，即 wandb `online/*`）。非 AgentStream 环境没有这两个方法，钩子为 no-op。
 
 > ⚠️ 历史事故：本工作区曾两次出现文件被外部删除（`env_manager.py`、`ppo_trainer.yaml`
 > 被删后已从 git 恢复并重打挂载；未跟踪的新文件 `agentstream/metrics.py` 被删后已重建）。
@@ -93,11 +96,11 @@ shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SE
 | 文件 | 用途 |
 |---|---|
 | `smoke_env.py` | Phase 0 冒烟：exgentic 导入 → list_tasks → 单 session 生命周期（`--step` 可选执行一个动作）。无需 GPU/Ray |
-| `_common/agentstream.sh` | RL 共享 launcher（.env/conda 头部 + 与 alfworld.sh 完全一致的 SEED 算法参数 + `env.agentstream.*` 覆盖；`AS_*` 环境变量见文件头注释） |
+| `_common/agentstream.sh` | RL 共享 launcher（.env/conda 头部 + 与 alfworld.sh 完全一致的 SEED 算法参数 + `env.agentstream.*` 覆盖；`AS_*` 环境变量见文件头注释）。验证槽位默认 = benchmark 数 × `AS_VAL_TASKS` × `AS_VAL_REPEATS`（每道 holdout 题重复 k 次取均值；**不要**用 `val_kwargs.n` 实现重复，verl-agent 的验证环境数 = `val_batch_size × 1`，n>1 会触发断言）；`VAL_BEFORE_TRAIN`、`ACTOR_LR`（=0 即冻结策略对照组）可配置 |
 | `run_agentstream_random.sh` | 对照组：SEED 原始随机采样 + split 协议 |
 | `run_agentstream_isolated.sh` | 按 benchmark 循环，每个独立一次训练（对齐 AgentStream isolated 语义） |
 | `run_agentstream_sequential.sh` / `run_agentstream_interleaved.sh` | 单次训练跑整条流 |
-| `agentstream_full.env` | 可提交的正式验证配置，不含密钥；统一定义 SFT/RL 规模、GPU、benchmark 与 OPD 参数 |
+| `agentstream_full.env` | 可提交的正式验证配置，不含密钥；统一定义 SFT/RL 规模、GPU、benchmark 与 OPD 参数。Stage-3 由 `AGENTSTREAM_RL_STREAM_PROFILE` 派生：`multipass`（cycle 多遍，holdout 曲线 + 首遍累计分）/ `single_pass`（stop，每题恰好一次，步数自动 = ⌈benchmark 数 × NUM_TASKS ÷ 每步任务数⌉，resume 默认关闭）。实验名前缀自动带 `n{NUM_TASKS}_{profile}` |
 | `run_agentstream_sft_glm_self.sh` | 从 AgentStream Stage-1 SFT 模型启动单个 `random/isolated/sequential/interleaved` RL_OPD 模式 |
 | `run_alfworld_stream.sh` | alfworld_stream 全模式入口（isolated 自动按任务类型循环）；包装 `seed_trainer/_common/alfworld.sh` |
 | `analyze_results.py` | 跨 run 对比在线 JSONL：GRPO 组内**先按任务平均**、仅 `first_pass` 计入、`--csv` 长格式导出。agentstream 与 alfworld_stream 共用 schema |
@@ -165,7 +168,12 @@ bash scripts/sft/agentstream/run_all.sh
   两者都自动获得周期性 val（trainer 现有 `test_freq` 机制 + per-slug 指标键）。
 - **在线指标**：训练相每个 episode 完成即写一行 JSONL（默认
   `<trainer.default_local_dir>/agentstream_online_metrics.jsonl`），`pass_idx>0` 的重复
-  pass 不计入累计均值。
+  pass 不计入累计均值。行内含 `global_step`、`first_attempt`、
+  `cumulative_avg_score[_single]`、`benchmark_cumulative_avg_score[_single]`。同一累计值
+  每个训练步推到 wandb：`online/cumulative_avg_score`（首遍全部副本）、
+  `online/single/cumulative_avg_score`（每题一次尝试，对齐 AgentStream 基线口径）、
+  `online/<slug>/…`；`*_success_rate` 为成功率版本。首遍累计分与 holdout `val/*` 是两种
+  口径（在线学习效率 vs 未见任务泛化），写作时分开报告。
 - **SEED rollout 契约**（新 manager 必须满足）：`reset(kwargs)` →
   `({text,text_base,image,anchor}, infos)`；`step(text_actions)` →
   `(obs, rewards, dones, infos)`，info 含 `won` / `is_action_valid`；rollout 循环对已 done
@@ -286,10 +294,14 @@ RL_OPD 日志中 `seed/analysis_num_requests`、`seed/teacher_batch_size` 和
 - `on_exhausted=cycle` 下 verl 以 `trainer.total_epochs` 计步，流长度与总步数解耦——
   正式实验需按流长度换算 `TOTAL_EPOCHS`（`stream_length = Σ num_tasks × block_passes`，
   每 step 消耗 `train_batch_size` 个流位置）。
-- 在线协议的严格单 pass 对齐：若要完全模拟 AgentStream 单 pass 评测，设
-  `on_exhausted=stop` 并让总步数 = `ceil(stream_length / train_batch_size)`。
+- 在线协议的严格单 pass 对齐：`AGENTSTREAM_RL_STREAM_PROFILE=single_pass` 即自动设
+  `on_exhausted=stop` 并把总步数算成 `ceil(stream_length / train_batch_size)`（每步任务数
+  默认 = GPU 数以获得最细的在线更新粒度）。`NUM_TASKS` 需能被每步任务数整除，否则最后
+  一步会落入 `stop` 的末尾窗口，少数任务被多训一次（首遍累计分由去重保护）。
 - 通过正式 `run_all.sh` 时，SFT 与 RL 共用 `AGENTSTREAM_BENCHMARK_KWARGS_JSON`；若绕过总入口
   单独调用底层脚本，则仍需人工保证两阶段的 benchmark kwargs 一致。
 - trainer checkpoint 当前保存模型、优化器和 dataloader，但未保存 `TaskStreamScheduler` 的
-  cursor/pass/RNG。正式配置默认禁用 resume；在补齐 scheduler checkpoint 前，不应把
-  sequential/interleaved 的中断恢复视为严格连续的任务流。
+  cursor/pass/RNG，resume 后流会从位置 0 重放。正式配置里 `multipass` 保持 `resume_mode=auto`
+  （多遍循环下重放只是顺序扰动），`single_pass` 默认 `disable`（重放会让流尾部任务永远走
+  不到，破坏"每题恰好一次"；单遍 run 很短，中断后从头重跑）。在补齐 scheduler checkpoint
+  前，不应把 sequential/interleaved 的中断恢复视为严格连续的任务流。
