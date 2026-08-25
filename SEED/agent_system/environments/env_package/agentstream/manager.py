@@ -169,6 +169,16 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
                 action_stats=dict(self._episode_action_stats[i]),
             )
 
+    def stream_state_dict(self) -> Optional[Dict[str, object]]:
+        """Task-stream scheduler state for the trainer checkpoint (None if unavailable)."""
+        fn = getattr(self.envs, "stream_state_dict", None)
+        return fn() if callable(fn) else None
+
+    def load_stream_state(self, state: Dict[str, object]) -> None:
+        fn = getattr(self.envs, "load_stream_state", None)
+        if callable(fn):
+            fn(state)
+
     def set_global_step(self, step: int) -> None:
         """Stamp subsequent episode rows with the trainer step (used on resume)."""
         self._global_step = int(step)

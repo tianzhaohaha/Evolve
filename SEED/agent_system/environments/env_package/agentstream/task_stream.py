@@ -49,7 +49,7 @@ import hashlib
 import random
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:  # annotation-only; keeps this module runnable standalone
     from .as_config import AgentStreamConfig
@@ -248,12 +248,33 @@ class TaskStreamScheduler:
             return [(slug, tid) for slug in sorted(self.train_tasks) for tid in self.train_tasks[slug]]
         return list(self._ordered)
 
-    def state_dict(self) -> Dict[str, int]:
-        return {"cursor": self._cursor, "pass": self._pass}
+    def state_dict(self) -> Dict[str, Any]:
+        """JSON-serializable resume state.
 
-    def load_state_dict(self, state: Dict[str, int]) -> None:
+        ``cursor``/``pass`` position the ordered stream (isolated / sequential /
+        interleaved); ``rng_state`` restores the sampler of ``random`` mode.
+        """
+        version, internal, gauss_next = self._rng.getstate()
+        return {
+            "mode": self.mode,
+            "cursor": self._cursor,
+            "pass": self._pass,
+            "rng_state": [version, list(internal), gauss_next],
+        }
+
+    def load_state_dict(self, state: Dict[str, Any]) -> None:
+        saved_mode = state.get("mode")
+        if saved_mode is not None and saved_mode != self.mode:
+            raise ValueError(
+                f"Task-stream state was saved for stream_mode={saved_mode!r} but the "
+                f"current run uses {self.mode!r}; refusing to resume with a different stream."
+            )
         self._cursor = int(state.get("cursor", 0))
         self._pass = int(state.get("pass", 0))
+        rng_state = state.get("rng_state")
+        if rng_state is not None:
+            version, internal, gauss_next = rng_state
+            self._rng.setstate((int(version), tuple(int(x) for x in internal), gauss_next))
 
     # -- batch serving --------------------------------------------------------
 

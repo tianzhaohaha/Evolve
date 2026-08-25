@@ -2951,6 +2951,15 @@ class RayPPOTrainer:
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
 
+        # task-stream scheduler position (AgentStream envs); written before the
+        # tracker so an auto-resume never sees a checkpoint without it.
+        stream_state_fn = getattr(self.envs, "stream_state_dict", None)
+        if callable(stream_state_fn):
+            stream_state = stream_state_fn()
+            if stream_state is not None:
+                with open(os.path.join(local_global_step_folder, "stream_state.json"), "w", encoding="utf-8") as f:
+                    json.dump(stream_state, f)
+
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt")
         with open(local_latest_checkpointed_iteration, "w") as f:
@@ -3006,6 +3015,17 @@ class RayPPOTrainer:
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+
+        # restore the task-stream scheduler position (AgentStream envs)
+        load_stream_fn = getattr(self.envs, "load_stream_state", None)
+        if callable(load_stream_fn):
+            stream_state_path = os.path.join(global_step_folder, "stream_state.json")
+            if os.path.exists(stream_state_path):
+                with open(stream_state_path, "r", encoding="utf-8") as f:
+                    load_stream_fn(json.load(f))
+                print(f"Restored task-stream scheduler state from {stream_state_path}")
+            else:
+                print(f"Warning: no stream_state.json in {global_step_folder}; the task stream restarts from position 0")
 
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen"):
         """Reorder the data on single controller such that each dp rank gets similar total tokens"""

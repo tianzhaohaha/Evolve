@@ -175,6 +175,17 @@ class AgentStreamEnvs:
 
     # -- gym-style API ---------------------------------------------------------
 
+    # -- resume support ------------------------------------------------------
+    def stream_state_dict(self) -> Optional[Dict[str, Any]]:
+        """Scheduler position for checkpoints; None for validation envs."""
+        if isinstance(self.task_source, TaskStreamScheduler):
+            return self.task_source.state_dict()
+        return None
+
+    def load_stream_state(self, state: Dict[str, Any]) -> None:
+        if isinstance(self.task_source, TaskStreamScheduler):
+            self.task_source.load_state_dict(state)
+
     def reset(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Assign the next task batch and start sessions on all workers.
 

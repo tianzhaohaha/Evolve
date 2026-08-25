@@ -300,8 +300,10 @@ RL_OPD 日志中 `seed/analysis_num_requests`、`seed/teacher_batch_size` 和
   一步会落入 `stop` 的末尾窗口，少数任务被多训一次（首遍累计分由去重保护）。
 - 通过正式 `run_all.sh` 时，SFT 与 RL 共用 `AGENTSTREAM_BENCHMARK_KWARGS_JSON`；若绕过总入口
   单独调用底层脚本，则仍需人工保证两阶段的 benchmark kwargs 一致。
-- trainer checkpoint 当前保存模型、优化器和 dataloader，但未保存 `TaskStreamScheduler` 的
-  cursor/pass/RNG，resume 后流会从位置 0 重放。正式配置里 `multipass` 保持 `resume_mode=auto`
-  （多遍循环下重放只是顺序扰动），`single_pass` 默认 `disable`（重放会让流尾部任务永远走
-  不到，破坏"每题恰好一次"；单遍 run 很短，中断后从头重跑）。在补齐 scheduler checkpoint
-  前，不应把 sequential/interleaved 的中断恢复视为严格连续的任务流。
+- trainer checkpoint 除模型、优化器和 dataloader 外，还把 `TaskStreamScheduler` 的状态
+  （cursor/pass，random 模式含 RNG）写入 `global_step_N/stream_state.json`（在 tracker 文件
+  之前写，保证 auto resume 看到的 checkpoint 一定带它），`_load_checkpoint` 读回后流从中断
+  处精确续接（`ray_trainer.py` 两处 `getattr` 守护的钩子；非 AgentStream 环境为 no-op）。
+  stream_mode 与保存时不一致会直接报错拒绝恢复。旧 checkpoint 没有该文件时打印警告并从
+  位置 0 重放。在线记录器同样按 checkpoint 步恢复累计值（见 `metrics.py`），因此 `single_pass`
+  也可以 `resume_mode=auto`；崩溃损失以 `SAVE_FREQ` 为上限。
