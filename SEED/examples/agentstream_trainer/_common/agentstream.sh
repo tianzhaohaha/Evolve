@@ -119,6 +119,11 @@ NUM_CPUS_PER_ENV_WORKER=${NUM_CPUS_PER_ENV_WORKER:-0.2}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-64}
 PPO_MICRO_BATCH_SIZE_PER_GPU=${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}
 LOG_PROB_MICRO_BATCH_SIZE_PER_GPU=${LOG_PROB_MICRO_BATCH_SIZE_PER_GPU:-32}
+# False skips the full-vocab entropy pass inside compute_log_prob (old-log-prob
+# recompute + OPD teacher scoring). Saves a large transient memory spike on long
+# micro-batches; only cost is losing the actor/entropy_loss metric. Gradients
+# are unaffected (update-phase entropy is gated by ENTROPY_COEFF separately).
+LOG_PROB_CALCULATE_ENTROPY=${LOG_PROB_CALCULATE_ENTROPY:-True}
 # Token-budget micro-batching for mixed-length domains (bfcl ~6k vs appworld
 # ~20k prompt tokens): fixed micro batches must be sized for the worst case,
 # dynamic batching packs by real token count instead. When enabled the fixed
@@ -247,6 +252,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$LOG_PROB_MICRO_BATCH_SIZE_PER_GPU \
+    actor_rollout_ref.rollout.log_prob_calculate_entropy=$LOG_PROB_CALCULATE_ENTROPY \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$TENSOR_MODEL_PARALLEL_SIZE \
     actor_rollout_ref.rollout.n=$POLICY_ROLLOUT_N \
     actor_rollout_ref.rollout.name=$ENGINE \

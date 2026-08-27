@@ -758,10 +758,38 @@ class DataParallelPPOActor(BasePPOActor):
                 metrics[f"actor/{key}"] = float(value)
         return metrics
 
+    # Diagnostic only: when VERL_OOM_SNAPSHOT_DIR is set, record allocator history and
+    # dump a PyTorch memory snapshot (open at https://pytorch.org/memory_viz) on the
+    # first CUDA OOM inside update_policy. Unset -> no effect at all.
+    _oom_snapshot_dir = os.environ.get("VERL_OOM_SNAPSHOT_DIR", "").strip()
+    _oom_history_started = False
+
+    def _maybe_start_memory_history(self) -> None:
+        if not self._oom_snapshot_dir or self._oom_history_started or not torch.cuda.is_available():
+            return
+        try:
+            torch.cuda.memory._record_memory_history(max_entries=200000)
+            self._oom_history_started = True
+        except Exception as exc:  # never let diagnostics break training
+            logger.warning("Could not start CUDA memory history: %s", exc)
+
+    def _dump_oom_snapshot(self) -> None:
+        if not self._oom_snapshot_dir or not self._oom_history_started:
+            return
+        try:
+            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+            os.makedirs(self._oom_snapshot_dir, exist_ok=True)
+            path = os.path.join(self._oom_snapshot_dir, f"oom_step{self.global_step}_rank{rank}.pickle")
+            torch.cuda.memory._dump_snapshot(path)
+            print(f"[OOM] memory snapshot written to {path}", flush=True)
+        except Exception as exc:
+            logger.warning("Could not dump CUDA memory snapshot: %s", exc)
+
     @GPUMemoryLogger(role="dp actor", logger=logger)
     def update_policy(self, data: DataProto):
         # make sure we are in training mode
         self.actor_module.train()
+        self._maybe_start_memory_history()
 
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
@@ -944,7 +972,11 @@ class DataParallelPPOActor(BasePPOActor):
                         loss = policy_loss * (len(data) / self.config.ppo_mini_batch_size)
                     else:
                         loss = policy_loss / self.gradient_accumulation
-                    loss.backward()
+                    try:
+                        loss.backward()
+                    except torch.OutOfMemoryError:
+                        self._dump_oom_snapshot()
+                        raise
 
                     data = {
                         "actor/pg_loss": pg_loss.detach().item(),

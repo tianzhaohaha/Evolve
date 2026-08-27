@@ -68,6 +68,11 @@ export AS_VAL_REPEATS="${AGENTSTREAM_RL_VAL_REPEATS:-1}"
 export VAL_BEFORE_TRAIN="${AGENTSTREAM_RL_VAL_BEFORE_TRAIN:-False}"
 export ACTOR_LR="${AGENTSTREAM_RL_ACTOR_LR:-1e-6}"
 export ENTROPY_COEFF="${AGENTSTREAM_RL_ENTROPY_COEFF:-0.001}"
+# Switch from agentstream_full.env: true -> skip full-vocab entropy in the
+# old-log-prob/teacher compute_log_prob passes (memory spike fix, appworld OOM).
+if [[ "${AGENTSTREAM_RL_SKIP_ENTROPY_IN_LOG_PROB:-false}" == "true" ]]; then
+    export LOG_PROB_CALCULATE_ENTROPY=False
+fi
 # NOTE: do not set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True here — vLLM's
 # sleep-mode CuMemAllocator asserts against it and rollout init fails.
 export AS_RESET_TIMEOUT="${AGENTSTREAM_RL_RESET_TIMEOUT:-600}"
@@ -112,7 +117,7 @@ echo "  epochs:        $TOTAL_EPOCHS"
 echo "  stream:        profile=${AGENTSTREAM_RL_STREAM_PROFILE:-multipass} on_exhausted=$AS_ON_EXHAUSTED"
 echo "  tasks:         num_tasks=$AS_NUM_TASKS val_tasks=$AS_VAL_TASKS train/step=$TRAIN_DATA_SIZE x$GROUP_SIZE val_slots=${VAL_DATA_SIZE:-auto} val_repeats=$AS_VAL_REPEATS"
 echo "  actor lr:      $ACTOR_LR (0 = frozen-policy control run)"
-echo "  entropy coef:  $ENTROPY_COEFF"
+echo "  entropy coef:  $ENTROPY_COEFF (log_prob entropy calc: ${LOG_PROB_CALCULATE_ENTROPY:-True})"
 echo "  OPD coef:      $SEED_OPD_LOSS_COEF"
 echo "  visible GPUs:  $CUDA_VISIBLE_DEVICES"
 echo "  resume mode:   $RL_RESUME_MODE"
