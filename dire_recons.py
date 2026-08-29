@@ -269,7 +269,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reserve-mib", type=int, default=512, help="Memory to leave free before applying --memory-fraction")
     parser.add_argument("--util-threshold", type=int, default=5, help="GPU utilization percent considered idle")
     parser.add_argument("--used-mem-threshold-mib", type=int, default=1024, help="Used memory threshold considered idle")
-    parser.add_argument("--check-interval", type=float, default=120.0, help="Seconds between idle checks")
+    parser.add_argument("--check-interval", type=float, default=1200.0, help="Seconds between idle checks")
     parser.add_argument("--duration", type=float, default=0.0, help="Seconds to occupy after allocation; 0 means until stopped")
     parser.add_argument("--matrix-size", type=int, default=4096, help="Square matrix size used for compute load")
     parser.add_argument("--matrix-jitter", type=float, default=0.12, help="Per-GPU random variation applied to --matrix-size")

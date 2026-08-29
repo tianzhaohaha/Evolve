@@ -51,4 +51,6 @@ def get_ppo_ray_runtime_env():
     for key in list(runtime_env["env_vars"].keys()):
         if os.environ.get(key) is not None:
             runtime_env["env_vars"].pop(key, None)
+    if wandb_mode := os.environ.get("WANDB_MODE"):
+        runtime_env["env_vars"]["WANDB_MODE"] = wandb_mode
     return runtime_env
