@@ -43,7 +43,7 @@
 | `prompts.py` | 各 benchmark intro + `render_prompt()` **唯一渲染入口**（RL manager 与 SFT 管线共用） | 无 |
 | `envs.py` | Ray 向量化环境：`AgentStreamWorker`（1 actor = 1 `SessionDriver`）+ `AgentStreamEnvs`（reset 从调度器取任务批，group_n 复制；step 扇出；终局算奖励） | ray |
 | `manager.py` | `AgentStreamEnvironmentManager(EnvironmentManagerBase)`：SEED rollout 契约实现；`_process_batch` 输出 `success_rate` + `<slug>_success_rate` / `<slug>_score`（per-benchmark val 曲线 = 遗忘/迁移测量）；训练相在线指标记录；`set_global_step()` / `online_metrics_snapshot()` 供 trainer 每步调用（前者给 JSONL 行打 `global_step`，后者取累计均值推 wandb） | agent_system.base / SimpleMemory |
-| `metrics.py` | `OnlineMetricsRecorder`：每完成一个 episode 追加一行 JSONL（对齐 AgentStream `record_online_metrics`；重复 pass 标 `first_pass=false` 不计入累计均值）。同时维护两套首遍累计器——全部副本（mean@group_n）与每题第一条副本（`rollout_slot % group_n == 0`，对齐基线"每题一次尝试"）——`snapshot()` 以 `online/…`、`online/single/…`、`online/<slug>/…` 键返回。仅在 trainer 真正 resume 时从 JSONL 恢复累计值（只取 `global_step <=` checkpoint 步的行；按 `(slug, task, pass, slot)` 去重），从头跑则不动已有文件 | 无 |
+| `metrics.py` | `OnlineMetricsRecorder`：每完成一个 episode 追加一行 JSONL（对齐 AgentStream `record_online_metrics`；重复 pass 标 `first_pass=false` 不计入首遍累计均值）。累计器按 pass 索引（`_CumulativeStats`），每遍两套估计——全部副本（mean@group_n）与每题第一条副本（`rollout_slot % group_n == 0`，对齐基线"每题一次尝试"）——`snapshot()` 以 `online/…`、`online/single/…`、`online/<slug>/…` 键返回；`track_repeat_passes=True`（开关 `online_track_repeat_passes`）时 pass≥1 各自额外输出同构子树 `online/pass<K>/…`（首遍口径不变）。仅在 trainer 真正 resume 时从 JSONL 恢复累计值（只取 `global_step <=` checkpoint 步的行；按 `(slug, task, pass, slot)` 去重；开关打开时 repeat 行一并恢复），从头跑则不动已有文件 | 无 |
 | `factory.py` | `make_agentstream_envs(config)` 唯一入口：hub → 任务全集 → 切分 → 调度器/循环器 → train/val envs + managers + recorder | — |
 
 ### 2.2 对照包 `agent_system/environments/env_package/alfworld_stream/`
@@ -172,8 +172,10 @@ bash scripts/sft/agentstream/run_all.sh
   `cumulative_avg_score[_single]`、`benchmark_cumulative_avg_score[_single]`。同一累计值
   每个训练步推到 wandb：`online/cumulative_avg_score`（首遍全部副本）、
   `online/single/cumulative_avg_score`（每题一次尝试，对齐 AgentStream 基线口径）、
-  `online/<slug>/…`；`*_success_rate` 为成功率版本。首遍累计分与 holdout `val/*` 是两种
-  口径（在线学习效率 vs 未见任务泛化），写作时分开报告。
+  `online/<slug>/…`；`*_success_rate` 为成功率版本。多遍 run 可开
+  `AGENTSTREAM_RL_TRACK_REPEAT_PASSES=true`（→ `env.agentstream.online_track_repeat_passes`），
+  第 K 遍另记同构子树 `online/pass<K>/…`（分母只数该遍，首遍曲线不受影响）。首遍累计分与
+  holdout `val/*` 是两种口径（在线学习效率 vs 未见任务泛化），写作时分开报告。
 - **SEED rollout 契约**（新 manager 必须满足）：`reset(kwargs)` →
   `({text,text_base,image,anchor}, infos)`；`step(text_actions)` →
   `(obs, rewards, dones, infos)`，info 含 `won` / `is_action_valid`；rollout 循环对已 done
@@ -307,3 +309,11 @@ RL_OPD 日志中 `seed/analysis_num_requests`、`seed/teacher_batch_size` 和
   stream_mode 与保存时不一致会直接报错拒绝恢复。旧 checkpoint 没有该文件时打印警告并从
   位置 0 重放。在线记录器同样按 checkpoint 步恢复累计值（见 `metrics.py`），因此 `single_pass`
   也可以 `resume_mode=auto`；崩溃损失以 `SAVE_FREQ` 为上限。
+- 单遍跑完后续训多遍（同一 checkpoint、同一条流）：保持 `profile=single_pass` 不变，caller
+  覆盖 `AGENTSTREAM_RL_ON_EXHAUSTED=cycle` + 更大的 `AGENTSTREAM_RL_EPOCHS`（每遍 =
+  `ceil(stream_length / train_batch_size)` 步）即可；调度器从流末尾恢复，下一步自动进入
+  pass 1 并严格按原顺序重放（`load_state_dict` 只校验 mode，`on_exhausted` 可在 resume 时
+  切换）。配合 `AGENTSTREAM_RL_TRACK_REPEAT_PASSES=true` 可把第 K 遍的累计曲线记为
+  `online/pass<K>/*`；默认 false = 只记首遍（现状）。注意 verl 每次 launch 都新建 wandb
+  run（同名、step 续接），需要合并到原 run 可在启动前 `export WANDB_RUN_ID=<原 run id>
+  WANDB_RESUME=allow`。

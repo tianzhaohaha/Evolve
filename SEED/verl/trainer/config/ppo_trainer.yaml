@@ -416,4 +416,5 @@ env:
     reward_use_score: True          # add the raw benchmark score (AgentStream's graded headline metric)
     online_metrics_enable: True
     online_metrics_path: ""         # "" -> <trainer.default_local_dir>/agentstream_online_metrics.jsonl
+    online_track_repeat_passes: False  # multi-pass runs: also log online/pass<K>/* cumulative curves (first-pass online/* unaffected)
     val_stream_seed: 1042

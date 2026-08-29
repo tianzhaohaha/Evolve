@@ -64,6 +64,8 @@ export AS_MAX_STEPS="$AGENTSTREAM_MAX_STEPS"
 # Stream profile knobs come from agentstream_full.env (AGENTSTREAM_RL_STREAM_PROFILE):
 #   cycle -> multi-pass RL (Run B); stop -> strict single-pass online RL (Run A).
 export AS_ON_EXHAUSTED="${AGENTSTREAM_RL_ON_EXHAUSTED:-cycle}"
+# true -> also log per-pass cumulative curves online/pass<K>/* on repeat passes.
+export AS_TRACK_REPEAT_PASSES="${AGENTSTREAM_RL_TRACK_REPEAT_PASSES:-false}"
 export AS_VAL_REPEATS="${AGENTSTREAM_RL_VAL_REPEATS:-1}"
 export VAL_BEFORE_TRAIN="${AGENTSTREAM_RL_VAL_BEFORE_TRAIN:-False}"
 export ACTOR_LR="${AGENTSTREAM_RL_ACTOR_LR:-1e-6}"
@@ -114,7 +116,7 @@ echo "  mode:          $mode"
 echo "  benchmarks:    $AS_BENCHMARKS"
 echo "  model:         $MODEL_PATH"
 echo "  epochs:        $TOTAL_EPOCHS"
-echo "  stream:        profile=${AGENTSTREAM_RL_STREAM_PROFILE:-multipass} on_exhausted=$AS_ON_EXHAUSTED"
+echo "  stream:        profile=${AGENTSTREAM_RL_STREAM_PROFILE:-multipass} on_exhausted=$AS_ON_EXHAUSTED track_repeat_passes=$AS_TRACK_REPEAT_PASSES"
 echo "  tasks:         num_tasks=$AS_NUM_TASKS val_tasks=$AS_VAL_TASKS train/step=$TRAIN_DATA_SIZE x$GROUP_SIZE val_slots=${VAL_DATA_SIZE:-auto} val_repeats=$AS_VAL_REPEATS"
 echo "  actor lr:      $ACTOR_LR (0 = frozen-policy control run)"
 echo "  entropy coef:  $ENTROPY_COEFF (log_prob entropy calc: ${LOG_PROB_CALCULATE_ENTROPY:-True})"

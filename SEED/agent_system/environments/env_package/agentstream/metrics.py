@@ -19,9 +19,13 @@ AgentStream/exgentic/scripts/*/run_experiment.py: one JSONL row per finished
 episode with cumulative averages, so results are directly comparable with
 AgentStream harness outputs. Rows for repeat passes (pass_idx > 0) are
 recorded with ``first_pass=false`` and excluded from the cumulative averages,
-matching the single-pass semantics of the AgentStream online protocol.
+matching the single-pass semantics of the AgentStream online protocol. With
+``track_repeat_passes`` enabled (multi-pass streams) every repeat pass K
+additionally maintains its own independent accumulators, exposed by
+``snapshot()`` as an ``online/pass<K>/...`` subtree mirroring the first-pass
+keys; the first-pass metrics themselves are unaffected by the switch.
 
-Two estimators of the first-pass score are maintained side by side:
+Two estimators of the per-pass score are maintained side by side:
 
 * ``cumulative_avg_score`` — every first-pass attempt counts. With
   ``env.rollout.n = group_n`` copies per task this is a mean@group_n estimate.
@@ -38,7 +42,7 @@ checkpoint the accumulators are rebuilt from the existing JSONL, taking only
 rows written at or before the checkpointed global step (later rows belong to
 the crashed window and will be replayed). When the run starts from scratch
 nothing is restored: an existing JSONL is left untouched and simply appended
-to, exactly as before. First-pass rows are additionally de-duplicated on
+to, exactly as before. Accumulated rows are additionally de-duplicated on
 ``(benchmark, task, pass, rollout_slot)`` as a safety net against replays.
 """
 
@@ -55,6 +59,50 @@ from typing import Any, Dict, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 
+class _CumulativeStats:
+    """Running score/success sums, overall and per benchmark."""
+
+    __slots__ = ("sum_scores", "sum_success", "num", "bm_sum", "bm_success", "bm_num")
+
+    def __init__(self) -> None:
+        self.sum_scores = 0.0
+        self.sum_success = 0.0
+        self.num = 0
+        self.bm_sum: Dict[str, float] = defaultdict(float)
+        self.bm_success: Dict[str, float] = defaultdict(float)
+        self.bm_num: Dict[str, int] = defaultdict(int)
+
+    def add(self, slug: str, score: float, success: bool) -> None:
+        self.sum_scores += score
+        self.sum_success += float(success)
+        self.num += 1
+        self.bm_sum[slug] += score
+        self.bm_success[slug] += float(success)
+        self.bm_num[slug] += 1
+
+    def avg_score(self, slug: Optional[str] = None) -> float:
+        if slug is None:
+            return self.sum_scores / self.num if self.num else 0.0
+        n = self.bm_num.get(slug, 0)
+        return self.bm_sum[slug] / n if n else 0.0
+
+    def emit(
+        self, out: Dict[str, float], prefix: str, n_key: str, slug: Optional[str] = None
+    ) -> None:
+        """Write cumulative averages under ``prefix`` into ``out`` (no-op when empty)."""
+        if slug is None:
+            scores, success, n = self.sum_scores, self.sum_success, self.num
+        else:
+            scores = self.bm_sum.get(slug, 0.0)
+            success = self.bm_success.get(slug, 0.0)
+            n = self.bm_num.get(slug, 0)
+        if n <= 0:
+            return
+        out[f"{prefix}cumulative_avg_score"] = scores / n
+        out[f"{prefix}cumulative_success_rate"] = success / n
+        out[f"{prefix}{n_key}"] = float(n)
+
+
 class OnlineMetricsRecorder:
     def __init__(
         self,
@@ -62,31 +110,26 @@ class OnlineMetricsRecorder:
         run_meta: Optional[Dict[str, Any]] = None,
         group_n: int = 1,
         restore_up_to_step: Optional[int] = None,
+        track_repeat_passes: bool = False,
     ) -> None:
         self.path = os.path.abspath(os.path.expanduser(path))
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self.run_meta = dict(run_meta or {})
         self.group_n = max(int(group_n), 1)
+        self.track_repeat_passes = bool(track_repeat_passes)
         self._lock = threading.Lock()
         self._episode_counter = 0
 
-        # All first-pass attempts (group_n per task).
-        self._sum_scores = 0.0
-        self._sum_success = 0.0
-        self._num_scores = 0
-        self._bm_sum: Dict[str, float] = defaultdict(float)
-        self._bm_success: Dict[str, float] = defaultdict(float)
-        self._bm_num: Dict[str, int] = defaultdict(int)
+        # Cumulative accumulators keyed by pass index. Each pass keeps the two
+        # estimators described above: [0] all attempts (group_n per task),
+        # [1] one attempt per task (first copy of each group). Pass 0 is the
+        # AgentStream online metric; entries for pass >= 1 are only created
+        # when ``track_repeat_passes`` is on.
+        self._passes: Dict[int, Tuple[_CumulativeStats, _CumulativeStats]] = defaultdict(
+            lambda: (_CumulativeStats(), _CumulativeStats())
+        )
 
-        # One attempt per task (first copy of each group).
-        self._sum_scores_single = 0.0
-        self._sum_success_single = 0.0
-        self._num_scores_single = 0
-        self._bm_sum_single: Dict[str, float] = defaultdict(float)
-        self._bm_success_single: Dict[str, float] = defaultdict(float)
-        self._bm_num_single: Dict[str, int] = defaultdict(int)
-
-        self._seen_first_pass: Set[Tuple[str, str, int, int]] = set()
+        self._seen: Set[Tuple[str, str, int, int]] = set()
         if restore_up_to_step is not None:
             self._restore_from_file(int(restore_up_to_step))
         elif os.path.exists(self.path) and os.path.getsize(self.path) > 0:
@@ -107,30 +150,20 @@ class OnlineMetricsRecorder:
         score: float,
         success: bool,
     ) -> bool:
-        """Fold one first-pass episode into the accumulators.
+        """Fold one episode into the accumulators of its pass.
 
         Returns False (and changes nothing) for a duplicate key, which only
         happens when steps are replayed after a resume.
         """
         key = (slug, str(task_id), int(pass_idx), int(rollout_slot))
-        if key in self._seen_first_pass:
+        if key in self._seen:
             return False
-        self._seen_first_pass.add(key)
+        self._seen.add(key)
 
-        self._sum_scores += score
-        self._sum_success += float(success)
-        self._num_scores += 1
-        self._bm_sum[slug] += score
-        self._bm_success[slug] += float(success)
-        self._bm_num[slug] += 1
-
+        stats_all, stats_single = self._passes[int(pass_idx)]
+        stats_all.add(slug, score, success)
         if int(rollout_slot) % self.group_n == 0:
-            self._sum_scores_single += score
-            self._sum_success_single += float(success)
-            self._num_scores_single += 1
-            self._bm_sum_single[slug] += score
-            self._bm_success_single[slug] += float(success)
-            self._bm_num_single[slug] += 1
+            stats_single.add(slug, score, success)
         return True
 
     def _restore_from_file(self, up_to_step: int) -> None:
@@ -151,7 +184,8 @@ class OnlineMetricsRecorder:
                         self._episode_counter = max(
                             self._episode_counter, int(row.get("episode_index", 0) or 0)
                         )
-                        if not row.get("first_pass"):
+                        pass_idx = int(row.get("pass_idx", 0) or 0)
+                        if pass_idx > 0 and not self.track_repeat_passes:
                             continue
                         row_step = row.get("global_step")
                         if row_step is not None and int(row_step) > up_to_step:
@@ -160,7 +194,7 @@ class OnlineMetricsRecorder:
                         if self._accumulate(
                             slug=str(row.get("benchmark_slug", "")),
                             task_id=str(row.get("task_id", "")),
-                            pass_idx=int(row.get("pass_idx", 0) or 0),
+                            pass_idx=pass_idx,
                             rollout_slot=int(row.get("rollout_slot", 0) or 0),
                             score=float(row.get("score", 0.0) or 0.0),
                             success=bool(row.get("success", False)),
@@ -173,13 +207,13 @@ class OnlineMetricsRecorder:
             return
         if restored or skipped_after_ckpt:
             logger.info(
-                "Restored %d first-pass episodes (<= step %d) from %s; skipped %d rows "
-                "after the checkpoint (cumulative_avg_score=%.4f)",
+                "Restored %d episodes (<= step %d) from %s; skipped %d rows "
+                "after the checkpoint (first-pass cumulative_avg_score=%.4f)",
                 restored,
                 up_to_step,
                 self.path,
                 skipped_after_ckpt,
-                self._sum_scores / max(self._num_scores, 1),
+                self._passes[0][0].avg_score(),
             )
 
     # --------------------------------------------------------------- public
@@ -201,7 +235,7 @@ class OnlineMetricsRecorder:
         first_attempt = int(rollout_slot) % self.group_n == 0
         with self._lock:
             self._episode_counter += 1
-            if first_pass:
+            if first_pass or self.track_repeat_passes:
                 self._accumulate(
                     slug=slug,
                     task_id=task_id,
@@ -211,6 +245,10 @@ class OnlineMetricsRecorder:
                     success=bool(success),
                 )
 
+            # Row-level cumulative fields keep their historical meaning: the
+            # first-pass (AgentStream online) estimate, whatever pass the row
+            # itself belongs to.
+            fp_all, fp_single = self._passes[0]
             row = {
                 **self.run_meta,
                 "episode_index": self._episode_counter,
@@ -225,22 +263,10 @@ class OnlineMetricsRecorder:
                 "success": bool(success),
                 "score": float(score),
                 "episode_steps": int(episode_steps),
-                "cumulative_avg_score": (
-                    self._sum_scores / self._num_scores if self._num_scores else 0.0
-                ),
-                "benchmark_cumulative_avg_score": (
-                    self._bm_sum[slug] / self._bm_num[slug] if self._bm_num[slug] else 0.0
-                ),
-                "cumulative_avg_score_single": (
-                    self._sum_scores_single / self._num_scores_single
-                    if self._num_scores_single
-                    else 0.0
-                ),
-                "benchmark_cumulative_avg_score_single": (
-                    self._bm_sum_single[slug] / self._bm_num_single[slug]
-                    if self._bm_num_single[slug]
-                    else 0.0
-                ),
+                "cumulative_avg_score": fp_all.avg_score(),
+                "benchmark_cumulative_avg_score": fp_all.avg_score(slug),
+                "cumulative_avg_score_single": fp_single.avg_score(),
+                "benchmark_cumulative_avg_score_single": fp_single.avg_score(slug),
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             if action_stats:
@@ -249,7 +275,7 @@ class OnlineMetricsRecorder:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def snapshot(self) -> Dict[str, float]:
-        """Current first-pass cumulative averages as flat trainer metrics.
+        """Current cumulative averages as flat trainer metrics.
 
         Keys (``<bm>`` is a benchmark slug)::
 
@@ -261,40 +287,23 @@ class OnlineMetricsRecorder:
             online/single/first_pass_episodes
             online/<bm>/...  and  online/<bm>/single/...   same, per benchmark
 
-        Benchmarks with no first-pass episode yet are omitted, so the curves
+        With ``track_repeat_passes`` the same subtree is emitted once more per
+        repeat pass under ``online/pass<K>/`` (``episodes`` instead of
+        ``first_pass_episodes``), so the K-th encounter of the stream gets
+        directly comparable cumulative curves.
+
+        Benchmarks (and passes) with no episode yet are omitted, so the curves
         start when the stream first reaches them.
         """
-
-        def _put(out: Dict[str, float], prefix: str, s: float, succ: float, n: int) -> None:
-            if n <= 0:
-                return
-            out[f"{prefix}cumulative_avg_score"] = s / n
-            out[f"{prefix}cumulative_success_rate"] = succ / n
-            out[f"{prefix}first_pass_episodes"] = float(n)
-
         with self._lock:
             out: Dict[str, float] = {}
-            _put(out, "online/", self._sum_scores, self._sum_success, self._num_scores)
-            _put(
-                out,
-                "online/single/",
-                self._sum_scores_single,
-                self._sum_success_single,
-                self._num_scores_single,
-            )
-            for slug in sorted(self._bm_num):
-                _put(
-                    out,
-                    f"online/{slug}/",
-                    self._bm_sum[slug],
-                    self._bm_success[slug],
-                    self._bm_num[slug],
-                )
-                _put(
-                    out,
-                    f"online/{slug}/single/",
-                    self._bm_sum_single[slug],
-                    self._bm_success_single[slug],
-                    self._bm_num_single[slug],
-                )
+            for pass_idx in sorted(self._passes):
+                stats_all, stats_single = self._passes[pass_idx]
+                base = "online/" if pass_idx == 0 else f"online/pass{pass_idx}/"
+                n_key = "first_pass_episodes" if pass_idx == 0 else "episodes"
+                stats_all.emit(out, base, n_key)
+                stats_single.emit(out, f"{base}single/", n_key)
+                for slug in sorted(stats_all.bm_num):
+                    stats_all.emit(out, f"{base}{slug}/", n_key, slug)
+                    stats_single.emit(out, f"{base}{slug}/single/", n_key, slug)
             return out

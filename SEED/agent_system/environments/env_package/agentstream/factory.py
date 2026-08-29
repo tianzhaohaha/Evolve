@@ -154,6 +154,7 @@ def make_agentstream_envs(
             path=metrics_path,
             group_n=group_n,
             restore_up_to_step=restore_up_to_step,
+            track_repeat_passes=cfg.online_track_repeat_passes,
             run_meta={
                 "experiment": experiment_name,
                 "protocol": cfg.protocol,

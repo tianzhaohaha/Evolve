@@ -149,6 +149,11 @@ class AgentStreamConfig:
     # --- online metrics -------------------------------------------------------
     online_metrics_enable: bool = True
     online_metrics_path: str = ""  # defaults to <trainer.default_local_dir>/agentstream_online_metrics.jsonl
+    # Multi-pass streams (on_exhausted=cycle): also give every repeat pass K its
+    # own cumulative curves (wandb ``online/pass<K>/...``, same subtree layout
+    # as the first-pass ``online/...``). Off = first pass only, the AgentStream
+    # online-protocol semantics; the first-pass metrics never change either way.
+    online_track_repeat_passes: bool = False
 
     # --- validation stream ------------------------------------------------------
     # Validation always evaluates a fixed per-benchmark task set (cycled
@@ -227,6 +232,9 @@ def parse_agentstream_config(config: Any) -> AgentStreamConfig:
 
     cfg.online_metrics_enable = bool(pick("online_metrics_enable", cfg.online_metrics_enable))
     cfg.online_metrics_path = str(pick("online_metrics_path", cfg.online_metrics_path))
+    cfg.online_track_repeat_passes = bool(
+        pick("online_track_repeat_passes", cfg.online_track_repeat_passes)
+    )
     cfg.val_stream_seed = int(pick("val_stream_seed", cfg.val_stream_seed))
 
     # --- validation -----------------------------------------------------------

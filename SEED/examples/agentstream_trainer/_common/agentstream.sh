@@ -73,6 +73,9 @@ AS_VAL_TASKS=${AS_VAL_TASKS:-16}
 AS_VAL_SOURCE=${AS_VAL_SOURCE:-holdout}
 AS_BLOCK_PASSES=${AS_BLOCK_PASSES:-1}
 AS_ON_EXHAUSTED=${AS_ON_EXHAUSTED:-cycle}
+# Multi-pass streams: additionally record every repeat pass K as its own
+# cumulative wandb subtree online/pass<K>/* (first-pass online/* unaffected).
+AS_TRACK_REPEAT_PASSES=${AS_TRACK_REPEAT_PASSES:-false}
 if [[ -z "${AS_BENCHMARK_KWARGS_JSON:-}" ]]; then
     AS_BENCHMARK_KWARGS_JSON='{}'
 fi
@@ -316,6 +319,7 @@ python3 -m verl.trainer.main_ppo \
     env.agentstream.val_source=$AS_VAL_SOURCE \
     env.agentstream.block_passes=$AS_BLOCK_PASSES \
     env.agentstream.on_exhausted=$AS_ON_EXHAUSTED \
+    env.agentstream.online_track_repeat_passes=$AS_TRACK_REPEAT_PASSES \
     env.agentstream.reset_timeout_s=$AS_RESET_TIMEOUT \
     env.agentstream.step_timeout_s=$AS_STEP_TIMEOUT \
     trainer.critic_warmup=0 \
