@@ -227,6 +227,7 @@ if [[ "${AGENTSTREAM_ACCEPT_TOOL_CALL:-false}" == "true" ]]; then
 fi
 
 python3 -m verl.trainer.main_ppo \
+    +ray_init.include_dashboard=False \
     algorithm.adv_estimator=seed \
     data.train_files=$HOME/data/verl-agent/text/train.parquet \
     data.val_files=$HOME/data/verl-agent/text/test.parquet \

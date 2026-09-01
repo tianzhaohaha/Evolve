@@ -8,12 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env}"
 AGENTSTREAM_CONFIG="${AGENTSTREAM_CONFIG:-$SCRIPT_DIR/agentstream_full.env}"
+_caller_wandb_mode="${WANDB_MODE:-}"
 
 if [[ -f "$ENV_FILE" ]]; then
     set -a
     # shellcheck disable=SC1090
     source "$ENV_FILE"
     set +a
+fi
+if [[ -n "$_caller_wandb_mode" ]]; then
+    export WANDB_MODE="$_caller_wandb_mode"
 fi
 if [[ ! -f "$AGENTSTREAM_CONFIG" ]]; then
     echo "AgentStream config not found: $AGENTSTREAM_CONFIG" >&2

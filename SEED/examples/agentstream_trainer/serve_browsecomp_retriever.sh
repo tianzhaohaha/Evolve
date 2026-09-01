@@ -18,7 +18,9 @@ HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-60100}
 SEARCHER_TYPE=${SEARCHER_TYPE:-faiss}                 # faiss | bm25
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}   # faiss only
+EMBED_MODEL_PATH=${EMBED_MODEL_PATH:-$EMBED_MODEL}
 EXGENTIC_HOME=${EXGENTIC_HOME:-$HOME/.exgentic}
+export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 ASSETS="$EXGENTIC_HOME/benchmarks/browsecompplus"
 EXGENTIC_BIN="$ASSETS/venv/bin/exgentic"
 
@@ -32,7 +34,7 @@ if [[ "$SEARCHER_TYPE" == "bm25" ]]; then
 else
     model_dir=$(tr '[:upper:]' '[:lower:]' <<< "${EMBED_MODEL##*/}")
     KWARGS=$(printf '{"searcher_type":"faiss","index_path":"%s/indexes/%s/corpus.shard*_of_4.pkl","model_name":"%s","normalize":true}' \
-        "$ASSETS" "$model_dir" "$EMBED_MODEL")
+    "$ASSETS" "$model_dir" "$EMBED_MODEL_PATH")
 fi
 
 echo "Serving BrowseComp-Plus retriever at http://$HOST:$PORT on GPU $GPU"
