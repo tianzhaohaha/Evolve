@@ -30,7 +30,9 @@ SEED 论文流程与脚本阶段的对应关系：
    源码后按文末"重装 venv"步骤同步。
 2. `.env` 里提供 `HF_TOKEN`（`cais/hle` 为 gated 数据集）和判分器用的 API key
    （`AGENTSTREAM_API_MODEL`，默认与 tau2 用户模拟器相同）。
-3. BrowseComp-Plus 先起共享检索服务（一张空闲 GPU）：
+3. BrowseComp-Plus 的共享检索服务由 Stage-3 运行脚本自动拉起（在
+   `AGENTSTREAM_RETRIEVER_GPU`（默认 0）上，已就绪则复用，pid/日志在
+   `logs/agentstream/browsecomp_retriever_<port>.{pid,log}`）；如需手动或在远程机起：
    `GPU=0 PORT=60100 bash examples/agentstream_trainer/serve_browsecomp_retriever.sh`，
    地址写入 `AGENTSTREAM_BROWSECOMP_RETRIEVER_URL`（默认 `http://127.0.0.1:60100`）。
 4. `AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus` 并提升

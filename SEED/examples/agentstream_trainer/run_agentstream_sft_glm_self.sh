@@ -133,6 +133,9 @@ if [[ "${DRY_RUN:-false}" == "true" ]]; then
     exit 0
 fi
 
+# browsecompplus 在列时确保共享检索服务已就绪（本机自动拉起；DRY_RUN 不触发）。
+bash "$SCRIPT_DIR/ensure_browsecomp_retriever.sh"
+
 case "$mode" in
     random) launcher="$SCRIPT_DIR/run_agentstream_random.sh" ;;
     isolated) launcher="$SCRIPT_DIR/run_agentstream_isolated.sh" ;;
