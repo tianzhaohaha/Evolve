@@ -38,6 +38,11 @@ from agent_system.environments.env_package.agentstream.exgentic_client import ( 
     BenchmarkHub,
     SessionDriver,
 )
+from agent_system.environments.env_package.agentstream.as_config import (  # noqa: E402
+    DEFAULT_OBSERVATION_MAX_CHARS,
+    parse_int_mapping,
+    resolve_benchmark_kwargs,
+)
 from agent_system.environments.env_package.agentstream.projection import (  # noqa: E402
     agentstream_projection_detailed,
 )
@@ -87,6 +92,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rollouts-per-task", type=int, default=8)
     parser.add_argument("--parallel-sessions", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=30)
+    # Per-benchmark overrides, same JSON shape as env.agentstream.*_per_benchmark.
+    parser.add_argument("--max-steps-json", default="{}", help='e.g. {"hle": 2, "appworld": 40}')
+    parser.add_argument("--observation-max-chars", type=int, default=DEFAULT_OBSERVATION_MAX_CHARS)
+    parser.add_argument("--observation-max-chars-json", default="{}", help='e.g. {"browsecompplus": 8192}')
     parser.add_argument("--history-length", type=int, default=5)
     parser.add_argument("--no-require-think", action="store_true")
     parser.add_argument("--accept-tool-call", action="store_true")
@@ -237,6 +246,14 @@ def sample_tasks(args: argparse.Namespace, output_dir: Path, hub: BenchmarkHub) 
 _TLS = threading.local()
 
 
+def _episode_limits(args: argparse.Namespace, slug: str) -> Dict[str, int]:
+    """Mirror of AgentStreamConfig.episode_limits for the CLI arguments."""
+    return {
+        "max_steps": args.max_steps_by_slug.get(slug) or args.max_steps,
+        "observation_max_chars": args.observation_max_chars_by_slug.get(slug) or args.observation_max_chars,
+    }
+
+
 def _thread_driver(args: argparse.Namespace, drivers: List[SessionDriver], lock: threading.Lock) -> SessionDriver:
     driver = getattr(_TLS, "driver", None)
     if driver is None:
@@ -246,6 +263,7 @@ def _thread_driver(args: argparse.Namespace, drivers: List[SessionDriver], lock:
             output_dir=str(Path(args.output_dir) / "exgentic_sessions"),
             run_id=f"sft_t{threading.get_ident()}",
             max_steps=args.max_steps,
+            observation_max_chars=args.observation_max_chars,
         )
         with lock:
             drivers.append(driver)
@@ -272,6 +290,8 @@ def run_one_rollout(
 ) -> Dict[str, Any]:
     slug, task_id, rollout_id = spec["slug"], spec["task_id"], spec["rollout_id"]
     driver = _thread_driver(args, drivers, dlock)
+    limits = _episode_limits(args, slug)
+    driver.set_episode_limits(**limits)
     payload = driver.reset(slug, task_id, bm_kwargs, spec["session_kwargs"])
 
     steps: List[Dict[str, Any]] = []
@@ -280,7 +300,7 @@ def run_one_rollout(
     success, score = False, 0.0
 
     if not payload.get("reset_error"):
-        for step_idx in range(args.max_steps):
+        for step_idx in range(limits["max_steps"]):
             prompt = render_prompt(
                 slug=slug,
                 task=payload["task"],
@@ -661,7 +681,14 @@ def main() -> None:
     )
 
     slugs = sorted(s.strip() for s in args.benchmarks.split(",") if s.strip())
-    bm_kwargs_by_slug = {str(k): dict(v or {}) for k, v in json.loads(args.benchmark_kwargs_json).items()}
+    args.max_steps_by_slug = parse_int_mapping(args.max_steps_json, "--max-steps-json")
+    args.observation_max_chars_by_slug = parse_int_mapping(
+        args.observation_max_chars_json, "--observation-max-chars-json"
+    )
+    # Same defaults + overrides resolution as the RL factory, so Stage-1 data
+    # and Stage-3 rollouts see identical benchmark configurations.
+    overrides = json.loads(args.benchmark_kwargs_json)
+    bm_kwargs_by_slug = {slug: resolve_benchmark_kwargs(slug, overrides.get(slug)) for slug in slugs}
     hub = BenchmarkHub(
         exgentic_root=args.exgentic_root,
         slugs=slugs,

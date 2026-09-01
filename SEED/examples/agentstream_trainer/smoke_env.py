@@ -22,6 +22,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from agent_system.environments.env_package.agentstream.as_config import (  # noqa: E402
+    resolve_benchmark_kwargs,
+)
 from agent_system.environments.env_package.agentstream.exgentic_client import (  # noqa: E402
     BenchmarkHub,
     SessionDriver,
@@ -47,7 +50,8 @@ def main() -> int:
         return 2
 
     slugs = sorted(s.strip() for s in args.benchmarks.split(",") if s.strip())
-    bm_kwargs = json.loads(args.benchmark_kwargs_json)
+    overrides = json.loads(args.benchmark_kwargs_json)
+    bm_kwargs = {slug: resolve_benchmark_kwargs(slug, overrides.get(slug)) for slug in slugs}
 
     print(f"[1/3] importing exgentic from {args.exgentic_root} ...")
     hub = BenchmarkHub(

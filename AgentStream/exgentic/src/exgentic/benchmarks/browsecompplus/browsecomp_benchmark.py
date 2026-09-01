@@ -109,6 +109,7 @@ class BrowseCompPlusSession(Session):
         self._registry = ActionsHandler(logger=self.logger)
         self.set_action_types()
         self._response = None
+        self._score: SessionScore | None = None
         self.evaluator = self.get_evaluator(eval_model_id)
         self.retrieved_docids = set()
         self.tool_call_count = defaultdict(lambda: 0)
@@ -271,13 +272,16 @@ class BrowseCompPlusSession(Session):
         return self._done
 
     def score(self) -> SessionScore:
-        results, self.model_usage = self.evaluator.evaluate_response(
-            agent_response=self._response,
-            instance=self._instance,
-            retrieved_docids_set=self.retrieved_docids,
-            tool_call_counts=self.tool_call_count,
-        )
-        return results
+        # Cached: score() is called by the harness and again by close(), and
+        # every evaluation is a paid judge-model request.
+        if self._score is None:
+            self._score, self.model_usage = self.evaluator.evaluate_response(
+                agent_response=self._response,
+                instance=self._instance,
+                retrieved_docids_set=self.retrieved_docids,
+                tool_call_counts=self.tool_call_count,
+            )
+        return self._score
 
     def get_cost(self) -> CostReport:
         if not self.model_usage:
@@ -337,11 +341,11 @@ class BrowseCompPlusSession(Session):
     def get_evaluator(self, eval_model_id):
         from .browsecomp_eval import BrowseCompEvaluatorOpenai, BrowsecompEvaluatorQwen
 
-        if "gpt" in eval_model_id:
-            return BrowseCompEvaluatorOpenai(eval_model_id=eval_model_id)
         if eval_model_id == "Qwen/Qwen3-32B":
             return BrowsecompEvaluatorQwen()  # Currently not supported
-        raise ValueError(f"Invalid eval_model_id: {eval_model_id}")
+        # Any litellm-routable chat model works with the OpenAI-style grader
+        # template (gpt-*, openrouter/*, local vLLM endpoints, ...).
+        return BrowseCompEvaluatorOpenai(eval_model_id=eval_model_id)
 
     # Robustly extract the answer from pydantic model or dict
     def get_arguments_dict(self, args):
@@ -601,6 +605,10 @@ class BrowseCompPlusBenchmark(Benchmark, BaseModel):
     # instead of being loaded in each session process. Useful when sessions
     # run in Docker to avoid duplicating the heavy index in RAM.
     retriever_runner: RunnerName | None = None
+    # Externally managed retriever service (``exgentic serve --cls
+    # exgentic.benchmarks.browsecompplus.retriever:Retriever``). Takes
+    # precedence over retriever_runner; sessions connect with RetrieverClient.
+    retriever_url: str | None = None
 
     # Agent inference params (for logging)
     inference_model: str = "N/A"
@@ -690,6 +698,9 @@ class BrowseCompPlusBenchmark(Benchmark, BaseModel):
         }
         # Auto-use a shared retriever service for Docker so that session
         # containers don't each load the heavy search index (OOM).
+        if self.retriever_url:
+            kwargs["retriever_url"] = self.retriever_url
+            return kwargs
         if not self.retriever_runner and self.resolve_runner() == "docker":
             self.retriever_runner = "service"
         if self.retriever_runner:

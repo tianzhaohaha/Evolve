@@ -37,6 +37,8 @@ import uuid
 from contextlib import ExitStack
 from typing import Any, Dict, List, Optional, Tuple
 
+from .as_config import DEFAULT_OBSERVATION_MAX_CHARS
+
 _BOOTSTRAPPED: Dict[str, bool] = {}
 
 
@@ -57,6 +59,16 @@ def bootstrap_exgentic(exgentic_root: str) -> None:
 
 
 def load_benchmark_class(slug: str):
+    """Registry slug (``bfcl``) or explicit ``module.path:ClassName`` reference.
+
+    The explicit form lets unregistered benchmarks (custom or the exgentic
+    ``testing`` fixtures) run through the same driver.
+    """
+    if ":" in slug:
+        import importlib
+
+        module_path, attr = slug.rsplit(":", 1)
+        return getattr(importlib.import_module(module_path), attr)
     from exgentic.interfaces.registry import load_benchmark
 
     return load_benchmark(slug)
@@ -181,7 +193,7 @@ def render_action_schemas(actions: List[Any], *, compact: bool = False) -> str:
     return "\n".join(blocks)
 
 
-def observation_to_text(observation: Any, max_chars: int = 4096) -> str:
+def observation_to_text(observation: Any, max_chars: int = DEFAULT_OBSERVATION_MAX_CHARS) -> str:
     """Render an exgentic Observation into plain text for the policy prompt."""
     if observation is None:
         return ""
@@ -219,10 +231,12 @@ class SessionDriver:
         output_dir: str,
         run_id: str,
         max_steps: int,
+        observation_max_chars: int = DEFAULT_OBSERVATION_MAX_CHARS,
     ) -> None:
         bootstrap_exgentic(exgentic_root)
         self._runner = runner
-        self._max_steps = max_steps
+        self._max_steps = int(max_steps)
+        self._observation_max_chars = int(observation_max_chars)
         self._stack = ExitStack()
         try:
             from exgentic.core.context import run_scope
@@ -261,9 +275,16 @@ class SessionDriver:
         self._finished = True
         self.close_session()
 
-    def set_max_steps(self, max_steps: int) -> None:
-        """Adjust the per-episode step budget (per-benchmark overrides)."""
-        self._max_steps = int(max_steps)
+    def set_episode_limits(
+        self,
+        max_steps: Optional[int] = None,
+        observation_max_chars: Optional[int] = None,
+    ) -> None:
+        """Adjust per-episode limits before ``reset`` (per-benchmark overrides)."""
+        if max_steps:
+            self._max_steps = int(max_steps)
+        if observation_max_chars:
+            self._observation_max_chars = int(observation_max_chars)
 
     def reset(
         self,
@@ -299,7 +320,7 @@ class SessionDriver:
             "task": str(self._session.task),
             "context": self._safe_context(),
             "actions_text": render_action_schemas(self._action_types, compact=slug == "appworld"),
-            "observation": observation_to_text(observation),
+            "observation": observation_to_text(observation, self._observation_max_chars),
         }
 
     def _safe_context(self) -> str:
@@ -345,7 +366,10 @@ class SessionDriver:
             done = bool(self._session.done())
         except Exception:
             pass
-        if observation is None and not step_error:
+        # A finish-style action returns no observation; an unknown action name
+        # never reached the session and must not end the episode (the policy
+        # gets the "[invalid action]" hint below and keeps its step budget).
+        if action is not None and observation is None and not step_error:
             done = True
         if self._steps >= self._max_steps:
             done = True
@@ -361,7 +385,7 @@ class SessionDriver:
                 "Pick one of the available actions."
             )
         else:
-            obs_text = observation_to_text(observation)
+            obs_text = observation_to_text(observation, self._observation_max_chars)
 
         info = {
             "won": False,

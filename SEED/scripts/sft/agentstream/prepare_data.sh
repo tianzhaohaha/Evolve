@@ -39,6 +39,10 @@ if [[ -z "${AS_BENCHMARK_KWARGS_JSON:-}" ]]; then
 fi
 AS_RUNNER="${AS_RUNNER:-venv}"
 MAX_STEPS="${MAX_STEPS:-30}"
+# Per-benchmark overrides (JSON objects), same shape as the RL-side
+# AGENTSTREAM_MAX_STEPS_JSON / AGENTSTREAM_OBS_MAX_CHARS_JSON.
+MAX_STEPS_JSON="${MAX_STEPS_JSON:-"{}"}"
+OBS_MAX_CHARS_JSON="${OBS_MAX_CHARS_JSON:-"{}"}"
 HISTORY_LENGTH="${HISTORY_LENGTH:-5}"
 PARALLEL_SESSIONS="${PARALLEL_SESSIONS:-8}"
 SFT_VAL_RATIO="${SFT_VAL_RATIO:-0.1}"
@@ -99,6 +103,8 @@ args=(
     --rollouts-per-task "$ROLLOUTS_PER_TASK"
     --parallel-sessions "$PARALLEL_SESSIONS"
     --max-steps "$MAX_STEPS"
+    --max-steps-json "$MAX_STEPS_JSON"
+    --observation-max-chars-json "$OBS_MAX_CHARS_JSON"
     --history-length "$HISTORY_LENGTH"
     --skill-gen-workers "$SKILL_GEN_WORKERS"
     --sft-val-ratio "$SFT_VAL_RATIO"

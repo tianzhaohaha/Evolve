@@ -296,10 +296,17 @@ def calib_err(confidence, correct, p="2", beta=100):
 
 class HLEEvaluator(Evaluator):
 
-    def __init__(self, subset: str = "test", judge_model: str = "o3-mini-2025-01-31", agent_timeout: int = 900) -> None:
+    def __init__(
+        self,
+        subset: str = "test",
+        judge_model: str = "o3-mini-2025-01-31",
+        agent_timeout: int = 900,
+        text_only: bool = False,
+    ) -> None:
         self._subset = subset
         self._judge_model = judge_model
         self._agent_timeout = agent_timeout
+        self._text_only = text_only
         self._dataset = None
 
     def _ensure_dataset(self) -> None:
@@ -310,7 +317,11 @@ class HLEEvaluator(Evaluator):
 
     def list_tasks(self) -> list[str]:
         self._ensure_dataset()
-        return [str(i) for i in range(len(self._dataset))]
+        if not self._text_only:
+            return [str(i) for i in range(len(self._dataset))]
+        # Task ids stay indices into the full split so sessions need no remap;
+        # multimodal rows (non-empty image) are simply not listed.
+        return [str(i) for i, image in enumerate(self._dataset["image"]) if not image]
 
     def get_session_kwargs(self, index: SessionIndex) -> dict[str, Any]:
         self._ensure_dataset()
@@ -380,6 +391,8 @@ class HLEBenchmark(Benchmark, BaseModel):
     subset: Literal["test"] = "test"
     judge_model: str = "o3-mini-2025-01-31"
     agent_timeout: int = 900
+    # Skip questions with an image (text-only agents cannot see it).
+    text_only: bool = False
     runner: RunnerName | None = None
 
     def _get_evaluator_kwargs(self) -> dict[str, Any]:
@@ -387,4 +400,5 @@ class HLEBenchmark(Benchmark, BaseModel):
             "subset": self.subset,
             "judge_model": self.judge_model,
             "agent_timeout": self.agent_timeout,
+            "text_only": self.text_only,
         }

@@ -21,6 +21,27 @@ SEED 论文流程与脚本阶段的对应关系：
 - GPU：2–7；Stage 1 本地 vLLM 默认只用 GPU 2，可设 `AGENTSTREAM_POLICY_GPU=2,3,4,5`（逗号列表）做多卡数据并行——每卡一个模型副本、请求自动轮询分摊，并发会话数按副本数自动放大
 - RL 模式：`sequential`、`interleaved`、`isolated`
 
+### 启用 HLE / BrowseComp-Plus
+
+两者的适配已与三件套共用同一条链路（`SessionDriver` → `AgentStreamEnvs` → 任务流），只需：
+
+1. 在训练机安装 benchmark 环境：`exgentic install --benchmark hle` / `--benchmark browsecompplus`
+   （后者的 setup.sh 会下载 faiss 索引，体积大，提前留磁盘）。修改过 `AgentStream/exgentic`
+   源码后按文末"重装 venv"步骤同步。
+2. `.env` 里提供 `HF_TOKEN`（`cais/hle` 为 gated 数据集）和判分器用的 API key
+   （`AGENTSTREAM_API_MODEL`，默认与 tau2 用户模拟器相同）。
+3. BrowseComp-Plus 先起共享检索服务（一张空闲 GPU）：
+   `GPU=0 PORT=60100 bash examples/agentstream_trainer/serve_browsecomp_retriever.sh`，
+   地址写入 `AGENTSTREAM_BROWSECOMP_RETRIEVER_URL`（默认 `http://127.0.0.1:60100`）。
+4. `AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus` 并提升
+   `AGENTSTREAM_RUN_VERSION`。步数 / 观测长度上限已在
+   `AGENTSTREAM_MAX_STEPS_JSON` / `AGENTSTREAM_OBS_MAX_CHARS_JSON` 里给出默认值。
+5. 先冒烟：`python examples/agentstream_trainer/smoke_env.py --benchmarks hle --step`
+   （browsecompplus 同理，需传 `--benchmark-kwargs-json` 指定 `retriever_url`）。
+
+hle 默认 `text_only=true`（过滤带图题，任务 id 仍是原数据集索引）；4B 级模型在 hle 上
+准确率接近 0，GRPO 组内几乎无方差，它更适合作为 stream 中的"干扰域"而非单独训练域。
+
 > **配置断代提醒**：bfcl 子集、prompt 模板（带历史模板现每步携带 Task context）、
 > 步数与奖励定义近期同时变更。旧的 Stage 1 数据与 Stage 2 SFT 模型和新配置不兼容，
 > 需从 Stage 1 重跑；重跑时建议更换输出目录版本号（`AGENTSTREAM_SFT_DATA_DIR`、

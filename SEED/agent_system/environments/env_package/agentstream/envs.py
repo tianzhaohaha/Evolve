@@ -62,11 +62,11 @@ class AgentStreamWorker:
         task_id: str,
         bm_kwargs: Dict[str, Any],
         session_kwargs: Dict[str, Any],
-        max_steps: Optional[int] = None,
+        limits: Optional[Dict[str, int]] = None,
     ) -> Dict[str, Any]:
         try:
-            if max_steps:
-                self.driver.set_max_steps(max_steps)
+            if limits:
+                self.driver.set_episode_limits(**limits)
             return self.driver.reset(slug, task_id, bm_kwargs, session_kwargs)
         except Exception as exc:
             # Never kill the vectorized loop: surface the failure as a payload
@@ -205,10 +205,8 @@ class AgentStreamEnvs:
             slug, task_id = batch.refs[i]
             bm_kwargs = self.cfg.resolved_benchmark_kwargs(slug)
             session_kwargs = self.hub.session_kwargs(slug, task_id)
-            slug_max_steps = self.cfg.resolved_max_steps(slug, self.default_max_steps)
-            futures.append(
-                worker.reset.remote(slug, task_id, bm_kwargs, session_kwargs, slug_max_steps)
-            )
+            limits = self.cfg.episode_limits(slug, self.default_max_steps)
+            futures.append(worker.reset.remote(slug, task_id, bm_kwargs, session_kwargs, limits))
 
         timeout_s = self.cfg.reset_timeout_s
 

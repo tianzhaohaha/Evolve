@@ -29,8 +29,8 @@ BENCHMARK_INTROS = {
     "bfcl": "You are an expert function-calling agent. Solve the task by calling the correct functions with correct arguments.",
     "tau2": "You are an expert customer-service agent. Help the user while strictly following the domain policy.",
     "appworld": "You are an expert digital assistant operating apps through code-based APIs on behalf of a supervisor.",
-    "hle": "You are an expert examinee answering an extremely difficult exam question.",
-    "browsecompplus": "You are an expert research agent. Use the search tools to locate evidence and answer the question.",
+    "hle": "You are an expert examinee answering an extremely difficult exam question. There is no tool to consult: reason carefully, then submit your final answer with the finish action in a single step.",
+    "browsecompplus": "You are an expert research agent. Use the search tools to locate evidence, then submit the answer with the finish action.",
     "swebench": "You are an expert software engineer. Fix the described issue in the repository.",
 }
 

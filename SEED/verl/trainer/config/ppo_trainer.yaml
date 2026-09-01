@@ -396,7 +396,7 @@ env:
     exgentic_root: ${oc.env:AGENTSTREAM_EXGENTIC_ROOT,""}
     runner: venv                    # exgentic runner for benchmark isolation
     exgentic_output_dir: outputs/agentstream_sessions
-    benchmarks: [bfcl]              # any of: bfcl,tau2,appworld,hle,browsecompplus,swebench
+    benchmarks: [bfcl]              # validated: bfcl,tau2,appworld,hle,browsecompplus (swebench: registry-only, needs docker)
     benchmark_kwargs: {}            # per-slug overrides, e.g. {tau2: {subset: retail}}
     stream_mode: random             # random (SEED-original) | isolated | sequential | interleaved
     stream_seed: 44                 # AgentStream run seed (ordering); selection is fixed at 42
@@ -410,6 +410,9 @@ env:
     # Per-benchmark step budgets as a JSON object string, e.g. '{"bfcl": 15, "appworld": 40}'.
     # Values above env.max_steps have no effect (the rollout loop bound); use this to end cheaper benchmarks earlier.
     max_steps_per_benchmark: ${oc.env:AGENTSTREAM_MAX_STEPS_JSON,null}
+    # Observation text cap (chars) in the prompt; per-benchmark JSON overrides, e.g. '{"browsecompplus": 8192}'.
+    observation_max_chars: 4096
+    observation_max_chars_per_benchmark: ${oc.env:AGENTSTREAM_OBS_MAX_CHARS_JSON,null}
     reset_timeout_s: 600            # per-batch env reset budget; straggler workers are killed+replaced (<=0 disables)
     step_timeout_s: 600             # per-batch env step budget; same straggler handling
     reward_success: 10.0            # same terminal reward scale as ALFWorld/AppWorld

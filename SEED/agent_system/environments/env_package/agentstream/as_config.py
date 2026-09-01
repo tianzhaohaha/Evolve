@@ -43,15 +43,43 @@ VALID_ON_EXHAUSTED = ("cycle", "stop")
 
 DEFAULT_BENCHMARK_KWARGS: Dict[str, Dict[str, Any]] = {
     # Mirrors AgentStream/exgentic/scripts/*/run_experiment.py BENCHMARK_REGISTRY
-    # (subset choices), minus API-model specific fields which the user overrides
-    # via env.agentstream.benchmark_kwargs.
+    # (subset choices), minus API-model specific fields (judge / user-simulator
+    # models, retriever endpoints) which the caller supplies via
+    # env.agentstream.benchmark_kwargs. Shared by the RL factory and the Stage-1
+    # SFT pipeline through :func:`resolve_benchmark_kwargs`.
     "bfcl": {"subset": "multi_turn_base"},
     "tau2": {"subset": "telecom"},
     "appworld": {"subset": "test_challenge"},
-    "hle": {},
-    "browsecompplus": {},
+    # text_only drops multimodal questions (their image would otherwise be
+    # inlined as base64 into a text-only prompt). agent_timeout counts from
+    # session start; SEED batches generation over many slots, so allow slack.
+    "hle": {"text_only": True, "agent_timeout": 3600},
+    "browsecompplus": {"include_get_document": True},
     "swebench": {"subset": "princeton-nlp/SWE-bench_Verified"},
 }
+
+# Per-episode limits every benchmark understands; per-benchmark overrides
+# are merged on top by :meth:`AgentStreamConfig.episode_limits`.
+DEFAULT_OBSERVATION_MAX_CHARS = 4096
+
+
+def resolve_benchmark_kwargs(slug: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Defaults for ``slug`` with caller overrides on top (plain dict)."""
+    merged = dict(DEFAULT_BENCHMARK_KWARGS.get(slug, {}))
+    merged.update(overrides or {})
+    return merged
+
+
+def parse_int_mapping(value: Any, key: str) -> Dict[str, int]:
+    """Parse ``{slug: int}`` given as a mapping or a JSON object string."""
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        text = value.strip()
+        value = json.loads(text) if text else {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be a mapping (or a JSON object string), e.g. {{'appworld': 40}}")
+    return {str(k): int(v) for k, v in value.items()}
 
 
 def _select(cfg: Any, key: str, default: Any = None) -> Any:
@@ -128,6 +156,11 @@ class AgentStreamConfig:
     # global budget have no effect: set the global budget to the largest value
     # you need and use this mapping to end cheaper benchmarks earlier.
     max_steps_per_benchmark: Dict[str, int] = field(default_factory=dict)
+    # Observation text cap (chars) rendered into the prompt, global + per slug.
+    # Benchmarks returning long tool outputs (browsecompplus full documents)
+    # need more than the ALFWorld-sized default.
+    observation_max_chars: int = DEFAULT_OBSERVATION_MAX_CHARS
+    observation_max_chars_per_benchmark: Dict[str, int] = field(default_factory=dict)
     reward_success: float = 10.0  # same scale as ALFWorld/AppWorld in SEED
     # If true, add the raw benchmark score (0..1) on top of the success bonus.
     # AgentStream's headline metric is the graded score (appworld partial test
@@ -162,13 +195,15 @@ class AgentStreamConfig:
     val_stream_seed: int = 1042
 
     def resolved_benchmark_kwargs(self, slug: str) -> Dict[str, Any]:
-        merged = dict(DEFAULT_BENCHMARK_KWARGS.get(slug, {}))
-        merged.update(self.benchmark_kwargs.get(slug, {}) or {})
-        return merged
+        return resolve_benchmark_kwargs(slug, self.benchmark_kwargs.get(slug))
 
-    def resolved_max_steps(self, slug: str, default: int) -> int:
-        value = int(self.max_steps_per_benchmark.get(slug, 0) or 0)
-        return value if value > 0 else int(default)
+    def episode_limits(self, slug: str, default_max_steps: int) -> Dict[str, int]:
+        """Per-episode limits for ``slug`` (kwargs of ``SessionDriver.set_episode_limits``)."""
+        return {
+            "max_steps": self.max_steps_per_benchmark.get(slug) or int(default_max_steps),
+            "observation_max_chars": self.observation_max_chars_per_benchmark.get(slug)
+            or int(self.observation_max_chars),
+        }
 
 
 def parse_agentstream_config(config: Any) -> AgentStreamConfig:
@@ -211,18 +246,9 @@ def parse_agentstream_config(config: Any) -> AgentStreamConfig:
     max_steps = node.get("max_steps")
     cfg.max_steps = int(max_steps) if max_steps is not None else None
 
-    max_steps_per_benchmark = pick("max_steps_per_benchmark", {})
-    if isinstance(max_steps_per_benchmark, str):
-        text = max_steps_per_benchmark.strip()
-        max_steps_per_benchmark = json.loads(text) if text else {}
-    if not isinstance(max_steps_per_benchmark, dict):
-        raise ValueError(
-            "env.agentstream.max_steps_per_benchmark must be a mapping "
-            "(or a JSON object string), e.g. {'appworld': 40}"
-        )
-    cfg.max_steps_per_benchmark = {
-        str(k): int(v) for k, v in max_steps_per_benchmark.items()
-    }
+    for key in ("max_steps_per_benchmark", "observation_max_chars_per_benchmark"):
+        setattr(cfg, key, parse_int_mapping(pick(key, {}), f"env.agentstream.{key}"))
+    cfg.observation_max_chars = int(pick("observation_max_chars", cfg.observation_max_chars))
     cfg.reward_success = float(pick("reward_success", cfg.reward_success))
     cfg.reward_use_score = bool(pick("reward_use_score", cfg.reward_use_score))
     cfg.format_penalty = float(pick("format_penalty", cfg.format_penalty))

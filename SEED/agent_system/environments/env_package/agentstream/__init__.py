@@ -23,8 +23,6 @@ and as_config.py for the full key reference).
 """
 
 from .as_config import AgentStreamConfig, parse_agentstream_config
-from .factory import make_agentstream_envs
-from .manager import AgentStreamEnvironmentManager
 from .metrics import OnlineMetricsRecorder
 from .projection import agentstream_projection
 from .task_stream import (
@@ -34,6 +32,24 @@ from .task_stream import (
     order_tasks,
     select_tasks,
 )
+
+# Trainer-side entry points pull in ray/torch; resolve them lazily so the
+# light modules (config, projection, task stream, exgentic bridge) stay
+# importable in the SFT pipeline, smoke tools and unit tests. They remain in
+# __all__, so ``from ... import *`` still needs the full trainer environment.
+_LAZY = {
+    "make_agentstream_envs": ".factory",
+    "AgentStreamEnvironmentManager": ".manager",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY:
+        import importlib
+
+        return getattr(importlib.import_module(_LAZY[name], __name__), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "AgentStreamConfig",
