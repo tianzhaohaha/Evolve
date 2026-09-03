@@ -13,6 +13,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GPU=${GPU:-0}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-60100}
@@ -20,6 +21,7 @@ SEARCHER_TYPE=${SEARCHER_TYPE:-faiss}                 # faiss | bm25
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}   # faiss only
 EMBED_MODEL_PATH=${EMBED_MODEL_PATH:-$EMBED_MODEL}
 EXGENTIC_HOME=${EXGENTIC_HOME:-$HOME/.exgentic}
+EXGENTIC_SOURCE=${EXGENTIC_SOURCE:-$SCRIPT_DIR/../../../AgentStream/exgentic/src}
 export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
 ASSETS="$EXGENTIC_HOME/benchmarks/browsecompplus"
 EXGENTIC_BIN="$ASSETS/venv/bin/exgentic"
@@ -39,6 +41,9 @@ fi
 
 echo "Serving BrowseComp-Plus retriever at http://$HOST:$PORT on GPU $GPU"
 echo "  kwargs: $KWARGS"
+if [[ -d "$EXGENTIC_SOURCE/exgentic" ]]; then
+    export PYTHONPATH="$EXGENTIC_SOURCE${PYTHONPATH:+:$PYTHONPATH}"
+fi
 CUDA_VISIBLE_DEVICES="$GPU" exec "$EXGENTIC_BIN" serve \
     --cls exgentic.benchmarks.browsecompplus.retriever:Retriever \
     --kwargs "$KWARGS" --host "$HOST" --port "$PORT"

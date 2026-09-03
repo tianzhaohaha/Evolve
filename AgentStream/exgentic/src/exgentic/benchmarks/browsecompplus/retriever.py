@@ -44,9 +44,11 @@ class Retriever:
 
         args = parser.parse_args(cli)
         self._searcher = searcher_class(args)
+        self._search_lock = threading.Lock()
 
     def search(self, query: str, k: int) -> list:
-        return self._searcher.search(query, k)
+        with self._search_lock:
+            return self._searcher.search(query, k)
 
     def get_document(self, docid: str) -> dict | None:
         return self._searcher.get_document(docid)
