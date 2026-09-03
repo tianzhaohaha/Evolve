@@ -800,6 +800,13 @@ class DataParallelPPOActor(BasePPOActor):
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         opd_loss_coef = float(self.config.get("opd_loss_coef", 0.0) or 0.0)
+        opd_gen_loss_coef = float(self.config.get("opd_gen_loss_coef", 0.0) or 0.0)
+        opd_gate_beta = self.config.get("opd_gate_beta", 5.0)
+        opd_gate_beta = 5.0 if opd_gate_beta is None else float(opd_gate_beta)
+        opd_gen_gate_beta = self.config.get("opd_gen_gate_beta", None)
+        opd_gen_gate_beta = opd_gate_beta if opd_gen_gate_beta is None else float(opd_gen_gate_beta)
+        opd_gate_eps = float(self.config.get("opd_gate_eps", 0.0) or 0.0)
+        opd_gen_dominance = str(self.config.get("opd_gen_dominance", "none") or "none")
         skill_gen_loss_coef = float(self.config.get("skill_gen_loss_coef", 0.0) or 0.0)
         seed_skill_gen_payload = data.meta_info.get("seed_skill_gen")
         use_skill_gen_loss = (
@@ -815,6 +822,13 @@ class DataParallelPPOActor(BasePPOActor):
         )
         if use_opd_loss:
             select_keys.extend(["teacher_log_prob", teacher_mask_key])
+        use_opd_gen_loss = (
+            opd_gen_loss_coef > 0
+            and "gen_teacher_log_prob" in data.batch.keys()
+            and "gen_skill_mask" in data.batch.keys()
+        )
+        if use_opd_gen_loss:
+            select_keys.extend(["gen_teacher_log_prob", "gen_skill_mask"])
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
@@ -942,10 +956,49 @@ class DataParallelPPOActor(BasePPOActor):
                             teacher_log_prob=data["teacher_log_prob"],
                             response_mask=response_mask,
                             opd_step_mask=data[teacher_mask_key],
-                            gate_beta=self.config.get("opd_gate_beta", 5.0),
+                            gate_beta=opd_gate_beta,
+                            gate_eps=opd_gate_eps,
                             loss_agg_mode=loss_agg_mode,
                         )
                         policy_loss = policy_loss + opd_loss_coef * opd_loss
+
+                    opd_gen_loss = log_prob.new_tensor(0.0)
+                    opd_gen_active_token_ratio = log_prob.new_tensor(0.0)
+                    opd_gen_gate_mean = log_prob.new_tensor(0.0)
+                    opd_gen_gate_active_ratio = log_prob.new_tensor(0.0)
+                    opd_gen_teacher_gap_mean = log_prob.new_tensor(0.0)
+                    if use_opd_gen_loss and "gen_teacher_log_prob" in data and "gen_skill_mask" in data:
+                        gen_step_mask = data["gen_skill_mask"].to(device=log_prob.device, dtype=log_prob.dtype)
+                        if (
+                            opd_gen_dominance == "spec_first"
+                            and use_opd_loss
+                            and "teacher_log_prob" in data
+                            and teacher_mask_key in data
+                        ):
+                            # Route the general-skill signal to tokens the specific-skill gate leaves uncovered.
+                            spec_gate = torch.sigmoid(
+                                opd_gate_beta * (data["teacher_log_prob"] - log_prob.detach())
+                            ).detach()
+                            spec_active = data[teacher_mask_key].to(device=log_prob.device, dtype=log_prob.dtype)
+                            if spec_active.dim() == 1:
+                                spec_active = spec_active.unsqueeze(-1)
+                            gen_step_mask = gen_step_mask.unsqueeze(-1) * (1.0 - spec_gate * spec_active)
+                        (
+                            opd_gen_loss,
+                            opd_gen_active_token_ratio,
+                            opd_gen_gate_mean,
+                            opd_gen_gate_active_ratio,
+                            opd_gen_teacher_gap_mean,
+                        ) = compute_opd_loss(
+                            log_prob=log_prob,
+                            teacher_log_prob=data["gen_teacher_log_prob"],
+                            response_mask=response_mask,
+                            opd_step_mask=gen_step_mask,
+                            gate_beta=opd_gen_gate_beta,
+                            gate_eps=opd_gate_eps,
+                            loss_agg_mode=loss_agg_mode,
+                        )
+                        policy_loss = policy_loss + opd_gen_loss_coef * opd_gen_loss
 
                     if self.config.use_kl_loss:
                         ref_log_prob = data["ref_log_prob"]
@@ -989,6 +1042,12 @@ class DataParallelPPOActor(BasePPOActor):
                         "actor/opd_gate_mean": opd_gate_mean.detach().item(),
                         "actor/opd_gate_active_ratio": opd_gate_active_ratio.detach().item(),
                         "actor/opd_teacher_gap_mean": opd_teacher_gap_mean.detach().item(),
+                        "actor/opd_gen_loss": opd_gen_loss.detach().item(),
+                        "actor/opd_gen_loss_coef": opd_gen_loss_coef,
+                        "actor/opd_gen_active_token_ratio": opd_gen_active_token_ratio.detach().item(),
+                        "actor/opd_gen_gate_mean": opd_gen_gate_mean.detach().item(),
+                        "actor/opd_gen_gate_active_ratio": opd_gen_gate_active_ratio.detach().item(),
+                        "actor/opd_gen_teacher_gap_mean": opd_gen_teacher_gap_mean.detach().item(),
                         "actor/env_aux_loss": env_aux_loss.detach().item(),
                         "actor/sp_coef": self.sp_coef,
                         "actor/id_coef": self.id_coef,

@@ -35,6 +35,32 @@ def test_augmented_observation_injects_step_skill_after_episode_skill():
     assert augmented.index("Critical-Step Skill") < augmented.index("Now it's your turn")
 
 
+def test_augmented_observation_injects_global_skill_alone():
+    augmented = build_augmented_observation_text(
+        observation=PROMPT,
+        global_skill="Always verify constraints before committing to an action.",
+    )
+
+    assert "General Skill" in augmented
+    assert "Episode-Level Skill" not in augmented
+    assert "Always verify constraints before committing to an action." in augmented
+    assert augmented.index("Your task is to:") < augmented.index("General Skill")
+    assert augmented.index("General Skill") < augmented.index("Now it's your turn")
+
+
+def test_augmented_observation_injects_global_skill_after_episode_skill():
+    augmented = build_augmented_observation_text(
+        observation=PROMPT,
+        episode_skill="Check price and color before selecting the product.",
+        global_skill="Always verify constraints before committing to an action.",
+    )
+
+    assert "Episode-Level Skill" in augmented
+    assert "General Skill" in augmented
+    assert augmented.index("Episode-Level Skill") < augmented.index("General Skill")
+    assert augmented.index("General Skill") < augmented.index("Now it's your turn")
+
+
 def test_augmented_observation_injects_episode_skill_after_goal_line():
     prompt = """You are an expert agent operating in the Sokoban environment. Your goal is to push all the boxes onto the target spots. Once all boxes are on the targets, you win!
 

@@ -662,6 +662,13 @@ class RayPPOTrainer:
         opd_loss_coef = OmegaConf.select(self.config, "actor_rollout_ref.actor.opd_loss_coef")
         return float(opd_loss_coef or 0.0) > 0.0
 
+    def _is_seed_opd_gen_loss_enabled(self) -> bool:
+        opd_gen_loss_coef = OmegaConf.select(self.config, "actor_rollout_ref.actor.opd_gen_loss_coef")
+        return float(opd_gen_loss_coef or 0.0) > 0.0
+
+    def _is_seed_any_opd_loss_enabled(self) -> bool:
+        return self._is_seed_opd_loss_enabled() or self._is_seed_opd_gen_loss_enabled()
+
     @staticmethod
     def _config_bool(config, key: str, default: bool = False) -> bool:
         value = OmegaConf.select(config, key)
@@ -916,10 +923,17 @@ class RayPPOTrainer:
             dtype=torch.bool,
             device=batch.batch["responses"].device,
         )
+        batch.batch["gen_teacher_log_prob"] = torch.zeros_like(batch.batch["responses"], dtype=torch.float32)
+        batch.batch["gen_skill_mask"] = torch.zeros(
+            batch_size,
+            dtype=torch.bool,
+            device=batch.batch["responses"].device,
+        )
         metrics["seed/critical_step_ratio"] = 0.0
         metrics["seed/teacher_batch_size"] = 0.0
         metrics["seed/teacher_available"] = 0.0
         metrics["seed/episode_skill_teacher/enabled"] = 0.0
+        metrics["seed/gen_skill_teacher/enabled"] = 0.0
         metrics["seed/step_skill_teacher/step_skill_step_ratio"] = 0.0
         metrics["seed/step_skill_teacher/step_skills_applied"] = 0.0
         return batch
@@ -999,6 +1013,16 @@ class RayPPOTrainer:
             teacher_signal_mask = teacher_signal_batch.batch["teacher_signal_mask"]
         else:
             teacher_signal_mask = critical_step_mask
+        gen_teacher_log_prob = (
+            teacher_signal_batch.batch["gen_teacher_log_prob"]
+            if "gen_teacher_log_prob" in teacher_signal_batch.batch.keys()
+            else torch.zeros_like(teacher_log_prob, dtype=torch.float32)
+        )
+        gen_skill_mask = (
+            teacher_signal_batch.batch["gen_skill_mask"]
+            if "gen_skill_mask" in teacher_signal_batch.batch.keys()
+            else torch.zeros_like(critical_step_mask, dtype=torch.bool)
+        )
 
         if source_indices is not None:
             gather_idx = torch.as_tensor(
@@ -1012,6 +1036,8 @@ class RayPPOTrainer:
             critical_step_mask = critical_step_mask.index_select(0, gather_idx)
             step_skill_mask = step_skill_mask.index_select(0, gather_idx)
             teacher_signal_mask = teacher_signal_mask.index_select(0, gather_idx)
+            gen_teacher_log_prob = gen_teacher_log_prob.index_select(0, gather_idx)
+            gen_skill_mask = gen_skill_mask.index_select(0, gather_idx)
 
         batch.batch["teacher_log_prob"] = teacher_log_prob
         batch.batch["episode_teacher_log_prob"] = episode_teacher_log_prob
@@ -1019,6 +1045,8 @@ class RayPPOTrainer:
         batch.batch["critical_step_mask"] = critical_step_mask
         batch.batch["step_skill_mask"] = step_skill_mask
         batch.batch["teacher_signal_mask"] = teacher_signal_mask
+        batch.batch["gen_teacher_log_prob"] = gen_teacher_log_prob
+        batch.batch["gen_skill_mask"] = gen_skill_mask
         skill_gen_payload = self._build_seed_skill_gen_payload(
             batch=batch,
             samples=teacher_signal_batch.meta_info.get("seed_skill_gen_samples"),
@@ -1080,6 +1108,17 @@ class RayPPOTrainer:
             raise ValueError(
                 f"algorithm.seed.skill_teacher_mode must be one of {SKILL_TEACHER_MODES}, got {skill_teacher_mode!r}."
             )
+        opd_gen_loss_coef = float(OmegaConf.select(config, "actor_rollout_ref.actor.opd_gen_loss_coef") or 0.0)
+        if opd_gen_loss_coef < 0:
+            raise ValueError("actor_rollout_ref.actor.opd_gen_loss_coef must be non-negative.")
+        if opd_gen_loss_coef > 0 and skill_mode == "step_only":
+            raise ValueError(
+                "actor_rollout_ref.actor.opd_gen_loss_coef > 0 requires algorithm.seed.skill_mode != 'step_only' "
+                "because the general-skill teacher is sourced from episode skills."
+            )
+        opd_gen_dominance = str(OmegaConf.select(config, "actor_rollout_ref.actor.opd_gen_dominance") or "none")
+        if opd_gen_dominance not in ("none", "spec_first"):
+            raise ValueError("actor_rollout_ref.actor.opd_gen_dominance must be 'none' or 'spec_first'.")
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
@@ -2381,6 +2420,8 @@ class RayPPOTrainer:
             batch.batch["step_teacher_log_prob"] = zero_teacher_log_prob.clone()
             batch.batch["critical_step_mask"] = zero_critical_mask
             batch.batch["step_skill_mask"] = zero_step_skill_mask
+            batch.batch["gen_teacher_log_prob"] = zero_teacher_log_prob.clone()
+            batch.batch["gen_skill_mask"] = zero_step_skill_mask.clone()
             metrics["seed/analysis_enabled"] = 0.0
             metrics["seed/analysis_disabled"] = 1.0
             metrics["seed/analysis_num_requests"] = 0.0
@@ -2390,6 +2431,7 @@ class RayPPOTrainer:
             metrics["seed/teacher_available"] = 0.0
             metrics["seed/teacher_skipped_analysis_disabled"] = 1.0
             metrics["seed/episode_skill_teacher/enabled"] = 0.0
+            metrics["seed/gen_skill_teacher/enabled"] = 0.0
             metrics["seed/step_skill_teacher/step_skill_step_ratio"] = 0.0
             metrics["seed/step_skill_teacher/step_skills_applied"] = 0.0
             return batch
@@ -2397,6 +2439,7 @@ class RayPPOTrainer:
         metrics["seed/analysis_enabled"] = 1.0
         metrics["seed/analysis_disabled"] = 0.0
         metrics["seed/episode_skill_teacher/enabled"] = 0.0
+        metrics["seed/gen_skill_teacher/enabled"] = 0.0
         configured_failed_only = bool(OmegaConf.select(self.config, "algorithm.seed.failed_only"))
         failed_only_after_steps = self._get_seed_failed_only_after_steps()
         failed_only = self._should_seed_analyze_failed_only()
@@ -2421,10 +2464,13 @@ class RayPPOTrainer:
             batch.batch["step_teacher_log_prob"] = zero_teacher_log_prob.clone()
             batch.batch["critical_step_mask"] = zero_critical_mask
             batch.batch["step_skill_mask"] = zero_step_skill_mask
+            batch.batch["gen_teacher_log_prob"] = zero_teacher_log_prob.clone()
+            batch.batch["gen_skill_mask"] = zero_step_skill_mask.clone()
             metrics["seed/critical_step_ratio"] = 0.0
             metrics["seed/teacher_batch_size"] = 0.0
             metrics["seed/teacher_available"] = 0.0
             metrics["seed/episode_skill_teacher/enabled"] = 0.0
+            metrics["seed/gen_skill_teacher/enabled"] = 0.0
             metrics["seed/step_skill_teacher/step_skill_step_ratio"] = 0.0
             metrics["seed/step_skill_teacher/step_skills_applied"] = 0.0
             return batch
@@ -2601,6 +2647,8 @@ class RayPPOTrainer:
             batch.batch["step_teacher_log_prob"] = zero_teacher_log_prob.clone()
             batch.batch["critical_step_mask"] = critical_mask
             batch.batch["step_skill_mask"] = zero_step_skill_mask
+            batch.batch["gen_teacher_log_prob"] = zero_teacher_log_prob.clone()
+            batch.batch["gen_skill_mask"] = zero_step_skill_mask.clone()
             metrics["seed/teacher_batch_size"] = 0.0
             metrics["seed/teacher_available"] = 0.0
             teacher_start_after_steps = self._get_seed_opd_start_after_steps()
@@ -2624,6 +2672,8 @@ class RayPPOTrainer:
             batch.batch["episode_teacher_log_prob"] = zero_teacher_log_prob.clone()
             batch.batch["step_teacher_log_prob"] = zero_teacher_log_prob.clone()
             batch.batch["step_skill_mask"] = zero_step_skill_mask
+            batch.batch["gen_teacher_log_prob"] = zero_teacher_log_prob.clone()
+            batch.batch["gen_skill_mask"] = zero_step_skill_mask.clone()
             metrics["seed/teacher_available"] = 0.0
             return batch
 
@@ -2635,12 +2685,18 @@ class RayPPOTrainer:
         step_data_sources = []
         step_prompt_images = []
         step_skill_indices = []
+        gen_obs_texts = []
+        gen_data_sources = []
+        gen_prompt_images = []
+        gen_skill_indices = []
         augmented_observation_dump_entries: List[Dict[str, object]] = []
         critical_preview = []
         step_skill_guided_steps = 0
         teacher_obs_images = self._extract_step_observation_images(batch)
         metrics["seed/teacher_multimodal"] = 1.0 if teacher_obs_images is not None else 0.0
         opd_loss_enabled = self._is_seed_opd_loss_enabled()
+        # gen + step_only is rejected by _validate_config (the general-skill teacher needs episode skills).
+        opd_gen_loss_enabled = self._is_seed_opd_gen_loss_enabled()
         skill_mode = self._get_seed_skill_mode()
         episode_skill_teacher_weight = float(
             OmegaConf.select(self.config, "algorithm.seed.episode_skill_teacher_advantage_w") or 0.0
@@ -2658,7 +2714,10 @@ class RayPPOTrainer:
             OmegaConf.select(self.config, "algorithm.seed.skill_teacher_mode") or "step_priority"
         )
         metrics["seed/episode_skill_teacher/enabled"] = 1.0 if episode_skill_teacher_enabled else 0.0
-        metrics["seed/opd_loss_enabled"] = 1.0 if opd_loss_enabled else 0.0
+        metrics["seed/gen_skill_teacher/enabled"] = 1.0 if opd_gen_loss_enabled else 0.0
+        # Per-channel flags; the combined "seed/opd_loss_enabled" (any channel) is emitted by the fit loop.
+        metrics["seed/opd_spec_loss_enabled"] = 1.0 if opd_loss_enabled else 0.0
+        metrics["seed/opd_gen_loss_enabled"] = 1.0 if opd_gen_loss_enabled else 0.0
         metrics["seed/episode_skill_teacher_skipped_zero_weight"] = (
             0.0 if episode_skill_teacher_enabled else 1.0
         )
@@ -2679,8 +2738,13 @@ class RayPPOTrainer:
                 if "data_source" in batch.non_tensor_batch
                 else None
             )
+            global_skill = ""
+            if opd_gen_loss_enabled:
+                # Currently a copy of the episode skill until the experience pool lands.
+                global_skill = str(analysis.get("global_skill") or episode_skill)
             step_enhanced_obs = ""
             episode_enhanced_obs = ""
+            gen_enhanced_obs = ""
             use_episode_skill, use_step_skill = select_skill_teacher_sources(
                 step_skill=step_skill,
                 episode_skill_enabled=episode_skill_teacher_enabled,
@@ -2711,6 +2775,17 @@ class RayPPOTrainer:
                     None if teacher_obs_images is None else teacher_obs_images[sample_idx]
                 )
                 step_skill_indices.append(int(sample_idx))
+            if global_skill.strip():
+                gen_enhanced_obs = build_augmented_observation_text(
+                    observation=observation_text,
+                    global_skill=global_skill,
+                )
+                gen_obs_texts.append(gen_enhanced_obs)
+                gen_data_sources.append(data_source)
+                gen_prompt_images.append(
+                    None if teacher_obs_images is None else teacher_obs_images[sample_idx]
+                )
+                gen_skill_indices.append(int(sample_idx))
             augmented_observation_dump_entries.append(
                 {
                     "global_step": int(self.global_steps),
@@ -2722,9 +2797,11 @@ class RayPPOTrainer:
                     "augmented_observation": step_enhanced_obs or episode_enhanced_obs,
                     "episode_augmented_observation": episode_enhanced_obs,
                     "step_augmented_observation": step_enhanced_obs,
+                    "gen_augmented_observation": gen_enhanced_obs,
                     "episode_summary": episode_summary,
                     "episode_skill": episode_skill,
                     "step_skill": step_skill,
+                    "global_skill": global_skill,
                 }
             )
             if len(critical_preview) < 3:
@@ -2747,13 +2824,19 @@ class RayPPOTrainer:
             )
         metrics["seed/step_skill_teacher/step_skills_applied"] = float(step_skill_guided_steps)
         metrics["seed/episode_skill_teacher/episode_skills_applied"] = float(len(episode_skill_indices))
-        metrics["seed/teacher_batch_size"] = float(len(episode_skill_indices) + len(step_skill_indices))
-        metrics["seed/teacher_available"] = 1.0 if (episode_skill_indices or step_skill_indices) else 0.0
+        metrics["seed/gen_skill_teacher/gen_skills_applied"] = float(len(gen_skill_indices))
+        metrics["seed/teacher_batch_size"] = float(
+            len(episode_skill_indices) + len(step_skill_indices) + len(gen_skill_indices)
+        )
+        metrics["seed/teacher_available"] = (
+            1.0 if (episode_skill_indices or step_skill_indices or gen_skill_indices) else 0.0
+        )
 
         module_logger.info(
-            "SEED built %s episode-skill and %s step-skill observations for teacher scoring across %s trajectories.",
+            "SEED built %s episode-skill, %s step-skill and %s general-skill observations for teacher scoring across %s trajectories.",
             len(episode_obs_texts),
             len(step_obs_texts),
+            len(gen_obs_texts),
             len({batch.non_tensor_batch['traj_uid'][sample_idx] for sample_idx in critical_indices}),
         )
         if critical_preview and module_logger.isEnabledFor(logging.DEBUG):
@@ -2882,6 +2965,29 @@ class RayPPOTrainer:
                 step_teacher_lp.mean().detach().cpu().item()
             )
 
+        full_gen_teacher_log_prob = zero_teacher_log_prob.clone()
+        gen_skill_mask_np = np.zeros(batch_size, dtype=bool)
+        metrics["seed/gen_skill_teacher_log_prob_mean"] = 0.0
+        if gen_skill_indices:
+            gen_skill_mask_np[gen_skill_indices] = True
+            gen_skill_tensor_indices = torch.as_tensor(
+                gen_skill_indices,
+                dtype=torch.long,
+                device=batch.batch["responses"].device,
+            )
+            gen_teacher_lp = _compute_skill_log_probs(
+                label="general-skill",
+                obs_texts=gen_obs_texts,
+                responses=batch.batch["responses"].index_select(0, gen_skill_tensor_indices),
+                response_masks=response_mask.index_select(0, gen_skill_tensor_indices),
+                data_sources=gen_data_sources,
+                prompt_images=gen_prompt_images,
+            )
+            full_gen_teacher_log_prob[gen_skill_indices] = gen_teacher_lp
+            metrics["seed/gen_skill_teacher_log_prob_mean"] = float(
+                gen_teacher_lp.mean().detach().cpu().item()
+            )
+
         episode_skill_mask = torch.as_tensor(
             episode_skill_mask_np,
             device=batch.batch["responses"].device,
@@ -2906,6 +3012,12 @@ class RayPPOTrainer:
         batch.batch["critical_step_mask"] = episode_skill_mask
         batch.batch["step_skill_mask"] = step_skill_mask
         batch.batch["teacher_signal_mask"] = teacher_signal_mask
+        batch.batch["gen_teacher_log_prob"] = full_gen_teacher_log_prob
+        batch.batch["gen_skill_mask"] = torch.as_tensor(
+            gen_skill_mask_np,
+            device=batch.batch["responses"].device,
+            dtype=torch.bool,
+        )
 
         if episode_skill_indices:
             module_logger.info(
@@ -3158,7 +3270,7 @@ class RayPPOTrainer:
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.SEED:
                         seed_teacher_schedule_enabled = self._is_seed_teacher_signal_enabled()
                         seed_analysis_enabled = self._is_seed_analysis_enabled()
-                        seed_opd_loss_enabled = self._is_seed_opd_loss_enabled()
+                        seed_opd_loss_enabled = self._is_seed_any_opd_loss_enabled()
                         seed_skill_gen_enabled = self._is_seed_skill_gen_enabled()
                         seed_teacher_signal_enabled = seed_teacher_schedule_enabled and seed_analysis_enabled
                         seed_teacher_adv_enabled = seed_teacher_signal_enabled and not seed_opd_loss_enabled

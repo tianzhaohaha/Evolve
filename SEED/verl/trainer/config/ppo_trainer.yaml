@@ -56,6 +56,10 @@ actor_rollout_ref:
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
     opd_loss_coef: 0.0 # OPD-style gated auxiliary distillation loss; 0 disables it. For SEED, enabling this uses teacher/OPD signals as loss instead of teacher advantage.
     opd_gate_beta: 5.0 # sigmoid sharpness for OPD teacher-student gap gating
+    opd_gen_loss_coef: 0.0 # second OPD channel distilling the general/global skill; 0 disables it
+    opd_gen_gate_beta: null # sigmoid sharpness for the general-skill gate; null inherits opd_gate_beta
+    opd_gate_eps: 0.0 # confidence floor shared by both OPD channels; tokens with |teacher gap| below it are ignored
+    opd_gen_dominance: none # none | spec_first (down-weight general-skill tokens already covered by the specific-skill gate)
     skill_gen_loss_coef: 0.0 # SEED skill-generation reward-weighted LM loss; 0 disables it.
     skill_gen_micro_batch_size_per_gpu: null # per-GPU micro batch size for long policy-vllm skill generation samples
     skill_gen_micro_batch_size: 1 # deprecated alias for skill_gen_micro_batch_size_per_gpu

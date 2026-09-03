@@ -498,6 +498,7 @@ def compute_opd_loss(
     response_mask: torch.Tensor,
     opd_step_mask: torch.Tensor = None,
     gate_beta: float = 5.0,
+    gate_eps: float = 0.0,
     loss_agg_mode: str = "token-mean",
 ):
     """
@@ -513,7 +514,10 @@ def compute_opd_loss(
         teacher_log_prob: Teacher/enhanced-prompt log-probabilities, shape (batch_size, response_length).
         response_mask: Mask for valid response tokens, shape (batch_size, response_length).
         opd_step_mask: Optional sample-level or token-level mask selecting OPD-supervised steps.
+            Token-level masks may carry fractional weights. Note token-mean normalizes by the same
+            weights, so fractional weights redistribute the loss across tokens rather than scale it.
         gate_beta: Sigmoid sharpness for the teacher-student gap gate.
+        gate_eps: Confidence floor; tokens with |teacher gap| below it carry no signal and are masked out.
         loss_agg_mode: Aggregation mode for `agg_loss`.
 
     Returns:
@@ -540,6 +544,11 @@ def compute_opd_loss(
         else:
             raise ValueError(f"opd_step_mask must be 1D or 2D, got shape {tuple(opd_step_mask.shape)}")
 
+    teacher_log_prob = teacher_log_prob.detach()
+    teacher_gap = (teacher_log_prob - log_prob.detach()).detach()
+    if float(gate_eps) > 0.0:
+        opd_mask = opd_mask * (teacher_gap.abs() >= float(gate_eps)).to(dtype=opd_mask.dtype)
+
     opd_loss = log_prob.new_tensor(0.0)
     opd_active_token_ratio = log_prob.new_tensor(0.0)
     opd_gate_mean = log_prob.new_tensor(0.0)
@@ -554,8 +563,6 @@ def compute_opd_loss(
             opd_teacher_gap_mean,
         )
 
-    teacher_log_prob = teacher_log_prob.detach()
-    teacher_gap = (teacher_log_prob - log_prob.detach()).detach()
     opd_gate = torch.sigmoid(float(gate_beta) * teacher_gap).detach()
     opd_loss_mat = opd_gate * (teacher_log_prob - log_prob)
 
