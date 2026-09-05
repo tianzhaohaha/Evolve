@@ -84,8 +84,8 @@ review 后追加的修正：`_prepare` 内的通道指标改名为 `seed/opd_spe
 ## 5. 当前状态与后续计划
 
 - **已完成**：双轨管道全链路（打分、异步、损失、配置、指标、测试）；`c_gen=0` 时与原单轨逐 bit 一致。
-- **占位**：gen 的技能文本 = `analysis.get("global_skill") or episode_skill`——经验池上线后只需让分析结果携带真正的 `global_skill` 字段，其余零改动。
-- **待做（经验池阶段）**：跨 batch 技能池（按 gate 统计做质量过滤，checkpoint 持久化）→ 每 K 步 LLM 汇总为紧凑 general skill（注意 MAX_PROMPT_LENGTH=24576 静默左截断）→ 可选 `opd_gen_start_after_steps` 独立调度、`spec_first` 消融、SGSD 极性项（失败轨迹上的反向蒸馏）。
+- **经验池已上线（2026-09-05，V1；同日完成一轮 review 修复）**：见 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。`algorithm.seed.global_pool.source=copy`（默认）保持本文的拷贝占位语义；`pool` 切换为"judge 准入 + embedding 检索"的跨任务技能来源，检索未命中时该轨迹 gen 通道跳过（不回退 copy）。修复轮要点：任务身份改由环境侧 `task_metadata()` 直供（prompt 文本在 tau2/QA 类 benchmark 上是常量，会让检索退化）、query = 任务全文+首步观测、池文件对齐 resume 语义、准入成功门控（`admit_failed`）、候选 per-task 去重按 gap 截断、EMA 每 skill 每步聚合、judge 解析抗 reasoning 前缀、load 全容错、admission 漏斗指标上报。
+- **待做**：`opd_gen_start_after_steps` 独立调度、`spec_first` 消融、SGSD 极性项（失败轨迹上的反向蒸馏）、池 V2 杠杆（judge reason 文本重建索引）。
 
 已知代价：teacher 打分从每 batch 一次 pass 变两次。**注意：当前 profile（`analysis_backend=policy_vllm`）下该成本完全在关键路径上**——policy_vllm 不走异步分支（见 §1），gen 的第三次 `compute_log_prob` 直接串行加进 `seed_teacher` timer；bootstrap 模式（非 failed_only）下 gen 行数≈全 batch，相当于每步多一遍 old_log_prob 量级的前向。"异步隐藏"仅对 `analysis_backend=openai` 成立。缓解手段：failed_only 模式下 gen 行数缩到失败轨迹子集；或将 gen 降频（每 k 步打分一次）；episode+gen 两次打分合并为一次 `compute_log_prob` 调用只省调度开销，FLOPs 不变。记录在案未修的小项（均不影响默认/推荐配置）：
 

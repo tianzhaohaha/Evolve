@@ -725,6 +725,17 @@ class TrajectoryCollector:
 
         lenght_obs = len(obs['text']) if obs['text'] is not None else len(obs['image'])
         assert len(gen_batch.batch) == lenght_obs, f"gen_batch size {len(gen_batch.batch)} does not match obs size {lenght_obs}"
+
+        # Episode-constant task identity from managers that expose it (agentstream);
+        # forwarded as non-tensor columns for the SEED global skill pool.
+        task_metadata_fn = getattr(envs, "task_metadata", None)
+        task_metadata = task_metadata_fn() if callable(task_metadata_fn) else None
+        task_metadata_arrays = None
+        if task_metadata and all(len(values) == batch_size for values in task_metadata.values()):
+            task_metadata_arrays = {
+                key: self._object_array([str(value) for value in values])
+                for key, values in task_metadata.items()
+            }
         
         if self.config.env.rollout.n > 0: # env grouping
             uid_batch = []
@@ -804,6 +815,8 @@ class TrajectoryCollector:
                 ],
                 dtype=object,
             )
+            if task_metadata_arrays is not None:
+                batch.non_tensor_batch.update(task_metadata_arrays)
             if collect_env_aux_data:
                 batch.non_tensor_batch["history"] = self._object_array(
                     [list(env_aux_histories[i]) for i in range(batch_size)]

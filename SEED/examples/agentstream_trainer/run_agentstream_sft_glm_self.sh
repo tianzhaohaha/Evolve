@@ -107,6 +107,16 @@ export SEED_OPD_LOSS_COEF="$AGENTSTREAM_SEED_OPD_LOSS_COEF"
 export SEED_OPD_GEN_LOSS_COEF="$AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF"
 export SEED_OPD_GATE_EPS="$AGENTSTREAM_SEED_OPD_GATE_EPS"
 export SEED_OPD_GEN_DOMINANCE="$AGENTSTREAM_SEED_OPD_GEN_DOMINANCE"
+export SEED_GLOBAL_POOL_SOURCE="$AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE"
+export SEED_GLOBAL_POOL_MIN_SIM="$AGENTSTREAM_SEED_GLOBAL_POOL_MIN_SIM"
+export SEED_GLOBAL_POOL_SCORE_THRESHOLD="$AGENTSTREAM_SEED_GLOBAL_POOL_SCORE_THRESHOLD"
+export SEED_GLOBAL_POOL_ADMIT_FAILED="$AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED"
+# 池准入的 judge 读的是训练进程环境里的 OPENROUTER_API_KEY（exgentic env worker 的
+# dotenv 不会传给 trainer 进程），缺失时训练照跑但池永远为空，这里提前示警。
+if [[ "$SEED_GLOBAL_POOL_SOURCE" == "pool" && -z "${OPENROUTER_API_KEY:-}" ]]; then
+    echo "WARNING: SEED_GLOBAL_POOL_SOURCE=pool but OPENROUTER_API_KEY is not set in this shell;" >&2
+    echo "         judge admission will be silently disabled and the pool will stay empty." >&2
+fi
 export SEED_ANALYSIS_BACKEND="$AGENTSTREAM_SEED_ANALYSIS_BACKEND"
 export SEED_ANALYSIS_PROMPT_VERSION="$AGENTSTREAM_SEED_ANALYSIS_PROMPT_VERSION"
 export SEED_ANALYSIS_INCLUDE_EPISODE_SUMMARY=True
@@ -129,6 +139,7 @@ echo "  actor lr:      $ACTOR_LR (0 = frozen-policy control run)"
 echo "  entropy coef:  $ENTROPY_COEFF (log_prob entropy calc: ${LOG_PROB_CALCULATE_ENTROPY:-True})"
 echo "  OPD coef:      $SEED_OPD_LOSS_COEF"
 echo "  OPD gen coef:  $SEED_OPD_GEN_LOSS_COEF"
+echo "  Global pool:   $SEED_GLOBAL_POOL_SOURCE"
 echo "  visible GPUs:  $CUDA_VISIBLE_DEVICES"
 echo "  resume mode:   $RL_RESUME_MODE"
 

@@ -63,6 +63,21 @@ def _extract_task_description_from_text(text: object) -> str:
     return ""
 
 
+def infer_task_description(steps: Sequence[Dict[str, object]]) -> str:
+    """Best-effort task description for an episode (also the global-pool retrieval query)."""
+    for step in steps:
+        task_description = _clean_task_description(step.get("task_description", ""))
+        if task_description:
+            return task_description
+
+    for step in steps:
+        for field_name in ("observation_prompt", "observation"):
+            task_description = _extract_task_description_from_text(step.get(field_name, ""))
+            if task_description:
+                return task_description
+    return ""
+
+
 def build_traj_step_indices(traj_index: Sequence) -> np.ndarray:
     """Return per-sample step indices in trajectory order."""
     counters: Dict[object, int] = defaultdict(int)
@@ -603,17 +618,7 @@ Return ONLY one valid JSON object with this exact shape:
         return build_prompt_dict(user_prompt=retry_prompt)
 
     def _infer_task_description(self, steps: List[Dict[str, object]]) -> str:
-        for step in steps:
-            task_description = _clean_task_description(step.get("task_description", ""))
-            if task_description:
-                return task_description
-
-        for step in steps:
-            for field_name in ("observation_prompt", "observation"):
-                task_description = _extract_task_description_from_text(step.get(field_name, ""))
-                if task_description:
-                    return task_description
-        return ""
+        return infer_task_description(steps)
 
     def _build_default_episode_analysis_prompt(
         self,

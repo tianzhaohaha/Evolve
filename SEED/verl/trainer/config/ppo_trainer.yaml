@@ -280,6 +280,24 @@ algorithm:
     skill_teacher_mode: "step_priority" # "step_priority" uses episode skills only where no step skill is active; "additive" scores both prompts and adds both advantages
     opd_start_after_steps: null # null -> enable SEED teacher/OPD signal from the first training step; otherwise enable after this many completed steps
     opd_stop_after_steps: null # null -> keep SEED teacher/OPD signal enabled; otherwise disable after this many completed steps
+    global_pool: # V1 global experience pool feeding the gen OPD channel (SEED/GLOBAL_SKILL_POOL_V1.md)
+      source: copy # "copy" = gen distills a copy of the episode skill (placeholder); "pool" = retrieve from the judged cross-task pool
+      capacity: 64 # max stored skills; evicts the lowest gate-EMA entry when full
+      score_threshold: 0.6 # min judge transferability score for admission
+      min_sim: 0.35 # min query-skill cosine for retrieval; below it the trajectory's gen channel is skipped
+      dedup_sim: 0.9 # near-duplicate cosine threshold; duplicates merge as support += 1
+      ema_alpha: 0.1 # gate EMA update rate (eviction signal only, never used for retrieval)
+      max_candidates_per_step: 16 # cap on admission candidates handed to the async judge per step (best-gap candidate per task, ranked by gap)
+      admit_failed: False # False = only skills from successful episodes may enter the pool (failed-episode skills can endorse the failing actions)
+      judge_model: z-ai/glm-5.2 # OpenAI-compatible model name ("openrouter/" prefix is stripped)
+      judge_base_url: https://openrouter.ai/api/v1
+      judge_api_key_env: OPENROUTER_API_KEY # missing key -> admission silently disabled (fail-open)
+      judge_batch_size: 12
+      embed_backend: local # "local" = frozen HF encoder on the trainer host; "http" = POST {"texts": [...]} to embed_url
+      embed_model: sentence-transformers/all-MiniLM-L6-v2
+      embed_url: null
+      save_dir: null # null -> trainer.default_local_dir/global_skill_pool.json
+      save_events: True # per-step JSONL of retrieval hits/misses under trainer.default_local_dir/global_pool_events/
     mode: "mean_norm" # "mean_norm" or "mean_std_norm"
     enable_analysis: True # False skips SEED analysis and teacher signal construction while keeping the SEED estimator
     enable_similarity: False

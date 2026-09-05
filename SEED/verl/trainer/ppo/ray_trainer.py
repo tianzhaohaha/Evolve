@@ -21,6 +21,7 @@ This trainer supports model-agonistic model initialization with huggingface
 import json
 import logging
 import os
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
@@ -29,7 +30,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pprint import pprint
-from typing import Any, Dict, List, Optional, Sequence, Type
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import numpy as np
 import ray
@@ -73,7 +74,16 @@ from seed.prompting import (
     select_skill_teacher_sources,
     validate_skill_mode,
 )
+from seed.global_pool import (
+    GlobalPoolConfig,
+    GlobalSkillPool,
+    TextEmbedder,
+    build_retrieval_query,
+    select_admission_candidates,
+    skill_id_for,
+)
 from seed.skill_gen import SkillGenRewardConfig, compute_skill_gen_reward
+from seed.skill_judge import SkillJudge
 from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
 
 WorkerType = Type[Worker]
@@ -553,6 +563,12 @@ class RayPPOTrainer:
         self._seed_failed_only_last_enabled_state = None
         self._seed_analysis_last_enabled_state = None
         self._seed_teacher_signal_executor = None
+        self._seed_global_pool = None
+        self._seed_pool_admission_lock = threading.Lock()
+        self._seed_pool_admission_counters: Dict[str, int] = {}
+        self._seed_skill_judge = None
+        self._seed_pool_embedder = None
+        self._seed_global_pool_executor = None
         self.traj_collector = traj_collector
 
         self.hybrid_engine = config.actor_rollout_ref.hybrid_engine
@@ -668,6 +684,34 @@ class RayPPOTrainer:
 
     def _is_seed_any_opd_loss_enabled(self) -> bool:
         return self._is_seed_opd_loss_enabled() or self._is_seed_opd_gen_loss_enabled()
+
+    def _get_seed_global_pool_config(self) -> GlobalPoolConfig:
+        def _select(name: str, default):
+            value = OmegaConf.select(self.config, f"algorithm.seed.global_pool.{name}")
+            return default if value is None else value
+
+        defaults = GlobalPoolConfig()
+        return GlobalPoolConfig(
+            source=str(_select("source", defaults.source)),
+            capacity=int(_select("capacity", defaults.capacity)),
+            score_threshold=float(_select("score_threshold", defaults.score_threshold)),
+            min_sim=float(_select("min_sim", defaults.min_sim)),
+            dedup_sim=float(_select("dedup_sim", defaults.dedup_sim)),
+            ema_alpha=float(_select("ema_alpha", defaults.ema_alpha)),
+            max_candidates_per_step=int(_select("max_candidates_per_step", defaults.max_candidates_per_step)),
+            admit_failed=bool(_select("admit_failed", defaults.admit_failed)),
+            judge_model=str(_select("judge_model", defaults.judge_model)),
+            judge_base_url=str(_select("judge_base_url", defaults.judge_base_url)),
+            judge_api_key_env=str(_select("judge_api_key_env", defaults.judge_api_key_env)),
+            judge_batch_size=int(_select("judge_batch_size", defaults.judge_batch_size)),
+            embed_backend=str(_select("embed_backend", defaults.embed_backend)),
+            embed_model=str(_select("embed_model", defaults.embed_model)),
+            embed_url=_select("embed_url", defaults.embed_url),
+            save_dir=_select("save_dir", defaults.save_dir),
+        )
+
+    def _is_seed_global_pool_enabled(self) -> bool:
+        return str(OmegaConf.select(self.config, "algorithm.seed.global_pool.source") or "copy") == "pool"
 
     @staticmethod
     def _config_bool(config, key: str, default: bool = False) -> bool:
@@ -965,6 +1009,12 @@ class RayPPOTrainer:
             "episode_rewards",
             "multi_modal_inputs",
             "is_action_valid",
+            # Task identity from managers exposing task_metadata() (agentstream);
+            # the global skill pool builds its retrieval key/query from these.
+            "task_slug",
+            "task_id",
+            "task_text",
+            "task_first_obs",
         ]
         non_tensors = {}
         for key in non_tensor_keys:
@@ -1055,6 +1105,11 @@ class RayPPOTrainer:
             batch.meta_info["seed_skill_gen"] = skill_gen_payload
         else:
             batch.meta_info.pop("seed_skill_gen", None)
+        seed_global_pool_payload = teacher_signal_batch.meta_info.get("seed_global_pool")
+        if seed_global_pool_payload is not None:
+            batch.meta_info["seed_global_pool"] = seed_global_pool_payload
+        else:
+            batch.meta_info.pop("seed_global_pool", None)
         batch.non_tensor_batch.pop("_batch_source_idx", None)
         return batch
 
@@ -1119,6 +1174,22 @@ class RayPPOTrainer:
         opd_gen_dominance = str(OmegaConf.select(config, "actor_rollout_ref.actor.opd_gen_dominance") or "none")
         if opd_gen_dominance not in ("none", "spec_first"):
             raise ValueError("actor_rollout_ref.actor.opd_gen_dominance must be 'none' or 'spec_first'.")
+        global_pool_source = str(OmegaConf.select(config, "algorithm.seed.global_pool.source") or "copy")
+        if global_pool_source not in ("copy", "pool"):
+            raise ValueError("algorithm.seed.global_pool.source must be 'copy' or 'pool'.")
+        if global_pool_source == "pool":
+            if opd_gen_loss_coef <= 0:
+                raise ValueError(
+                    "algorithm.seed.global_pool.source='pool' requires actor_rollout_ref.actor.opd_gen_loss_coef > 0 "
+                    "(the pool only feeds the gen OPD channel)."
+                )
+            # GlobalPoolConfig.validate() covers embed_backend/embed_url and the numeric ranges.
+            GlobalPoolConfig(
+                source=global_pool_source,
+                embed_backend=str(OmegaConf.select(config, "algorithm.seed.global_pool.embed_backend") or "local"),
+                embed_url=OmegaConf.select(config, "algorithm.seed.global_pool.embed_url"),
+                capacity=int(OmegaConf.select(config, "algorithm.seed.global_pool.capacity") or 64),
+            ).validate()
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
@@ -2059,6 +2130,348 @@ class RayPPOTrainer:
             )
         return self._seed_analyzer
 
+    def _lazy_init_seed_global_pool(self):
+        if self._seed_global_pool is None:
+            pool_config = self._get_seed_global_pool_config()
+            save_dir = pool_config.save_dir or self.config.trainer.default_local_dir
+            save_path = os.path.join(str(save_dir), "global_skill_pool.json")
+
+            # Align the on-disk pool with the trainer's resume semantics. A fresh
+            # run (resume disabled, or auto-resume that found no checkpoint — we
+            # are still at step 1) must not hot-start from a stale same-name pool,
+            # so its files are set aside as *.bak. On a real resume the pool is
+            # trimmed back to the resumed step: admission saves eagerly, so after
+            # a crash the file runs ahead of the checkpoint.
+            resume_mode = str(OmegaConf.select(self.config, "trainer.resume_mode") or "auto").lower()
+            fresh_start = resume_mode == "disable" or int(self.global_steps) <= 1
+            if fresh_start:
+                for stale in (save_path, save_path + ".npy"):
+                    if os.path.exists(stale):
+                        os.replace(stale, stale + ".bak")
+                        module_logger.info("Fresh run: moved stale global pool file %s to %s.bak.", stale, stale)
+
+            self._seed_global_pool = GlobalSkillPool(
+                pool_config,
+                save_path=save_path,
+                load_existing=not fresh_start,
+                max_global_step=None if fresh_start else max(int(self.global_steps) - 1, 0),
+            )
+            self._seed_skill_judge = SkillJudge(
+                model=pool_config.judge_model,
+                base_url=pool_config.judge_base_url,
+                api_key_env=pool_config.judge_api_key_env,
+                batch_size=pool_config.judge_batch_size,
+            )
+            self._seed_pool_embedder = TextEmbedder(
+                backend=pool_config.embed_backend,
+                model=pool_config.embed_model,
+                url=pool_config.embed_url,
+            )
+            # Warm the embedder eagerly: pool mode cannot function without it, and
+            # a clear failure here (before any judge API spend, off the per-step
+            # path) beats an experiment that silently never retrieves or admits.
+            try:
+                self._seed_pool_embedder.encode(["warmup"])
+            except Exception as exc:
+                raise RuntimeError(
+                    f"SEED global-pool embedder failed to initialize (backend={pool_config.embed_backend!r}, "
+                    f"model={pool_config.embed_model!r}, url={pool_config.embed_url!r}). Pool mode needs a "
+                    "working embedder: pre-download the model into the HF cache or point embed_url at a live service."
+                ) from exc
+            self._seed_global_pool_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="seed-global-pool",
+            )
+            module_logger.info(
+                "Initialized SEED global skill pool at %s with %s entries (judge_model=%s, embed_backend=%s, fresh_start=%s).",
+                save_path,
+                len(self._seed_global_pool),
+                pool_config.judge_model,
+                pool_config.embed_backend,
+                fresh_start,
+            )
+        return self._seed_global_pool, self._seed_skill_judge, self._seed_pool_embedder
+
+    def _bump_seed_pool_admission_counters(self, **deltas: int) -> None:
+        with self._seed_pool_admission_lock:
+            for name, delta in deltas.items():
+                self._seed_pool_admission_counters[name] = self._seed_pool_admission_counters.get(name, 0) + int(delta)
+
+    def _drain_seed_pool_admission_counters(self) -> Dict[str, int]:
+        """Take and reset the background admission stats (reported once per step)."""
+        with self._seed_pool_admission_lock:
+            drained, self._seed_pool_admission_counters = self._seed_pool_admission_counters, {}
+        return drained
+
+    @staticmethod
+    def _build_seed_traj_task_meta(batch: DataProto) -> Dict[str, Dict[str, str]]:
+        """First-row task identity per trajectory from the rollout's task-metadata
+        columns (attached by managers exposing ``task_metadata()``); empty when the
+        environment does not provide them."""
+        non_tensor = batch.non_tensor_batch
+        if "traj_uid" not in non_tensor or "task_text" not in non_tensor:
+            return {}
+        meta_keys = ("task_slug", "task_id", "task_text", "task_first_obs")
+        meta: Dict[str, Dict[str, str]] = {}
+        for index, traj_uid in enumerate(non_tensor["traj_uid"]):
+            uid = str(traj_uid)
+            if uid not in meta:
+                meta[uid] = {
+                    key: str(non_tensor[key][index]) if key in non_tensor else "" for key in meta_keys
+                }
+        return meta
+
+    def _select_seed_global_skills(
+        self,
+        *,
+        batch: DataProto,
+        episodes: Dict[object, List[Dict[str, object]]],
+        episode_analysis: Dict[object, Dict[str, object]],
+        traj_success: Dict[object, float],
+        metrics: Dict[str, float],
+    ) -> Dict[str, object]:
+        """Pool-mode gen source: retrieve one pool skill per trajectory into
+        ``analysis["global_skill"]`` (empty string = skip the gen channel) and
+        collect this batch's local skills as admission candidates."""
+        pool, judge, embedder = self._lazy_init_seed_global_pool()
+        task_meta = self._build_seed_traj_task_meta(batch)
+        traj_uids = list(episode_analysis.keys())
+        queries: List[str] = []
+        task_keys: List[str] = []
+        candidates: List[Dict[str, object]] = []
+        success_filtered = 0
+        for traj_uid in traj_uids:
+            steps = episodes.get(traj_uid, [])
+            meta = task_meta.get(str(traj_uid), {})
+            task_text = str(meta.get("task_text") or "") or core_seed.infer_task_description(steps)
+            task_slug = str(meta.get("task_slug") or "")
+            task_id = str(meta.get("task_id") or "")
+            if task_slug and task_id:
+                # Env-provided identity: the same-task guard excludes exactly this
+                # task (prompt-derived text is a benchmark-level constant on tau2
+                # and the QA benchmarks, which would ban whole benchmarks).
+                task_key = f"{task_slug}::{task_id}"
+            else:
+                task_key = skill_id_for(task_text or str(traj_uid))
+            first_obs = str(meta.get("task_first_obs") or "") or (
+                str(steps[0].get("observation") or "") if steps else ""
+            )
+            queries.append(build_retrieval_query(task_text, first_obs))
+            task_keys.append(task_key)
+
+            episode_skill = str(episode_analysis[traj_uid].get("episode_skill") or "").strip()
+            if not episode_skill or pool.has(skill_id_for(episode_skill)):
+                continue
+            success_value = traj_success.get(traj_uid)
+            if success_value is not None and float(success_value) < 1.0 and not pool.config.admit_failed:
+                # A failed episode's skill may confidently endorse the failing
+                # actions (the spec-gap pre-filter selects exactly those), so it
+                # stays out unless admit_failed opts in. A missing success signal
+                # fails open, matching the failed_only fallback above.
+                success_filtered += 1
+                continue
+            candidates.append(
+                {
+                    "traj_uid": str(traj_uid),
+                    "task_key": task_key,
+                    "task_slug": task_slug,
+                    "task_id": task_id,
+                    "skill": episode_skill,
+                }
+            )
+        metrics["seed/global_pool/candidates_success_filtered"] = float(success_filtered)
+        metrics["seed/global_pool/judge_available"] = 1.0 if judge.available else 0.0
+
+        metrics["seed/global_pool/retrieval_failed"] = 0.0
+        hits = None
+        if len(pool) > 0:
+            try:
+                hits = pool.retrieve(embedder.encode(queries), task_keys)
+            except Exception as exc:
+                module_logger.warning(
+                    "SEED global-pool retrieval failed; skipping gen injection for this batch: %s", exc
+                )
+                metrics["seed/global_pool/retrieval_failed"] = 1.0
+
+        injections: Dict[str, str] = {}
+        hit_similarities: List[float] = []
+        events: List[Dict[str, object]] = []
+        for index, traj_uid in enumerate(traj_uids):
+            hit = hits[index] if hits is not None else None
+            if hit is not None:
+                episode_analysis[traj_uid]["global_skill"] = hit.text
+                injections[str(traj_uid)] = hit.skill_id
+                hit_similarities.append(hit.similarity)
+            else:
+                episode_analysis[traj_uid]["global_skill"] = ""
+            events.append(
+                {
+                    "global_step": int(self.global_steps),
+                    "traj_uid": str(traj_uid),
+                    "task_key": task_keys[index],
+                    "query_preview": str(queries[index])[:200],
+                    "hit": hit is not None,
+                    "skill_id": hit.skill_id if hit is not None else None,
+                    "similarity": round(hit.similarity, 4) if hit is not None else None,
+                    "skill_preview": hit.text[:200] if hit is not None else "",
+                    "pool_size": len(pool),
+                }
+            )
+        self._dump_seed_global_pool_events(events)
+
+        metrics.update(pool.snapshot_metrics())
+        metrics["seed/global_pool/retrieval_hit_ratio"] = (
+            float(len(injections)) / len(traj_uids) if traj_uids else 0.0
+        )
+        metrics["seed/global_pool/retrieval_sim_mean"] = (
+            float(np.mean(hit_similarities)) if hit_similarities else 0.0
+        )
+        metrics["seed/global_pool/candidates"] = float(len(candidates))
+        return {"injections": injections, "candidates": candidates}
+
+    def _update_seed_global_pool(self, *, batch: DataProto, metrics: Dict[str, float]) -> None:
+        """Post-merge hook: turn this step's gen scoring into per-skill usage
+        stats, pre-filter admission candidates by the spec teacher gap, and
+        hand the survivors to the async judge→embed→add job."""
+        payload = batch.meta_info.pop("seed_global_pool", None)
+        if payload is None or not self._is_seed_global_pool_enabled():
+            return
+        pool, _, _ = self._lazy_init_seed_global_pool()
+        traj_uid_values = batch.non_tensor_batch.get("traj_uid")
+        if traj_uid_values is None or "old_log_probs" not in batch.batch.keys():
+            return
+        traj_uid_array = np.asarray([str(value) for value in traj_uid_values])
+        response_mask = (
+            batch.batch["response_mask"] if "response_mask" in batch.batch.keys() else compute_response_mask(batch)
+        ).detach().cpu().to(torch.float32)
+        old_log_probs = batch.batch["old_log_probs"].detach().cpu().to(torch.float32)
+        gate_beta = OmegaConf.select(self.config, "actor_rollout_ref.actor.opd_gen_gate_beta")
+        if gate_beta is None:
+            gate_beta = OmegaConf.select(self.config, "actor_rollout_ref.actor.opd_gate_beta")
+        gate_beta = 5.0 if gate_beta is None else float(gate_beta)
+
+        def _traj_token_mean(values: torch.Tensor, row_mask: torch.Tensor) -> Optional[float]:
+            mask = response_mask * row_mask.to(response_mask.dtype).unsqueeze(-1)
+            total = mask.sum()
+            if total <= 0:
+                return None
+            return float((values * mask).sum() / total)
+
+        injections = payload.get("injections") or {}
+        usage_gates: List[float] = []
+        if injections and "gen_teacher_log_prob" in batch.batch.keys():
+            gen_teacher_lp = batch.batch["gen_teacher_log_prob"].detach().cpu().to(torch.float32)
+            gen_mask = (
+                batch.batch["gen_skill_mask"].detach().cpu().to(torch.bool)
+                if "gen_skill_mask" in batch.batch.keys()
+                else None
+            )
+            gate_matrix = torch.sigmoid(gate_beta * (gen_teacher_lp - old_log_probs))
+            gates_by_skill: Dict[str, List[float]] = defaultdict(list)
+            for traj_uid, skill_id in injections.items():
+                row_mask = torch.as_tensor(traj_uid_array == traj_uid)
+                if gen_mask is not None:
+                    row_mask = row_mask & gen_mask
+                gate_value = _traj_token_mean(gate_matrix, row_mask)
+                if gate_value is not None:
+                    gates_by_skill[str(skill_id)].append(gate_value)
+                    usage_gates.append(gate_value)
+            # One EMA update per skill per step: a GRPO group's same-task copies
+            # all hit the same skill, and correlated per-trajectory updates would
+            # let a single task dominate the eviction signal (8 updates at
+            # alpha=0.1 put ~57% of the EMA weight on one task).
+            for skill_id, gate_values in gates_by_skill.items():
+                pool.record_usage(skill_id, float(np.mean(gate_values)), int(self.global_steps))
+        metrics["seed/global_pool/injected_trajs"] = float(len(injections))
+        metrics["seed/global_pool/unique_skills_injected"] = float(len(set(injections.values())))
+        metrics["seed/global_pool/usage_gate_mean"] = float(np.mean(usage_gates)) if usage_gates else 0.0
+
+        candidates = payload.get("candidates") or []
+        scored: List[Tuple[Dict[str, object], Optional[float]]] = []
+        if candidates and "episode_teacher_log_prob" in batch.batch.keys():
+            episode_teacher_lp = batch.batch["episode_teacher_log_prob"].detach().cpu().to(torch.float32)
+            # Rows with an all-zero episode teacher lp were never spec-scored (e.g. c_spec=0);
+            # the gap pre-filter has no evidence there, so such candidates pass through to the judge.
+            scored_rows = torch.as_tensor((episode_teacher_lp.abs().sum(dim=-1) > 0).numpy())
+            for candidate in candidates:
+                row_mask = torch.as_tensor(traj_uid_array == str(candidate["traj_uid"])) & scored_rows
+                scored.append((candidate, _traj_token_mean(episode_teacher_lp - old_log_probs, row_mask)))
+        else:
+            scored = [(candidate, None) for candidate in candidates]
+        # Best candidate per task, ranked by spec gap, then capped — see
+        # select_admission_candidates for why batch-order truncation is biased.
+        kept = select_admission_candidates(scored, pool.config.max_candidates_per_step)
+        metrics["seed/global_pool/candidates_kept"] = float(len(kept))
+        admission_stats = self._drain_seed_pool_admission_counters()
+        for name in ("jobs_ok", "jobs_failed", "judged", "accepted", "added"):
+            metrics[f"seed/global_pool/admission_{name}"] = float(admission_stats.get(name, 0))
+        if kept:
+            self._seed_global_pool_executor.submit(self._admit_seed_global_skills, kept, int(self.global_steps))
+
+    def _admit_seed_global_skills(self, candidates: List[Dict[str, object]], global_step: int) -> None:
+        """Background admission job: embed -> judge -> pool.add -> save. Never raises.
+
+        Embedding runs first: it is local and free, so an embedder failure costs
+        no judge API spend, and nothing un-embeddable ever reaches the judge.
+        Outcomes land in the admission counters, which the next step reports to
+        wandb — a dead admission pipeline must be visible, not just logged.
+        """
+        try:
+            pool, judge, embedder = self._lazy_init_seed_global_pool()
+            texts = [str(candidate["skill"]) for candidate in candidates]
+            embeddings = embedder.encode(texts)
+            verdicts = judge.judge(texts)
+            self._bump_seed_pool_admission_counters(judged=sum(verdict is not None for verdict in verdicts))
+            accepted = [
+                (candidate, verdict, embedding)
+                for candidate, verdict, embedding in zip(candidates, verdicts, embeddings)
+                if verdict is not None and verdict.transferable and verdict.score >= pool.config.score_threshold
+            ]
+            added = 0
+            for candidate, verdict, embedding in accepted:
+                status = pool.add(
+                    text=str(candidate["skill"]),
+                    embedding=embedding,
+                    source={
+                        "task_key": str(candidate["task_key"]),
+                        "task_slug": str(candidate.get("task_slug", "")),
+                        "task_id": str(candidate.get("task_id", "")),
+                        "traj_uid": str(candidate["traj_uid"]),
+                        "global_step": global_step,
+                    },
+                    judge={"score": verdict.score, "tag": verdict.tag, "reason": verdict.reason},
+                    global_step=global_step,
+                )
+                added += 1 if status == "added" else 0
+            if accepted:
+                pool.save()
+            self._bump_seed_pool_admission_counters(jobs_ok=1, accepted=len(accepted), added=added)
+            module_logger.info(
+                "SEED global pool admission at step %s: %s candidates -> %s accepted -> %s added (pool size %s).",
+                global_step,
+                len(candidates),
+                len(accepted),
+                added,
+                len(pool),
+            )
+        except Exception:
+            self._bump_seed_pool_admission_counters(jobs_failed=1)
+            module_logger.exception("SEED global pool admission job failed; continuing without pool update.")
+
+    def _dump_seed_global_pool_events(self, events: List[Dict[str, object]]) -> None:
+        """Per-step JSONL of retrieval hits/misses for offline inspection (wandb only gets the aggregates)."""
+        if not events or not self._config_bool(self.config, "algorithm.seed.global_pool.save_events", True):
+            return
+        dump_dir = os.path.join(self.config.trainer.default_local_dir, "global_pool_events")
+        try:
+            os.makedirs(dump_dir, exist_ok=True)
+            filename = os.path.join(dump_dir, f"step_{self.global_steps:08d}.jsonl")
+            with open(filename, "w", encoding="utf-8") as f:
+                for event in events:
+                    f.write(_safe_json_dumps(event) + "\n")
+        except OSError as exc:
+            module_logger.warning("Failed to dump SEED global pool events: %s", exc)
+
     def _get_seed_failure_success_threshold(self) -> float:
         threshold = OmegaConf.select(self.config, "algorithm.seed.failure_success_threshold")
         return 1.0 if threshold is None else float(threshold)
@@ -2725,6 +3138,18 @@ class RayPPOTrainer:
         metrics["seed/skill_mode_episode_only"] = 1.0 if skill_mode == "episode_only" else 0.0
         metrics["seed/skill_teacher_mode_additive"] = 1.0 if skill_teacher_mode == "additive" else 0.0
 
+        global_pool_mode = opd_gen_loss_enabled and self._is_seed_global_pool_enabled()
+        if global_pool_mode:
+            batch.meta_info["seed_global_pool"] = self._select_seed_global_skills(
+                batch=batch,
+                episodes=episodes,
+                episode_analysis=successful_episode_analysis,
+                traj_success=traj_success,
+                metrics=metrics,
+            )
+        else:
+            batch.meta_info.pop("seed_global_pool", None)
+
         for sample_idx in critical_indices:
             traj_uid = batch.non_tensor_batch["traj_uid"][sample_idx]
             analysis = episode_analysis[traj_uid]
@@ -2740,8 +3165,12 @@ class RayPPOTrainer:
             )
             global_skill = ""
             if opd_gen_loss_enabled:
-                # Currently a copy of the episode skill until the experience pool lands.
-                global_skill = str(analysis.get("global_skill") or episode_skill)
+                if global_pool_mode:
+                    # Pool mode: only an actual retrieval hit feeds the gen channel.
+                    global_skill = str(analysis.get("global_skill") or "")
+                else:
+                    # Copy placeholder: gen distills a copy of the episode skill.
+                    global_skill = str(analysis.get("global_skill") or episode_skill)
             step_enhanced_obs = ""
             episode_enhanced_obs = ""
             gen_enhanced_obs = ""
@@ -2855,6 +3284,7 @@ class RayPPOTrainer:
         ) -> torch.Tensor:
             teacher_meta_info = deepcopy(batch.meta_info)
             teacher_meta_info.pop("seed_skill_gen_samples", None)
+            teacher_meta_info.pop("seed_global_pool", None)
             use_prompt_images = prompt_images is not None and any(
                 image is not None for image in prompt_images
             )
@@ -3477,6 +3907,7 @@ class RayPPOTrainer:
                                     )
                                     batch.non_tensor_batch.pop("_batch_source_idx", None)
                                     batch = self._set_zero_seed_teacher_signals(batch=batch, metrics=metrics)
+                        self._update_seed_global_pool(batch=batch, metrics=metrics)
 
                     with _timer("adv", timing_raw):
                         # we combine with rule-based rm

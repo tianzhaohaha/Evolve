@@ -61,6 +61,17 @@ shuffle 中不相交），**不是**标准 `eval_in_distribution`。与原版 SE
 
 ### 2.3 对既有文件的修改（仅 4 处，均默认行为不变）
 
+> **⚠️ 2026-09-05 更新**：本节写于 AgentStream 集成初版，只覆盖集成层最初的 4 处挂载。
+> 此后的**双轨 OPD**（2026-09-04）与**全局技能池**（2026-09-05，含同日 review 修复轮）
+> 对更多既有文件有实质改动：`verl/trainer/ppo/ray_trainer.py`（teacher 链路/池接线）、
+> `verl/trainer/ppo/core_algos.py`（`compute_opd_loss` gate_eps）、`verl/workers/actor/dp_actor.py`
+> （gen 通道损失）、`seed/`（analysis/prompting 扩展 + 新增 global_pool/skill_judge）、
+> `agent_system/multi_turn_rollout/rollout_loop.py`（task_metadata 接线）、agentstream
+> `manager.py`（`task_metadata()`）及 yaml/sh/env 配置链。完整文件清单、语义与验收标准见
+> [DUAL_TRACK_OPD.md](DUAL_TRACK_OPD.md) 与 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。
+> 这些改动均满足"默认行为不变"（`OPD_GEN_LOSS_COEF=0` / `global_pool.source=copy` 时
+> 与原逻辑一致）。下方的"完整性自检"只验证集成层挂载，不覆盖上述新增。
+
 1. `agent_system/environments/env_manager.py` — `make_envs` 增加两个 `elif` 分支：
    - `"alfworld_stream" in env_name`（**必须排在 `"alfworld"` 分支之前**，子串包含）
    - `"agentstream" in env_name`（在最后的 else 之前）

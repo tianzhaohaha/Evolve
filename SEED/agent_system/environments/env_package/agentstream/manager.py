@@ -63,6 +63,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self.tasks: List[str] = []
         self._contexts: List[str] = []
         self._actions_texts: List[str] = []
+        self._first_obs: List[str] = []
         self.pre_text_obs: List[str] = []
 
         super().__init__(envs, projection_f, config)
@@ -89,6 +90,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self._contexts = [str(p.get("context", "")) for p in payloads]
         self._actions_texts = [str(p.get("actions_text", "")) for p in payloads]
         raw_obs = [str(p.get("observation", "")) for p in payloads]
+        self._first_obs = list(raw_obs)
         self.pre_text_obs = raw_obs
 
         full_text_obs = self.build_text_obs(raw_obs, init=True)
@@ -182,6 +184,23 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
     def set_global_step(self, step: int) -> None:
         """Stamp subsequent episode rows with the trainer step (used on resume)."""
         self._global_step = int(step)
+
+    def task_metadata(self) -> Dict[str, List[str]]:
+        """Per-slot task identity for the current episode batch (constant across
+        steps): benchmark slug, task id, full task text, first raw observation.
+
+        The rollout loop forwards these as non-tensor columns so the SEED global
+        skill pool can build its retrieval key (slug::task_id) and query (task
+        text + first observation) without parsing prompt text — the prompt's
+        "Your task is:" line is a benchmark-level constant on tau2 and the
+        question-answering benchmarks, so text parsing cannot identify tasks.
+        """
+        return {
+            "task_slug": list(self._slugs),
+            "task_id": list(self._task_ids),
+            "task_text": list(self.tasks),
+            "task_first_obs": list(self._first_obs),
+        }
 
     def online_metrics_snapshot(self) -> Dict[str, float]:
         """AgentStream cumulative averages for wandb (train phase only): first
