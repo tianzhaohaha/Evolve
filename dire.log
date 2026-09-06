@@ -1,4 +1,4 @@
 nohup: ignoring input
-[gpu 5] idle; allocating about 66682 MiB (0.819 of free after reserve) and starting compute load
-[gpu 7] idle; allocating about 74570 MiB (0.916 of free after reserve) and starting compute load
-[gpu 6] idle; allocating about 68056 MiB (0.836 of free after reserve) and starting compute load
+[gpu 6] idle; allocating about 71535 MiB (0.879 of free after reserve) and starting compute load
+[gpu 7] idle; allocating about 70939 MiB (0.871 of free after reserve) and starting compute load
+[gpu 5] idle; allocating about 75988 MiB (0.933 of free after reserve) and starting compute load

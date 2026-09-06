@@ -23,9 +23,9 @@
       │                                                        │
       └─ [准入，全异步，不阻塞训练] ──────────────────────────┘
           teacher merge 后收集本 batch 的 episode_skill 候选
-          （默认仅成功轨迹，见 admit_failed）
-          → spec teacher gap > 0 预过滤 + 每任务取 gap 最大 1 条
-            + 按 gap 降序截断（免费，张量运算）
+               （admit_failed 控制是否包含失败轨迹）
+               → signed utility > 0 预过滤 + 每任务取 utility 最大 1 条
+                  + 按 utility 降序截断（免费，张量运算）
           → 后台线程：先 embed（本地免费，失败不花 judge 钱）
             → 批量 LLM judge（迁移性判定）→ 入池（去重/淘汰/落盘）
 ```
@@ -48,19 +48,14 @@ per-token gate 兜底（这是敢用轻量检索的前提）。
 
 ## 2. 准入流水线（Global 经验生成）
 
-1. **成功门控**（候选收集处，`_select_seed_global_skills`）：默认只收成功轨迹的
-   skill（`admit_failed=False`）。原因：失败轨迹上 spec-gap>0 预筛的语义是"skill
-   让 teacher 更自信地执行**已导致失败**的动作"，恰好选中坏建议，而 judge 只判
-   迁移性不判对错，挡不住。成功信号缺失（无 episode_success 的环境）时放行。
-   **与 failed_only 的交互**：failed_only 模式下候选全部来自失败轨迹，默认组合
-   会使准入恒为零（见 §5 必读第 5 条）。
+1. **结果门控**（候选收集处，`_select_seed_global_skills`）：`admit_failed=False`
+   时只收成功轨迹；开启后也收集失败轨迹生成的 avoidance skill。成功信号缺失
+   （无 episode_success 的环境）时保持兼容并放行。
 2. **免费预过滤**（fit 循环 hook，`_update_seed_global_pool`）：轨迹的 spec teacher
-   gap 均值 > 0（连本轨迹都帮不上的 skill 不送审；episode 通道未打分时该过滤自动
-   放行，交给 judge 把关）+ skill 非空 + 未在池中（哈希查重）。随后
-   `select_admission_candidates`：**每任务只留 gap 最大的 1 条**（GRPO 同组 8 副本
-   产出近重复 skill，全部送审浪费 judge 调用且 dedup_sim 未必挡得住），再按 gap
-   **降序**截断到 `max_candidates_per_step`（按 batch 顺序截断会系统性饿死排在
-   batch 后部的任务）。
+   gap 按结果转为 signed utility：成功轨迹取 `gap`，失败轨迹取 `-gap`，统一要求
+   `utility > 0`。失败轨迹若未打分则不送审；成功或结果未知且未打分时保持旧行为，
+   交给 judge 把关。随后 `select_admission_candidates` **每任务只留 utility 最大的
+   1 条**，再按 utility 降序截断到 `max_candidates_per_step`。
 3. **批量 LLM Judge**（`seed/skill_judge.py`，后台线程）：**先 embed 后 judge**
    （embed 本地免费，先失败则一分 API 钱不花）。8–16 条打包一次调用 OpenRouter
    GLM（OpenAI 兼容端点，复用 `utils.openai_api` 的 client 与重试），逐条返回
@@ -150,7 +145,7 @@ per-token gate 兜底（这是敢用轻量检索的前提）。
 | `source` | copy | copy = gen 蒸 episode 拷贝（基线）；pool = 本文机制 |
 | `min_sim` | 0.35 | 检索余弦下限，低于则跳过 gen |
 | `score_threshold` | 0.6 | judge 迁移性准入门槛 |
-| `admit_failed` | False | False = 仅成功轨迹的 skill 可参加准入（失败轨迹的 skill 可能背书失败动作） |
+| `admit_failed` | full env: True | True = 失败 avoidance skill 以 `-spec_gap` 作为 utility；False = 仅成功轨迹参加准入 |
 | `capacity` / `dedup_sim` / `ema_alpha` | 64 / 0.9 / 0.1 | 池容量 / 近重复合并 / EMA 步长 |
 | `judge_model` / `judge_base_url` / `judge_api_key_env` | z-ai/glm-5.2 / openrouter / OPENROUTER_API_KEY | 缺 key ⇒ 准入静默停用 |
 | `embed_backend` / `embed_model` / `embed_url` | local / MiniLM / null | local 需 HF 缓存或可下载（或给本地路径）；warmup 失败即刻终止训练（见下方必读第 4 条） |
@@ -168,10 +163,9 @@ per-token gate 兜底（这是敢用轻量检索的前提）。
    warmup，失败**直接 RuntimeError 终止训练**（宁可 step 1 报错，不让实验静默空转）。
    MiniLM 通常已在本机 HF 缓存（`~/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2`）；
    离线环境可设 `HF_HUB_OFFLINE=1` 强制走缓存，或把 `embed_model` 指到本地路径。
-5. **failed_only 交互**：`failed_only` 模式下只分析失败轨迹 ⇒ 全部候选都来自失败
-   轨迹 ⇒ 默认 `admit_failed=False` 会把候选全部滤掉，**准入恒为零、池永远不长**
-   （wandb 上 `candidates_success_filtered` ≈ 候选数、`candidates_kept=0`）。要在
-   failed_only 下用池，必须显式 `AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED=1`。
+5. **failed_only 交互**：`failed_only` 模式下只分析失败轨迹；full env 默认开启
+   `admit_failed`，但只有能降低失败动作概率（`spec_gap < 0`）的 avoidance skill
+   才能进入 judge。若显式关闭该开关，准入会恒为零。
 6. **开跑后头几步健康检查**（wandb `seed/global_pool/*`）：`judge_available=1`；
    `admission_jobs_ok≥1` 且 `admission_jobs_failed=0`；`size` 开始增长；池非空后
    `retrieval_hit_ratio` 抬升。任一不满足按 §6 的指标语义定位。
@@ -184,8 +178,10 @@ per-token gate 兜底（这是敢用轻量检索的前提）。
 `admission_judged` / `admission_accepted` / `admission_added` / `judge_available`
 （准入漏斗后段，后台任务计数、下一步上报——**`admission_jobs_failed` 持续 >0 =
 准入管线故障，与"正常冷启动"（judged>0 但 accepted=0）从此可区分**）；
-`retrieval_hit_ratio` / `retrieval_sim_mean` / `retrieval_failed`（检索侧——
-hit_ratio 长期偏低 ⇒ 调低 `min_sim` 或池太小）；`injected_trajs` /
+`retrieval_hit_ratio` / `retrieval_sim_mean` / `top_similarity_before_threshold_mean` /
+`retrieval_eligible_ratio` / `retrieval_failed`（检索侧——阈值前均值只统计同任务排除
+后仍有候选的 query，eligible_ratio 给出其占比；二者共同判断 `min_sim` 是否过高，
+hit_ratio 长期偏低也可能是池太小）；`injected_trajs` /
 `unique_skills_injected` / `usage_gate_mean`（注入效果——usage_gate_mean 持续
 ≈0.5 以下说明池内技能对被注入任务无信息量；unique 远小于 injected 说明少数
 skill 垄断命中）。

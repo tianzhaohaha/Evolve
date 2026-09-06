@@ -62,12 +62,13 @@ def test_retrieve_applies_min_sim_and_same_task_exclusion():
     _add(pool, "skill a", _unit(1, 0), task_key="task-a")
     _add(pool, "skill b", _unit(0, 1), task_key="task-b")
 
-    hits = pool.retrieve(np.stack([_unit(1, 0.1), _unit(1, 0.1), _unit(1, 1)]), ["task-x", "task-a", "task-z"])
-    assert hits[0] is not None and hits[0].skill_id == skill_id_for("skill a")
+    results = pool.retrieve(np.stack([_unit(1, 0.1), _unit(1, 0.1), _unit(1, 1)]), ["task-x", "task-a", "task-z"])
+    assert results[0].hit is not None and results[0].hit.skill_id == skill_id_for("skill a")
     # Same-task entries are excluded; the remaining skill b is below min_sim.
-    assert hits[1] is None
+    assert results[1].hit is None
+    assert results[1].top_similarity == pytest.approx(float(np.dot(_unit(1, 0.1), _unit(0, 1))))
     # Diagonal query matches both at ~0.707 >= 0.6; top-1 is deterministic by best similarity.
-    assert hits[2] is not None
+    assert results[2].hit is not None
 
 
 def test_record_usage_updates_ema():
@@ -76,8 +77,8 @@ def test_record_usage_updates_ema():
     skill_id = skill_id_for("skill a")
     pool.record_usage(skill_id, 0.4, global_step=1)
     pool.record_usage(skill_id, 0.8, global_step=2)
-    hits = pool.retrieve(np.stack([_unit(1, 0)]), ["other-task"])
-    assert hits[0].skill_id == skill_id
+    results = pool.retrieve(np.stack([_unit(1, 0)]), ["other-task"])
+    assert results[0].hit.skill_id == skill_id
     metrics = pool.snapshot_metrics()
     assert metrics["seed/global_pool/gate_ema_mean"] == pytest.approx(0.5 * 0.4 + 0.5 * 0.8)
 
@@ -92,8 +93,8 @@ def test_save_and_load_roundtrip(tmp_path):
 
     restored = GlobalSkillPool(GlobalPoolConfig(source="pool", capacity=3, min_sim=0.5), save_path=path)
     assert len(restored) == 1
-    hits = restored.retrieve(np.stack([_unit(1, 0)]), ["task-z"])
-    assert hits[0] is not None and hits[0].text == "skill a"
+    results = restored.retrieve(np.stack([_unit(1, 0)]), ["task-z"])
+    assert results[0].hit is not None and results[0].hit.text == "skill a"
 
 
 def test_parse_judge_response_handles_order_and_garbage():
@@ -182,16 +183,27 @@ def test_build_retrieval_query_keeps_first_obs_visible():
     assert len(head) == 600 and tail == "OPENING LINE OF THE USER"
 
 
-def test_select_admission_candidates_dedups_per_task_and_ranks_by_gap():
-    c = [{"task_key": key, "skill": key + s} for key, s in
-         [("t1", "x"), ("t1", "y"), ("t2", "x"), ("t3", "x"), ("t4", "x")]]
-    scored = [(c[0], 0.2), (c[1], 0.9), (c[2], -0.1), (c[3], 0.5), (c[4], None)]
+def test_select_admission_candidates_uses_signed_utility_and_dedups_per_task():
+    c = [
+        {"task_key": "t1", "skill": "success-weak", "episode_success": True},
+        {"task_key": "t1", "skill": "success-strong", "episode_success": True},
+        {"task_key": "t2", "skill": "failure-helpful", "episode_success": False},
+        {"task_key": "t3", "skill": "failure-harmful", "episode_success": False},
+        {"task_key": "t4", "skill": "failure-unscored", "episode_success": False},
+        {"task_key": "t5", "skill": "unknown-unscored", "episode_success": None},
+    ]
+    scored = [(c[0], 0.2), (c[1], 0.9), (c[2], -0.7), (c[3], 0.5), (c[4], None), (c[5], None)]
 
     kept = select_admission_candidates(scored, limit=10)
-    # t1 keeps its best copy, t2 (gap<=0) drops, ranking is by gap, None ranks last.
-    assert [item["skill"] for item in kept] == ["t1y", "t3x", "t4x"]
+    assert [item["skill"] for item in kept] == ["success-strong", "failure-helpful", "unknown-unscored"]
+    assert [(item["spec_gap"], item["admission_utility"]) for item in kept] == [
+        (0.9, 0.9),
+        (-0.7, 0.7),
+        (None, None),
+    ]
+    assert "spec_gap" not in c[0]  # Selection must not mutate reusable candidate metadata.
 
-    assert [item["skill"] for item in select_admission_candidates(scored, limit=2)] == ["t1y", "t3x"]
+    assert [item["skill"] for item in select_admission_candidates(scored, limit=2)] == ["success-strong", "failure-helpful"]
     assert select_admission_candidates([], limit=4) == []
 
 

@@ -85,27 +85,40 @@ def build_retrieval_query(task_text: object, first_obs: object) -> str:
     return f"{head}\n{tail}".strip()
 
 
+def compute_admission_utility(spec_gap: Optional[float], episode_success: Optional[bool]) -> Optional[float]:
+    """Orient the spec gap toward desirable behavior for admission ranking."""
+    if spec_gap is None:
+        return None
+    direction = -1.0 if episode_success is False else 1.0
+    return direction * float(spec_gap)
+
+
 def select_admission_candidates(
     scored: Sequence[Tuple[dict, Optional[float]]], limit: int
 ) -> List[dict]:
     """Pick admission candidates from (candidate, spec_gap) pairs.
 
     A GRPO group's same-task copies produce near-duplicate skills, so only the
-    highest-gap candidate per ``task_key`` survives, and the per-step cap then
-    truncates by gap rather than by batch order (which would starve tasks that
-    happen to sit late in the batch). ``gap`` semantics: ``<= 0`` drops the
-    candidate (the skill did not help the spec teacher), ``None`` means no spec
-    evidence — such candidates pass through but rank behind every scored one.
+    highest-utility candidate per ``task_key`` survives. Successful trajectories
+    use ``spec_gap`` directly; failed trajectories contain avoidance skills, so
+    their utility is ``-spec_gap``. A non-positive utility is dropped. Missing
+    spec evidence passes through only for successful or unknown outcomes and
+    ranks behind every scored candidate.
     """
     best: Dict[str, Tuple[float, dict]] = {}
     for candidate, gap in scored:
-        if gap is not None and gap <= 0:
+        episode_success = candidate.get("episode_success")
+        utility = compute_admission_utility(gap, episode_success)
+        if (gap is None and episode_success is False) or (utility is not None and utility <= 0):
             continue
-        sort_key = float("-inf") if gap is None else float(gap)
+        sort_key = float("-inf") if utility is None else utility
         task_key = str(candidate.get("task_key", ""))
         current = best.get(task_key)
         if current is None or sort_key > current[0]:
-            best[task_key] = (sort_key, candidate)
+            selected = dict(candidate)
+            selected["spec_gap"] = gap
+            selected["admission_utility"] = utility
+            best[task_key] = (sort_key, selected)
     ranked = sorted(best.values(), key=lambda item: item[0], reverse=True)
     return [candidate for _, candidate in ranked[: max(int(limit), 0)]]
 
@@ -182,6 +195,12 @@ class RetrievalHit:
     similarity: float
 
 
+@dataclass
+class RetrievalResult:
+    hit: Optional[RetrievalHit]
+    top_similarity: Optional[float]
+
+
 class GlobalSkillPool:
     """Bounded skill store with embedding retrieval and gate-EMA eviction.
 
@@ -243,18 +262,27 @@ class GlobalSkillPool:
             self._embeddings[skill_id] = embedding
             return "added"
 
-    def retrieve(self, query_embeddings: np.ndarray, task_keys: Sequence[str]) -> List[Optional[RetrievalHit]]:
-        """Top-1 cosine hit per query above min_sim, excluding same-task entries."""
+    def retrieve(self, query_embeddings: np.ndarray, task_keys: Sequence[str]) -> List[RetrievalResult]:
+        """Top-1 cosine result per query, excluding same-task entries."""
         query_embeddings = np.asarray(query_embeddings, dtype=np.float32)
-        hits: List[Optional[RetrievalHit]] = []
+        results: List[RetrievalResult] = []
         with self._lock:
             for query, task_key in zip(query_embeddings, task_keys):
                 near = self._nearest_locked(query, exclude_task_key=str(task_key))
+                hit = None
                 if near is not None and near[1] >= self.config.min_sim:
-                    hits.append(RetrievalHit(skill_id=near[0], text=self._entries[near[0]]["text"], similarity=near[1]))
-                else:
-                    hits.append(None)
-        return hits
+                    hit = RetrievalHit(
+                        skill_id=near[0],
+                        text=self._entries[near[0]]["text"],
+                        similarity=near[1],
+                    )
+                results.append(
+                    RetrievalResult(
+                        hit=hit,
+                        top_similarity=near[1] if near is not None else None,
+                    )
+                )
+        return results
 
     def record_usage(self, skill_id: str, gate_value: float, global_step: int) -> None:
         with self._lock:

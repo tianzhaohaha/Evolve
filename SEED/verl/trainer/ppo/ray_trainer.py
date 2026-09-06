@@ -2263,11 +2263,8 @@ class RayPPOTrainer:
             if not episode_skill or pool.has(skill_id_for(episode_skill)):
                 continue
             success_value = traj_success.get(traj_uid)
-            if success_value is not None and float(success_value) < 1.0 and not pool.config.admit_failed:
-                # A failed episode's skill may confidently endorse the failing
-                # actions (the spec-gap pre-filter selects exactly those), so it
-                # stays out unless admit_failed opts in. A missing success signal
-                # fails open, matching the failed_only fallback above.
+            episode_success = None if success_value is None else float(success_value) >= 1.0
+            if episode_success is False and not pool.config.admit_failed:
                 success_filtered += 1
                 continue
             candidates.append(
@@ -2277,16 +2274,17 @@ class RayPPOTrainer:
                     "task_slug": task_slug,
                     "task_id": task_id,
                     "skill": episode_skill,
+                    "episode_success": episode_success,
                 }
             )
         metrics["seed/global_pool/candidates_success_filtered"] = float(success_filtered)
         metrics["seed/global_pool/judge_available"] = 1.0 if judge.available else 0.0
 
         metrics["seed/global_pool/retrieval_failed"] = 0.0
-        hits = None
+        retrieval_results = None
         if len(pool) > 0:
             try:
-                hits = pool.retrieve(embedder.encode(queries), task_keys)
+                retrieval_results = pool.retrieve(embedder.encode(queries), task_keys)
             except Exception as exc:
                 module_logger.warning(
                     "SEED global-pool retrieval failed; skipping gen injection for this batch: %s", exc
@@ -2295,9 +2293,14 @@ class RayPPOTrainer:
 
         injections: Dict[str, str] = {}
         hit_similarities: List[float] = []
+        top_similarities: List[float] = []
         events: List[Dict[str, object]] = []
         for index, traj_uid in enumerate(traj_uids):
-            hit = hits[index] if hits is not None else None
+            result = retrieval_results[index] if retrieval_results is not None else None
+            hit = result.hit if result is not None else None
+            top_similarity = result.top_similarity if result is not None else None
+            if top_similarity is not None:
+                top_similarities.append(top_similarity)
             if hit is not None:
                 episode_analysis[traj_uid]["global_skill"] = hit.text
                 injections[str(traj_uid)] = hit.skill_id
@@ -2313,6 +2316,9 @@ class RayPPOTrainer:
                     "hit": hit is not None,
                     "skill_id": hit.skill_id if hit is not None else None,
                     "similarity": round(hit.similarity, 4) if hit is not None else None,
+                    "top_similarity_before_threshold": (
+                        round(top_similarity, 4) if top_similarity is not None else None
+                    ),
                     "skill_preview": hit.text[:200] if hit is not None else "",
                     "pool_size": len(pool),
                 }
@@ -2325,6 +2331,12 @@ class RayPPOTrainer:
         )
         metrics["seed/global_pool/retrieval_sim_mean"] = (
             float(np.mean(hit_similarities)) if hit_similarities else 0.0
+        )
+        metrics["seed/global_pool/top_similarity_before_threshold_mean"] = (
+            float(np.mean(top_similarities)) if top_similarities else 0.0
+        )
+        metrics["seed/global_pool/retrieval_eligible_ratio"] = (
+            float(len(top_similarities)) / len(traj_uids) if traj_uids else 0.0
         )
         metrics["seed/global_pool/candidates"] = float(len(candidates))
         return {"injections": injections, "candidates": candidates}
@@ -2398,7 +2410,7 @@ class RayPPOTrainer:
                 scored.append((candidate, _traj_token_mean(episode_teacher_lp - old_log_probs, row_mask)))
         else:
             scored = [(candidate, None) for candidate in candidates]
-        # Best candidate per task, ranked by spec gap, then capped — see
+        # Best candidate per task, ranked by signed utility, then capped — see
         # select_admission_candidates for why batch-order truncation is biased.
         kept = select_admission_candidates(scored, pool.config.max_candidates_per_step)
         metrics["seed/global_pool/candidates_kept"] = float(len(kept))
@@ -2438,6 +2450,9 @@ class RayPPOTrainer:
                         "task_id": str(candidate.get("task_id", "")),
                         "traj_uid": str(candidate["traj_uid"]),
                         "global_step": global_step,
+                        "episode_success": candidate.get("episode_success"),
+                        "spec_gap": candidate.get("spec_gap"),
+                        "admission_utility": candidate.get("admission_utility"),
                     },
                     judge={"score": verdict.score, "tag": verdict.tag, "reason": verdict.reason},
                     global_step=global_step,

@@ -31,6 +31,9 @@ logs/
 runs/
 ray_results/
 
+# Local session caches
+/SEED/exgentic_session_cache/
+
 # Large archives and datasets
 *.tar
 *.tar.gz
