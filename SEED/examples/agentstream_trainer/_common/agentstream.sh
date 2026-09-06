@@ -175,6 +175,12 @@ SEED_OPD_GEN_LOSS_COEF=${SEED_OPD_GEN_LOSS_COEF:-0.0}
 SEED_OPD_GEN_GATE_BETA=${SEED_OPD_GEN_GATE_BETA:-null}
 SEED_OPD_GATE_EPS=${SEED_OPD_GATE_EPS:-0.0}
 SEED_OPD_GEN_DOMINANCE=${SEED_OPD_GEN_DOMINANCE:-none}
+# Stream stabilizers (SEED/EMA_REPLAY_DESIGN.md); defaults keep the original training logic.
+SEED_EMA_MODE=${SEED_EMA_MODE:-off}
+SEED_EMA_TAU=${SEED_EMA_TAU:-0.9}
+SEED_REPLAY_ENABLE=${SEED_REPLAY_ENABLE:-False}
+SEED_REPLAY_GROUPS_PER_STEP=${SEED_REPLAY_GROUPS_PER_STEP:-1}
+SEED_REPLAY_CAPACITY=${SEED_REPLAY_CAPACITY:-48}
 SEED_GLOBAL_POOL_SOURCE=${SEED_GLOBAL_POOL_SOURCE:-copy}
 SEED_GLOBAL_POOL_MIN_SIM=${SEED_GLOBAL_POOL_MIN_SIM:-0.35}
 SEED_GLOBAL_POOL_SCORE_THRESHOLD=${SEED_GLOBAL_POOL_SCORE_THRESHOLD:-0.6}
@@ -264,6 +270,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.opd_gen_gate_beta=$SEED_OPD_GEN_GATE_BETA \
     actor_rollout_ref.actor.opd_gate_eps=$SEED_OPD_GATE_EPS \
     actor_rollout_ref.actor.opd_gen_dominance=$SEED_OPD_GEN_DOMINANCE \
+    actor_rollout_ref.actor.ema_mode=$SEED_EMA_MODE \
+    actor_rollout_ref.actor.ema_tau=$SEED_EMA_TAU \
     algorithm.seed.global_pool.source=$SEED_GLOBAL_POOL_SOURCE \
     algorithm.seed.global_pool.min_sim=$SEED_GLOBAL_POOL_MIN_SIM \
     algorithm.seed.global_pool.score_threshold=$SEED_GLOBAL_POOL_SCORE_THRESHOLD \
@@ -299,6 +307,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.skill_teacher_mode=$SEED_SKILL_TEACHER_MODE \
     algorithm.seed.opd_start_after_steps=$SEED_OPD_START_AFTER_STEPS \
     algorithm.seed.opd_stop_after_steps=$SEED_OPD_STOP_AFTER_STEPS \
+    algorithm.seed.replay.enable=$SEED_REPLAY_ENABLE \
+    algorithm.seed.replay.groups_per_step=$SEED_REPLAY_GROUPS_PER_STEP \
+    algorithm.seed.replay.capacity=$SEED_REPLAY_CAPACITY \
     algorithm.seed.failed_only=$SEED_FAILED_ONLY \
     algorithm.seed.failed_only_after_steps=$SEED_FAILED_ONLY_AFTER_STEPS \
     algorithm.seed.failure_success_threshold=$SEED_FAILURE_SUCCESS_THRESHOLD \

@@ -60,6 +60,8 @@ actor_rollout_ref:
     opd_gen_gate_beta: null # sigmoid sharpness for the general-skill gate; null inherits opd_gate_beta
     opd_gate_eps: 0.0 # confidence floor shared by both OPD channels; tokens with |teacher gap| below it are ignored
     opd_gen_dominance: none # none | spec_first (down-weight general-skill tokens already covered by the specific-skill gate)
+    ema_mode: "off" # "off" | ref | teacher | both: keep an fp32 EMA shadow of the actor (SEED/EMA_REPLAY_DESIGN.md); ref = KL reference from the shadow, teacher = OPD teacher scoring from the shadow
+    ema_tau: 0.9 # shadow <- tau * shadow + (1 - tau) * actor once per training step; horizon ~ 1 / (1 - tau) steps
     skill_gen_loss_coef: 0.0 # SEED skill-generation reward-weighted LM loss; 0 disables it.
     skill_gen_micro_batch_size_per_gpu: null # per-GPU micro batch size for long policy-vllm skill generation samples
     skill_gen_micro_batch_size: 1 # deprecated alias for skill_gen_micro_batch_size_per_gpu
@@ -280,6 +282,10 @@ algorithm:
     skill_teacher_mode: "step_priority" # "step_priority" uses episode skills only where no step skill is active; "additive" scores both prompts and adds both advantages
     opd_start_after_steps: null # null -> enable SEED teacher/OPD signal from the first training step; otherwise enable after this many completed steps
     opd_stop_after_steps: null # null -> keep SEED teacher/OPD signal enabled; otherwise disable after this many completed steps
+    replay: # task-free experience replay of stored GRPO groups into the actor update (SEED/EMA_REPLAY_DESIGN.md)
+      enable: False
+      groups_per_step: 1 # stored groups mixed into every actor update
+      capacity: 48 # reservoir size in groups (~100 MB each on the driver); bounds memory and sample age
     global_pool: # V1 global experience pool feeding the gen OPD channel (SEED/GLOBAL_SKILL_POOL_V1.md)
       source: copy # "copy" = gen distills a copy of the episode skill (placeholder); "pool" = retrieve from the judged cross-task pool
       capacity: 64 # max stored skills; evicts the lowest gate-EMA entry when full

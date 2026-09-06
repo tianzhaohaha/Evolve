@@ -35,6 +35,7 @@ from verl.single_controller.base import Worker
 from verl.single_controller.base.decorator import Dispatch, register
 from verl.utils import hf_processor, hf_tokenizer
 from verl.utils.activation_offload import enable_activation_offloading
+from verl.utils.ema import EmaShadow, normalize_ema_mode
 from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
 from verl.utils.debug import log_gpu_memory_usage
 from verl.utils.flops_counter import FlopsCounter
@@ -145,6 +146,8 @@ class ActorRolloutRefWorker(Worker):
             # TODO: it seems that manual offload is slowly than FSDP offload
             self._is_offload_param = self.config.ref.fsdp_config.get("param_offload", False)
         self._rollout_generation_session_depth = 0
+        # EMA shadow of the actor weights (verl.utils.ema); None unless actor.ema_mode != off.
+        self._ema = None
 
         # normalize config
         if self._is_actor:
@@ -566,6 +569,8 @@ class ActorRolloutRefWorker(Worker):
                 self.config.actor.use_fused_kernels = use_fused_kernels
             self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
             self.actor.set_tokenizer(self.tokenizer)
+            if normalize_ema_mode(self.config.actor.get("ema_mode", "off")) != "off":
+                self._ema = EmaShadow(self.actor_module_fsdp, tau=float(self.config.actor.ema_tau))
 
         if self._is_rollout:
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
@@ -605,6 +610,7 @@ class ActorRolloutRefWorker(Worker):
         data = data.to(get_torch_device().current_device())
 
         assert self._is_actor
+        self._assert_ema_not_swapped("update_actor")
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
         if self._is_offload_optimizer:
@@ -616,6 +622,9 @@ class ActorRolloutRefWorker(Worker):
             with Timer(name="update_policy", logger=None) as timer:
                 metrics = self.actor.update_policy(data=data)
             delta_time = timer.last
+            if self._ema is not None:
+                # One EMA step per training step, after every optimizer step of this batch.
+                metrics["actor/ema_param_delta"] = self._ema.update()
             global_num_tokens = data.meta_info["global_token_num"]
             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
             metrics["perf/mfu/actor"] = estimated_flops * self.config.actor.ppo_epochs / promised_flops / self.world_size
@@ -645,6 +654,7 @@ class ActorRolloutRefWorker(Worker):
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def start_rollout_generation_session(self):
         assert self._is_rollout
+        self._assert_ema_not_swapped("start_rollout_generation_session")  # weights sync to vLLM below
         if self._rollout_generation_session_depth == 0:
             self.rollout_sharding_manager.__enter__()
             log_gpu_memory_usage("After entering rollout generation session", logger=logger)
@@ -671,6 +681,7 @@ class ActorRolloutRefWorker(Worker):
         prompts = prompts.to(get_torch_device().current_device())
 
         assert self._is_rollout
+        self._assert_ema_not_swapped("generate_sequences")
 
         meta_info = {
             "eos_token_id": self.generation_config.eos_token_id if self.generation_config is not None else self.tokenizer.eos_token_id,
@@ -714,6 +725,11 @@ class ActorRolloutRefWorker(Worker):
         from contextlib import nullcontext
         is_lora = data.meta_info.pop("is_lora", False)
         adapter_ctx = self.actor.actor_module.disable_adapter() if is_lora else nullcontext()
+        # Score with the EMA weights instead of the live actor (SEED ema_mode ref/teacher).
+        use_ema_weights = data.meta_info.pop("use_ema_weights", False)
+        if use_ema_weights and self._ema is None:
+            raise RuntimeError("use_ema_weights requested but actor.ema_mode is off")
+        weights_ctx = self._ema.swapped_in() if use_ema_weights else nullcontext()
         data = data.to(get_torch_device().current_device())
         # we should always recompute old_log_probs when it is HybridEngine
         data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
@@ -724,7 +740,7 @@ class ActorRolloutRefWorker(Worker):
         calculate_entropy = bool(self.config.rollout.get("log_prob_calculate_entropy", True))
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
-            with adapter_ctx:
+            with adapter_ctx, weights_ctx:
                 output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=calculate_entropy)
             tensors = {"old_log_probs": output}
             if entropys is not None:
@@ -787,11 +803,14 @@ class ActorRolloutRefWorker(Worker):
     def save_checkpoint(self, local_path, hdfs_path=None, global_step=0, max_ckpt_to_keep=None):
         # only support save and load ckpt for actor
         assert self._is_actor
+        self._assert_ema_not_swapped("save_checkpoint")
 
         if self._is_offload_param:
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
 
         self.checkpoint_manager.save_checkpoint(local_path=local_path, hdfs_path=hdfs_path, global_step=global_step, max_ckpt_to_keep=max_ckpt_to_keep)
+        if self._ema is not None:
+            torch.save(self._ema.state_dict(), self._ema_checkpoint_path(local_path))
         dist.barrier()
 
         if self._is_lora and isinstance(self.actor_module, PeftModel):
@@ -828,12 +847,26 @@ class ActorRolloutRefWorker(Worker):
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
 
         self.checkpoint_manager.load_checkpoint(local_path=local_path, hdfs_path=hdfs_path, del_local_after_load=del_local_after_load)
+        if self._ema is not None:
+            ema_path = self._ema_checkpoint_path(local_path)
+            if os.path.exists(ema_path):
+                self._ema.load_state_dict(torch.load(ema_path, weights_only=False))
+            else:
+                logger.warning("[rank-%s]: no EMA shadow in %s; re-initializing it from the loaded actor weights", self.rank, local_path)
+                self._ema.reset()
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
 
         if self._is_offload_optimizer:
             offload_fsdp_optimizer(self.actor_optimizer)
+
+    def _ema_checkpoint_path(self, local_path: str) -> str:
+        return os.path.join(local_path, f"ema_world_size_{self.world_size}_rank_{self.rank}.pt")
+
+    def _assert_ema_not_swapped(self, where: str) -> None:
+        if self._ema is not None and self._ema.swapped:
+            raise RuntimeError(f"EMA shadow weights are still swapped into the actor at {where}")
 
 
 class CriticWorker(Worker):

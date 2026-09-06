@@ -74,6 +74,8 @@ from seed.prompting import (
     select_skill_teacher_sources,
     validate_skill_mode,
 )
+from seed.replay import ReplayBuffer, merge_for_update
+from verl.utils.ema import ema_applies_to, normalize_ema_mode
 from seed.global_pool import (
     GlobalPoolConfig,
     GlobalSkillPool,
@@ -569,6 +571,8 @@ class RayPPOTrainer:
         self._seed_skill_judge = None
         self._seed_pool_embedder = None
         self._seed_global_pool_executor = None
+        self._seed_replay: Optional[ReplayBuffer] = None
+        self._seed_ema_mode = normalize_ema_mode(OmegaConf.select(config, "actor_rollout_ref.actor.ema_mode"))
         self.traj_collector = traj_collector
 
         self.hybrid_engine = config.actor_rollout_ref.hybrid_engine
@@ -610,6 +614,12 @@ class RayPPOTrainer:
             raise NotImplementedError
 
         self._validate_config()
+        if bool(OmegaConf.select(self.config, "algorithm.seed.replay.enable") or False):
+            self._seed_replay = ReplayBuffer(
+                capacity=int(OmegaConf.select(self.config, "algorithm.seed.replay.capacity")),
+                groups_per_step=int(OmegaConf.select(self.config, "algorithm.seed.replay.groups_per_step")),
+                seed=int(OmegaConf.select(self.config, "env.agentstream.stream_seed") or OmegaConf.select(self.config, "env.seed") or 0),
+            )
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
 
     def _get_seed_opd_stop_after_steps(self) -> Optional[int]:
@@ -712,6 +722,49 @@ class RayPPOTrainer:
 
     def _is_seed_global_pool_enabled(self) -> bool:
         return str(OmegaConf.select(self.config, "algorithm.seed.global_pool.source") or "copy") == "pool"
+
+    def _seed_ema_uses(self, target: str) -> bool:
+        """Whether the EMA shadow replaces the KL reference ('ref') or the OPD teacher base ('teacher')."""
+        return ema_applies_to(self._seed_ema_mode, target)
+
+    def _compute_ema_log_prob(self, batch: DataProto) -> torch.Tensor:
+        """Score the batch's responses with the actor's EMA shadow weights."""
+        non_tensor_keys = ["multi_modal_inputs"] if "multi_modal_inputs" in batch.non_tensor_batch else []
+        ema_batch = batch.select(
+            batch_keys=["responses", "input_ids", "attention_mask", "position_ids"],
+            non_tensor_batch_keys=non_tensor_keys,
+            meta_info_keys=[],
+        )
+        ema_batch.meta_info["use_ema_weights"] = True
+        return self.actor_rollout_wg.compute_log_prob(ema_batch).batch["old_log_probs"]
+
+    def _mix_replay(self, batch: DataProto, metrics: Dict[str, float]) -> DataProto:
+        """Return the batch handed to update_actor: the live batch plus replayed groups.
+
+        Sampling happens before insertion so a step never replays its own groups. The
+        live batch is left untouched for downstream logging; the merged proto is padded
+        with adjust_batch, permuted, and re-balanced across ranks exactly like a fresh batch.
+        """
+        replay = self._seed_replay
+        sampled = replay.sample()
+        replay.add_batch(batch)
+        metrics.update(replay.metrics())
+        metrics["replay/sampled_groups"] = float(len(sampled))
+        metrics["replay/sampled_samples"] = float(sum(len(group) for group in sampled))
+        if not sampled:
+            return batch
+        merged = merge_for_update(batch, sampled)
+        if merged is None:
+            module_logger.warning("Replay groups carry a different key set than the live batch; skipping replay this step.")
+            metrics["replay/skipped_key_mismatch"] = 1.0
+            return batch
+        merged = adjust_batch(self.config, merged)
+        merged.reorder(torch.from_numpy(replay.permutation(len(merged))))
+        if self.config.trainer.balance_batch:
+            self._balance_batch(merged, metrics=metrics, logging_prefix="global_seqlen_replay")
+        merged.meta_info["global_token_num"] = torch.sum(merged.batch["attention_mask"], dim=-1).tolist()
+        metrics["replay/frac_of_batch"] = 1.0 - len(batch) / len(merged)
+        return merged
 
     @staticmethod
     def _config_bool(config, key: str, default: bool = False) -> bool:
@@ -1190,6 +1243,22 @@ class RayPPOTrainer:
                 embed_url=OmegaConf.select(config, "algorithm.seed.global_pool.embed_url"),
                 capacity=int(OmegaConf.select(config, "algorithm.seed.global_pool.capacity") or 64),
             ).validate()
+        ema_mode = normalize_ema_mode(OmegaConf.select(config, "actor_rollout_ref.actor.ema_mode"))
+        if ema_mode != "off":
+            ema_tau = float(OmegaConf.select(config, "actor_rollout_ref.actor.ema_tau") or 0.0)
+            if not 0.0 < ema_tau < 1.0:
+                raise ValueError("actor_rollout_ref.actor.ema_tau must lie in (0, 1) when ema_mode != off.")
+            if str(config.actor_rollout_ref.actor.strategy) != "fsdp" or config.actor_rollout_ref.model.get("lora_rank", 0) > 0:
+                raise ValueError("actor_rollout_ref.actor.ema_mode currently supports only actor.strategy=fsdp without LoRA.")
+            if ema_applies_to(ema_mode, "ref") and not config.actor_rollout_ref.actor.use_kl_loss:
+                raise ValueError("ema_mode=ref/both replaces the KL reference and requires actor.use_kl_loss=True.")
+            opd_loss_coef = float(OmegaConf.select(config, "actor_rollout_ref.actor.opd_loss_coef") or 0.0)
+            if ema_applies_to(ema_mode, "teacher") and opd_loss_coef <= 0 and opd_gen_loss_coef <= 0:
+                raise ValueError("ema_mode=teacher/both re-bases the OPD teacher and requires an OPD loss coefficient > 0.")
+        if bool(OmegaConf.select(config, "algorithm.seed.replay.enable") or False):
+            # groups_per_step / capacity ranges are checked by ReplayBuffer itself at construction.
+            if config.algorithm.adv_estimator != AdvantageEstimator.SEED and str(config.algorithm.adv_estimator) != AdvantageEstimator.SEED.value:
+                raise ValueError("algorithm.seed.replay.enable requires algorithm.adv_estimator=seed.")
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
@@ -3300,6 +3369,8 @@ class RayPPOTrainer:
             teacher_meta_info = deepcopy(batch.meta_info)
             teacher_meta_info.pop("seed_skill_gen_samples", None)
             teacher_meta_info.pop("seed_global_pool", None)
+            if self._seed_ema_uses("teacher"):
+                teacher_meta_info["use_ema_weights"] = True
             use_prompt_images = prompt_images is not None and any(
                 image is not None for image in prompt_images
             )
@@ -3781,6 +3852,9 @@ class RayPPOTrainer:
                         metrics["seed/teacher_advantage_enabled"] = 1.0 if seed_teacher_adv_enabled else 0.0
                         metrics["seed/opd_loss_enabled"] = 1.0 if seed_opd_loss_enabled else 0.0
                         metrics["seed/skill_gen_enabled"] = 1.0 if seed_skill_gen_enabled else 0.0
+                        if self._seed_ema_uses("ref") or self._seed_ema_uses("teacher"):
+                            metrics["seed/ema_ref_enabled"] = 1.0 if self._seed_ema_uses("ref") else 0.0
+                            metrics["seed/ema_teacher_enabled"] = 1.0 if self._seed_ema_uses("teacher") else 0.0
                         metrics["seed/teacher_disabled_by_schedule"] = 0.0 if seed_teacher_schedule_enabled else 1.0
                         metrics["seed/teacher_disabled_by_analysis"] = (
                             1.0
@@ -3791,7 +3865,11 @@ class RayPPOTrainer:
                         metrics["seed/analysis_disabled"] = 0.0 if seed_analysis_enabled else 1.0
                         if seed_analysis_enabled:
                             seed_teacher_snapshot = self._build_seed_teacher_signal_snapshot(batch)
-                            if not seed_policy_vllm_backend:
+                            # With an EMA teacher the scoring must not overlap the main thread's
+                            # old_log_prob RPCs: Ray orders tasks per (caller, actor), so ranks could
+                            # run the two forwards in different orders and all-gather a model mixing
+                            # EMA and live shards. Fall back to the synchronous path in that case.
+                            if not seed_policy_vllm_backend and not self._seed_ema_uses("teacher"):
                                 seed_teacher_future = self._lazy_init_seed_teacher_signal_executor().submit(
                                     self._prepare_seed_teacher_signals_async_task,
                                     seed_teacher_snapshot,
@@ -3867,7 +3945,9 @@ class RayPPOTrainer:
                     if self.use_reference_policy:
                         # compute reference log_prob
                         with _timer("ref", timing_raw):
-                            if not self.ref_in_actor:
+                            if self._seed_ema_uses("ref"):
+                                ref_log_prob = DataProto.from_dict(tensors={"ref_log_prob": self._compute_ema_log_prob(batch)})
+                            elif not self.ref_in_actor:
                                 ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
                             else:
                                 ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
@@ -4010,11 +4090,15 @@ class RayPPOTrainer:
 
                     # implement critic warmup
                     if self.config.trainer.critic_warmup <= self.global_steps:
+                        actor_batch = batch
+                        if self._seed_replay is not None:
+                            with _timer("replay", timing_raw):
+                                actor_batch = self._mix_replay(batch, metrics)
                         # update actor
                         with _timer("update_actor", timing_raw):
-                            batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
-                            batch.meta_info["global_step"] = self.global_steps
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
+                            actor_batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
+                            actor_batch.meta_info["global_step"] = self.global_steps
+                            actor_output = self.actor_rollout_wg.update_actor(actor_batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
 
