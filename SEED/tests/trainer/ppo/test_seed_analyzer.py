@@ -330,3 +330,23 @@ def test_seed_parse_repairs_common_json_noise():
 
     assert parsed["episode_skill"] == "compare all required attributes before acting"
     assert parsed["step_skills"] == {1: "check the attributes before selecting"}
+
+
+def test_seed_prompt_failed_skill_positive_switch_rewrites_only_the_failure_branch():
+    analyzer = SEEDEpisodeAnalyzer(failed_skill_positive=True)
+
+    failed = analyzer._build_episode_analysis_prompt(
+        steps=_sample_steps(),
+        candidate_step_indices=[0, 1],
+        episode_success=0.0,
+    )["messages"][0]["content"]
+    assert "rule the agent should have followed instead" in failed
+    assert "avoidance rules" not in failed
+    assert "episode_success: failure" in failed
+
+    succeeded = analyzer._build_episode_analysis_prompt(
+        steps=_sample_steps(),
+        candidate_step_indices=[0, 1],
+        episode_success=1.0,
+    )["messages"][0]["content"]
+    assert "successful trajectory into workflow" in succeeded

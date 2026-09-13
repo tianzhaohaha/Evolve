@@ -251,6 +251,44 @@ bash examples/seed_trainer/run_sokoban_sft_gemini_self.sh
 
 
 
+## 可选改进开关（AgentStream / global pool，默认全部关闭）
+
+三个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
+`run_agentstream_sft_glm_self.sh` → `_common/agentstream.sh` → hydra 传入；关闭时训练逻辑与
+原始实现逐 bit 一致。共同背景：OPD 损失 `loss = gate·(teacher_lp − student_lp)`，
+`gate = sigmoid(β·(teacher_lp − student_lp))`，其梯度对每个 token 都是 `−gate`，只会推高学生
+已采样的 token，从不推低。三个开关分别处理由此产生的三个问题。
+
+| 开关（env 变量 → hydra 键） | 默认 | 开启后的行为 |
+|---|---|---|
+| `AGENTSTREAM_SEED_FAILED_SKILL_POSITIVE` → `algorithm.seed.failed_skill_positive` | False | 失败轨迹的 episode_skill 从 avoidance 规则改为"本应遵循的规则"（正向 workflow），spec 与 gen 两通道同时可用；global pool 准入对失败候选不再做 spec_gap 门控，固定排在所有成功候选之后，judge 是唯一过滤器，per-step 上限先截失败候选。池侧效果依赖 `AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED=True`（full env 默认 True，`agentstream.sh` 单独默认 False）：为 False 时失败候选在收集阶段即被丢弃，开关只改 prompt，启动时会打 warning |
+| `AGENTSTREAM_SEED_GLOBAL_POOL_EVICT_POLICY` → `algorithm.seed.global_pool.evict_policy`（配 `..._WINDOW_STEPS` → `window_steps`） | gate_ema / 48 | 满员淘汰策略。`gate_ema`（原始）按 gate EMA 最低淘汰；`lru` 淘汰最久未被检索者；`window` 每步删除入池早于 `当前步 − window_steps` 的条目（检索不续命），满员时按入池步 FIFO |
+| `AGENTSTREAM_SEED_OPD_POSITIVE_ONLY` → `actor_rollout_ref.actor.opd_positive_only` | False | spec 与 gen 两通道只在 `teacher_lp − student_lp > 0` 的 token 上施加损失；token-mean 分母与全部 `actor/opd_*` 指标仍按原 mask 统计，系数语义和曲线口径不变，`opd_loss` 变为非负；可与 `opd_gate_eps` 叠加 |
+
+为什么需要它们：
+
+- **失败 skill 的正向措辞**。avoidance 措辞的信号落在需要推低的 token 上，单边损失下 gate 归零，
+  失败轨迹只剩 gap≈0 的自我模仿；上游 SEED 的 avoidance prompt 只在 teacher-advantage 模式
+  （`opd_loss_coef=0`，带符号 gap 直接进 advantage）下语义成立，而上游与本仓库默认都跑 OPD 损失模式。
+  正向措辞让失败轨迹里做对的部分获得正 gap；准入随之放行是必要配套，否则正向 skill 在失败轨迹上
+  gap 为正会被原有的 `-spec_gap>0` 规则全部丢弃。若启用 skill_gen 且 `failed_reward_mode=negate`，
+  与本开关矛盾，需改回 `zero`。
+- **淘汰策略**。gate EMA 是一致性量而非有用性量，实际值聚在 0.5 略下，原始策略会先淘汰被检索过的
+  活跃条目、保留从未命中的死重。`lru` 直接针对死重；`window` 是近因先验，会清掉跨域旧 skill，
+  建议作为命名消融而非默认。
+- **正 gap 限定**。gap<0 的 token 仍以 gate∈(0,0.5) 的权重被推高，方向与 teacher 相反，等价于对
+  自己 rollout 的半权重 BC（失败轨迹的错误动作也在内）。置零后 `opd_loss` 的下降只剩"正 gap token
+  被学会"一种解释，无关的 pool 命中梯度趋近零，使放宽准入没有下行风险。
+
+观测指标：`seed/global_pool/never_injected_ratio`（从未被检索条目占比）、`evicted_total`（累计满员
+淘汰数）、`expired`（window 每步过期条数）；`actor/opd_loss`、`actor/opd_teacher_gap_mean`、
+`actor/opd_gate_active_ratio` 及 gen 通道对应项口径不变。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
+再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`。代码落点：`verl/trainer/ppo/core_algos.py`
+（`compute_opd_loss(positive_only)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
+（`select_admission_candidates` / `_evict_locked` / `expire`）、`verl/trainer/ppo/ray_trainer.py`
+（开关装配与 `expire` 调用）；测试见 `tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer}.py`。
+更多池机制见 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。
+
 ## Merge Checkpoints
 
 See `scripts/model_merger.py` for FSDP/Megatron merge examples using paths under

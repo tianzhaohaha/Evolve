@@ -500,6 +500,7 @@ def compute_opd_loss(
     gate_beta: float = 5.0,
     gate_eps: float = 0.0,
     loss_agg_mode: str = "token-mean",
+    positive_only: bool = False,
 ):
     """
     Compute OPD-style confidence-gated teacher distillation loss.
@@ -519,6 +520,11 @@ def compute_opd_loss(
         gate_beta: Sigmoid sharpness for the teacher-student gap gate.
         gate_eps: Confidence floor; tokens with |teacher gap| below it carry no signal and are masked out.
         loss_agg_mode: Aggregation mode for `agg_loss`.
+        positive_only: Zero the loss on tokens whose teacher gap is <= 0. The gradient of this loss is
+            -gate on every active token, so a negative-gap token (teacher *less* confident than the
+            student) is still pushed up with weight < 0.5, i.e. against the teacher. The token-mean
+            denominator and all returned metrics keep the full ``opd_mask`` so the loss coefficient
+            and the logged curves stay comparable with the default.
 
     Returns:
         opd_loss, opd_active_token_ratio, opd_gate_mean,
@@ -565,6 +571,8 @@ def compute_opd_loss(
 
     opd_gate = torch.sigmoid(float(gate_beta) * teacher_gap).detach()
     opd_loss_mat = opd_gate * (teacher_log_prob - log_prob)
+    if positive_only:
+        opd_loss_mat = opd_loss_mat * (teacher_gap > 0).to(dtype=opd_loss_mat.dtype)
 
     opd_loss = agg_loss(
         loss_mat=opd_loss_mat,

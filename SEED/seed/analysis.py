@@ -282,6 +282,7 @@ class SEEDEpisodeAnalyzer:
         skill_mode: str = "episode_step",
         analysis_prompt_version: str = "seed",
         include_episode_summary: bool = True,
+        failed_skill_positive: bool = False,
     ):
         self.requested_backend = backend
         if backend == "azure":
@@ -296,11 +297,12 @@ class SEEDEpisodeAnalyzer:
         self.skill_mode = validate_skill_mode(skill_mode)
         self.analysis_prompt_version = validate_analysis_prompt_version(analysis_prompt_version)
         self.include_episode_summary = bool(include_episode_summary)
+        self.failed_skill_positive = bool(failed_skill_positive)
         self.client = None
         self.model = os.environ.get("OPENAI_MODEL", "gemini-2.5-flash")
 
         logger.info(
-            "Initialized SEEDEpisodeAnalyzer with requested_backend=%s, resolved_backend=%s, model=%s, max_completion_tokens=%s, max_step_skills_per_traj=%s, skill_mode=%s, analysis_prompt_version=%s, include_episode_summary=%s",
+            "Initialized SEEDEpisodeAnalyzer with requested_backend=%s, resolved_backend=%s, model=%s, max_completion_tokens=%s, max_step_skills_per_traj=%s, skill_mode=%s, analysis_prompt_version=%s, include_episode_summary=%s, failed_skill_positive=%s",
             self.requested_backend,
             self.backend,
             self.model,
@@ -309,6 +311,7 @@ class SEEDEpisodeAnalyzer:
             self.skill_mode,
             self.analysis_prompt_version,
             self.include_episode_summary,
+            self.failed_skill_positive,
         )
 
     def _get_openai_client(self):
@@ -643,6 +646,15 @@ Return ONLY one valid JSON object with this exact shape:
                 "Write one episode_skill that extracts the successful trajectory into workflow: "
                 "the core decision rule and action ordering that made this trajectory work. "
                 # "Phrase it as a general skill pattern, not as instructions for this exact task."
+            )
+        elif outcome_label == "failure" and self.failed_skill_positive:
+            # The one-sided OPD loss only raises tokens the skill-conditioned teacher endorses,
+            # so a rule phrased as "do this instead" is learnable while "avoid that" is not
+            # (its signal lives on the tokens the gate zeroes out).
+            episode_skill_instruction = (
+                "Write one episode_skill as the rule the agent should have followed instead: "
+                "the correct decision and action ordering, stated as an actionable workflow, "
+                "not as a description of the mistake. "
             )
         elif outcome_label == "failure":
             episode_skill_instruction = (

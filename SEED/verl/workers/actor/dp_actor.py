@@ -806,6 +806,7 @@ class DataParallelPPOActor(BasePPOActor):
         opd_gen_gate_beta = self.config.get("opd_gen_gate_beta", None)
         opd_gen_gate_beta = opd_gate_beta if opd_gen_gate_beta is None else float(opd_gen_gate_beta)
         opd_gate_eps = float(self.config.get("opd_gate_eps", 0.0) or 0.0)
+        opd_positive_only = bool(self.config.get("opd_positive_only", False))
         opd_gen_dominance = str(self.config.get("opd_gen_dominance", "none") or "none")
         skill_gen_loss_coef = float(self.config.get("skill_gen_loss_coef", 0.0) or 0.0)
         seed_skill_gen_payload = data.meta_info.get("seed_skill_gen")
@@ -958,6 +959,7 @@ class DataParallelPPOActor(BasePPOActor):
                             opd_step_mask=data[teacher_mask_key],
                             gate_beta=opd_gate_beta,
                             gate_eps=opd_gate_eps,
+                            positive_only=opd_positive_only,
                             loss_agg_mode=loss_agg_mode,
                         )
                         policy_loss = policy_loss + opd_loss_coef * opd_loss
@@ -969,6 +971,7 @@ class DataParallelPPOActor(BasePPOActor):
                     opd_gen_teacher_gap_mean = log_prob.new_tensor(0.0)
                     if use_opd_gen_loss and "gen_teacher_log_prob" in data and "gen_skill_mask" in data:
                         gen_step_mask = data["gen_skill_mask"].to(device=log_prob.device, dtype=log_prob.dtype)
+                        gen_response_mask = response_mask
                         if (
                             opd_gen_dominance == "spec_first"
                             and use_opd_loss
@@ -976,13 +979,22 @@ class DataParallelPPOActor(BasePPOActor):
                             and teacher_mask_key in data
                         ):
                             # Route the general-skill signal to tokens the specific-skill gate leaves uncovered.
-                            spec_gate = torch.sigmoid(
-                                opd_gate_beta * (data["teacher_log_prob"] - log_prob.detach())
-                            ).detach()
+                            spec_gap = (data["teacher_log_prob"] - log_prob.detach()).detach()
+                            spec_gate = torch.sigmoid(opd_gate_beta * spec_gap)
                             spec_active = data[teacher_mask_key].to(device=log_prob.device, dtype=log_prob.dtype)
                             if spec_active.dim() == 1:
                                 spec_active = spec_active.unsqueeze(-1)
-                            gen_step_mask = gen_step_mask.unsqueeze(-1) * (1.0 - spec_gate * spec_active)
+                            # Tokens filtered out of spec must not reserve any of its coverage.
+                            if opd_gate_eps > 0.0:
+                                spec_active = spec_active * (spec_gap.abs() >= opd_gate_eps)
+                            if opd_positive_only:
+                                spec_active = spec_active * (spec_gap > 0)
+                            if gen_step_mask.dim() == 1:
+                                gen_step_mask = gen_step_mask.unsqueeze(-1)
+                            gen_step_mask = gen_step_mask * (1.0 - spec_gate * spec_active)
+                            # compute_opd_loss casts weights to the response mask's dtype.
+                            # Float only this gen mask; preserve SEED's spec/PPO/KL/none paths.
+                            gen_response_mask = response_mask.to(dtype=gen_step_mask.dtype)
                         (
                             opd_gen_loss,
                             opd_gen_active_token_ratio,
@@ -992,10 +1004,11 @@ class DataParallelPPOActor(BasePPOActor):
                         ) = compute_opd_loss(
                             log_prob=log_prob,
                             teacher_log_prob=data["gen_teacher_log_prob"],
-                            response_mask=response_mask,
+                            response_mask=gen_response_mask,
                             opd_step_mask=gen_step_mask,
                             gate_beta=opd_gen_gate_beta,
                             gate_eps=opd_gate_eps,
+                            positive_only=opd_positive_only,
                             loss_agg_mode=loss_agg_mode,
                         )
                         policy_loss = policy_loss + opd_gen_loss_coef * opd_gen_loss

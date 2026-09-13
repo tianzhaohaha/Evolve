@@ -147,6 +147,8 @@ per-token gate 兜底（这是敢用轻量检索的前提）。
 | `score_threshold` | 0.6 | judge 迁移性准入门槛 |
 | `admit_failed` | full env: True | True = 失败 avoidance skill 以 `-spec_gap` 作为 utility；False = 仅成功轨迹参加准入 |
 | `capacity` / `dedup_sim` / `ema_alpha` | 64 / 0.9 / 0.1 | 池容量 / 近重复合并 / EMA 步长 |
+| `evict_policy` / `window_steps` | gate_ema / 48 | 满员淘汰策略：gate_ema（原始）/ lru（最久未检索）/ window（入池步 FIFO + 每步按年龄过期）；见 README "可选改进开关" |
+| `algorithm.seed.failed_skill_positive` | False | True = 失败轨迹 skill 写成正向规则，且准入对失败候选跳过 spec_gap 门控、排在成功候选之后；见 README "可选改进开关" |
 | `judge_model` / `judge_base_url` / `judge_api_key_env` | z-ai/glm-5.2 / openrouter / OPENROUTER_API_KEY | 缺 key ⇒ 准入静默停用 |
 | `embed_backend` / `embed_model` / `embed_url` | local / MiniLM / null | local 需 HF 缓存或可下载（或给本地路径）；warmup 失败即刻终止训练（见下方必读第 4 条） |
 
@@ -173,7 +175,9 @@ per-token gate 兜底（这是敢用轻量检索的前提）。
 ## 6. 监控指标（`seed/global_pool/*`）
 
 全部随训练 metrics 每步自动上报 wandb（pool 模式下出现）：`size` / `support_mean` /
-`gate_ema_mean`（池状态）；`candidates` / `candidates_success_filtered` /
+`gate_ema_mean` / `never_injected_ratio` / `evicted_total` / `expired`（池状态与淘汰：
+never_injected_ratio 是从未被检索条目的占比，lru 下满员后应持续下降；evicted_total 为累计
+满员淘汰数；expired 为 window 策略每步按年龄过期的条数）；`candidates` / `candidates_success_filtered` /
 `candidates_kept`（准入漏斗前段）；`admission_jobs_ok` / `admission_jobs_failed` /
 `admission_judged` / `admission_accepted` / `admission_added` / `judge_available`
 （准入漏斗后段，后台任务计数、下一步上报——**`admission_jobs_failed` 持续 >0 =

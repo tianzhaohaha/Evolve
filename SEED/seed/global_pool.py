@@ -6,6 +6,11 @@ ReasoningBank-style query-embedding similarity. Retrieval answers "is this
 skill relevant to the current task"; the per-token OPD gate in the loss stays
 the safety net for wrong retrievals; a single scalar gate EMA per skill is
 kept only to evict dead weight (it never participates in retrieval).
+
+Optional switches (defaults keep the original behaviour):
+``GlobalPoolConfig.evict_policy`` (gate_ema | lru | window) and
+``select_admission_candidates(failed_skill_positive=...)`` (failed-episode
+skills are positive rules and skip the spec-gap admission gate).
 """
 
 from __future__ import annotations
@@ -28,6 +33,37 @@ POOL_SCHEMA_VERSION = 1
 GLOBAL_POOL_SOURCES = ("copy", "pool")
 EMBED_BACKENDS = ("local", "http")
 
+_EVICT_NEUTRAL_PRIOR = 0.5  # never-injected entries compete as a coin flip, not as immortal
+
+
+def _admitted_step(entry: dict) -> int:
+    return int((entry.get("source") or {}).get("global_step", 0))
+
+
+def _evict_key_gate_ema(entry: dict):
+    # One utility scale for everyone: entries with a proven-bad gate EMA (below the
+    # neutral prior) go before never-injected ones, proven-good entries outlive them,
+    # and ties fall to the stalest entry. A tiered ordering ("injected always dies
+    # first") would churn validated skills while never-retrieved ones squat forever.
+    ema = entry["stats"]["gate_ema"]
+    return (_EVICT_NEUTRAL_PRIOR if ema is None else float(ema), entry["stats"]["last_used_step"])
+
+
+def _evict_key_lru(entry: dict):
+    # Least recently retrieved first; a never-retrieved entry carries its admission
+    # step, so dead weight nobody queries goes before anything in use.
+    return (entry["stats"]["last_used_step"], _admitted_step(entry))
+
+
+def _evict_key_window(entry: dict):
+    # Oldest admission first (FIFO); age expiry itself runs in GlobalSkillPool.expire().
+    return (_admitted_step(entry), entry["stats"]["last_used_step"])
+
+
+# Eviction key per policy: the entry with the smallest key leaves when the pool is full.
+EVICT_KEYS = {"gate_ema": _evict_key_gate_ema, "lru": _evict_key_lru, "window": _evict_key_window}
+EVICT_POLICIES = tuple(EVICT_KEYS)
+
 
 @dataclass(frozen=True)
 class GlobalPoolConfig:
@@ -39,6 +75,9 @@ class GlobalPoolConfig:
     ema_alpha: float = 0.1
     max_candidates_per_step: int = 16
     admit_failed: bool = False
+    # Improvement switch; the default keeps the original semantics bit for bit.
+    evict_policy: str = "gate_ema"  # gate_ema (original) | lru (least recently retrieved) | window (admission FIFO + age expiry)
+    window_steps: int = 48  # window policy only: entries admitted more than this many steps ago expire
     judge_model: str = "z-ai/glm-5.2"
     judge_base_url: str = "https://openrouter.ai/api/v1"
     judge_api_key_env: str = "OPENROUTER_API_KEY"
@@ -57,6 +96,10 @@ class GlobalPoolConfig:
             raise ValueError("global_pool.embed_backend='http' requires global_pool.embed_url.")
         if self.capacity <= 0:
             raise ValueError("global_pool.capacity must be positive.")
+        if self.evict_policy not in EVICT_POLICIES:
+            raise ValueError(f"global_pool.evict_policy must be one of {EVICT_POLICIES}, got {self.evict_policy!r}.")
+        if self.evict_policy == "window" and self.window_steps <= 0:
+            raise ValueError("global_pool.window_steps must be positive when evict_policy='window'.")
         return self
 
 
@@ -94,7 +137,7 @@ def compute_admission_utility(spec_gap: Optional[float], episode_success: Option
 
 
 def select_admission_candidates(
-    scored: Sequence[Tuple[dict, Optional[float]]], limit: int
+    scored: Sequence[Tuple[dict, Optional[float]]], limit: int, failed_skill_positive: bool = False
 ) -> List[dict]:
     """Pick admission candidates from (candidate, spec_gap) pairs.
 
@@ -104,14 +147,23 @@ def select_admission_candidates(
     their utility is ``-spec_gap``. A non-positive utility is dropped. Missing
     spec evidence passes through only for successful or unknown outcomes and
     ranks behind every scored candidate.
+
+    With ``failed_skill_positive`` the failed-episode skills are positive rules
+    (see ``SEEDEpisodeAnalyzer``): their gap on the failed trajectory is not a
+    quality signal in either direction, so they skip the gate and rank behind
+    every successful candidate — the judge is their only filter and the per-step
+    cap truncates them first.
     """
-    best: Dict[str, Tuple[float, dict]] = {}
+    best: Dict[str, Tuple[Tuple[int, float], dict]] = {}
     for candidate, gap in scored:
         episode_success = candidate.get("episode_success")
-        utility = compute_admission_utility(gap, episode_success)
-        if (gap is None and episode_success is False) or (utility is not None and utility <= 0):
-            continue
-        sort_key = float("-inf") if utility is None else utility
+        if failed_skill_positive and episode_success is False:
+            utility, tier = gap, 0
+        else:
+            utility, tier = compute_admission_utility(gap, episode_success), 1
+            if (gap is None and episode_success is False) or (utility is not None and utility <= 0):
+                continue
+        sort_key = (tier, float("-inf") if utility is None else utility)
         task_key = str(candidate.get("task_key", ""))
         current = best.get(task_key)
         if current is None or sort_key > current[0]:
@@ -185,9 +237,6 @@ class TextEmbedder:
         return pooled.cpu().numpy()
 
 
-_EVICT_NEUTRAL_PRIOR = 0.5  # never-injected entries compete as a coin flip, not as immortal
-
-
 @dataclass
 class RetrievalHit:
     skill_id: str
@@ -221,6 +270,8 @@ class GlobalSkillPool:
         self._entries: Dict[str, dict] = {}
         self._embeddings: Dict[str, np.ndarray] = {}
         self._lock = threading.Lock()
+        self._evicted_total = 0
+        self._expired_total = 0
         # load_existing=False keeps a fresh run (trainer.resume_mode=disable) from
         # hot-starting off a stale same-name pool; max_global_step trims a resumed
         # pool back to the checkpointed step (admission saves eagerly, so on a
@@ -262,11 +313,22 @@ class GlobalSkillPool:
             self._embeddings[skill_id] = embedding
             return "added"
 
-    def retrieve(self, query_embeddings: np.ndarray, task_keys: Sequence[str]) -> List[RetrievalResult]:
-        """Top-1 cosine result per query, excluding same-task entries."""
+    def retrieve(
+        self, query_embeddings: np.ndarray, task_keys: Sequence[str], *, current_step: Optional[int] = None
+    ) -> List[RetrievalResult]:
+        """Top-1 cosine results, excluding same-task entries.
+
+        Window expiry and LRU hit timestamps share the retrieval lock with add().
+        These policies require current_step; gate_ema retains read-only retrieval.
+        """
+        if current_step is None and self.config.evict_policy in ("window", "lru"):
+            raise ValueError(f"current_step is required for retrieval with evict_policy={self.config.evict_policy!r}.")
+        current_step = None if current_step is None else int(current_step)
         query_embeddings = np.asarray(query_embeddings, dtype=np.float32)
         results: List[RetrievalResult] = []
         with self._lock:
+            if current_step is not None:
+                self._expire_locked(current_step)
             for query, task_key in zip(query_embeddings, task_keys):
                 near = self._nearest_locked(query, exclude_task_key=str(task_key))
                 hit = None
@@ -276,6 +338,9 @@ class GlobalSkillPool:
                         text=self._entries[near[0]]["text"],
                         similarity=near[1],
                     )
+                    if self.config.evict_policy == "lru" and current_step is not None:
+                        stats = self._entries[near[0]]["stats"]
+                        stats["last_used_step"] = max(stats["last_used_step"], current_step)
                 results.append(
                     RetrievalResult(
                         hit=hit,
@@ -291,7 +356,9 @@ class GlobalSkillPool:
                 return
             stats = entry["stats"]
             stats["times_injected"] += 1
-            stats["last_used_step"] = int(global_step)
+            # LRU recency is recorded at retrieval, not when delayed scoring finishes.
+            if self.config.evict_policy != "lru":
+                stats["last_used_step"] = int(global_step)
             previous = stats["gate_ema"]
             alpha = float(self.config.ema_alpha)
             stats["gate_ema"] = float(gate_value) if previous is None else (1 - alpha) * float(previous) + alpha * float(gate_value)
@@ -306,31 +373,53 @@ class GlobalSkillPool:
                 best = (skill_id, similarity)
         return best
 
-    def _evict_locked(self) -> None:
-        # One utility scale for everyone: entries with a proven-bad gate EMA
-        # (below the neutral prior) go before never-injected ones, proven-good
-        # entries outlive them, and ties fall to the stalest entry. A tiered
-        # ordering ("injected always dies first") would churn validated skills
-        # while never-retrieved ones squat forever.
-        def _utility(item):
-            stats = item[1]["stats"]
-            ema = stats["gate_ema"]
-            return (_EVICT_NEUTRAL_PRIOR if ema is None else float(ema), stats["last_used_step"])
+    def expire(self, current_step: int) -> int:
+        """Window policy: drop entries admitted more than ``window_steps`` steps ago.
 
-        victim = min(self._entries.items(), key=_utility)[0]
+        Retrieval does not extend an entry's life (that is the difference from
+        ``lru``). Returns the number of expired entries; 0 under other policies.
+        """
+        with self._lock:
+            return self._expire_locked(current_step)
+
+    def _expire_locked(self, current_step: int) -> int:
+        """Shared by explicit maintenance and retrieval; caller holds self._lock."""
+        if self.config.evict_policy != "window":
+            return 0
+        cutoff = int(current_step) - int(self.config.window_steps)
+        stale = [sid for sid, entry in self._entries.items() if _admitted_step(entry) < cutoff]
+        for skill_id in stale:
+            self._entries.pop(skill_id)
+            self._embeddings.pop(skill_id, None)
+        self._expired_total += len(stale)
+        if stale:
+            logger.info("Global skill pool expired %s entries admitted before step %s.", len(stale), cutoff)
+        return len(stale)
+
+    def _evict_locked(self) -> None:
+        policy = self.config.evict_policy
+        key = EVICT_KEYS[policy]
+        victim = min(self._entries, key=lambda skill_id: key(self._entries[skill_id]))
         self._entries.pop(victim)
         self._embeddings.pop(victim, None)
-        logger.info("Global skill pool evicted skill_id=%s at capacity=%s.", victim, self.config.capacity)
+        self._evicted_total += 1
+        logger.info("Global skill pool evicted skill_id=%s (policy=%s) at capacity=%s.", victim, policy, self.config.capacity)
 
     def snapshot_metrics(self) -> Dict[str, float]:
         with self._lock:
             size = len(self._entries)
             emas = [e["stats"]["gate_ema"] for e in self._entries.values() if e["stats"]["gate_ema"] is not None]
             supports = [e["support"] for e in self._entries.values()]
+            never_injected = sum(1 for e in self._entries.values() if e["stats"]["times_injected"] == 0)
+            evicted_total = self._evicted_total
+            expired_total = self._expired_total
         return {
             "seed/global_pool/size": float(size),
             "seed/global_pool/gate_ema_mean": float(np.mean(emas)) if emas else 0.0,
             "seed/global_pool/support_mean": float(np.mean(supports)) if supports else 0.0,
+            "seed/global_pool/never_injected_ratio": float(never_injected) / size if size else 0.0,
+            "seed/global_pool/evicted_total": float(evicted_total),
+            "seed/global_pool/expired_total": float(expired_total),
         }
 
     def save(self, path: Optional[str] = None) -> None:
@@ -357,7 +446,9 @@ class GlobalSkillPool:
         """Restore entries and embeddings written by :meth:`save`.
 
         ``max_global_step`` drops entries admitted after that trainer step
-        (resume alignment). Any inconsistency — schema or embedder mismatch,
+        (resume alignment) and caps LRU recency at that boundary. This prevents
+        future timestamps from protecting entries; it does not reconstruct past usage.
+        Any inconsistency — schema or embedder mismatch,
         corrupt JSON, an .npy sidecar whose row count disagrees (the JSON write
         is atomic but the sidecar follows separately, so a kill between the two
         leaves them out of sync) — starts empty instead of raising: a damaged
@@ -387,6 +478,10 @@ class GlobalSkillPool:
                     entry for entry in entries
                     if int((entry.get("source") or {}).get("global_step", 0)) <= int(max_global_step)
                 ]
+                if self.config.evict_policy == "lru":
+                    for entry in entries:
+                        stats = entry["stats"]
+                        stats["last_used_step"] = min(int(stats["last_used_step"]), int(max_global_step))
             row_of = {skill_id: i for i, skill_id in enumerate(order)}
             with self._lock:
                 self._embeddings = {

@@ -59,6 +59,7 @@ actor_rollout_ref:
     opd_gen_loss_coef: 0.0 # second OPD channel distilling the general/global skill; 0 disables it
     opd_gen_gate_beta: null # sigmoid sharpness for the general-skill gate; null inherits opd_gate_beta
     opd_gate_eps: 0.0 # confidence floor shared by both OPD channels; tokens with |teacher gap| below it are ignored
+    opd_positive_only: False # both OPD channels: drop the loss on tokens with teacher gap <= 0 (never push against the teacher); denominator/metrics unchanged
     opd_gen_dominance: none # none | spec_first (down-weight general-skill tokens already covered by the specific-skill gate)
     ema_mode: "off" # "off" | ref | teacher | both: keep an fp32 EMA shadow of the actor (SEED/EMA_REPLAY_DESIGN.md); ref = KL reference from the shadow, teacher = OPD teacher scoring from the shadow
     ema_tau: 0.9 # shadow <- tau * shadow + (1 - tau) * actor once per training step; horizon ~ 1 / (1 - tau) steps
@@ -288,7 +289,9 @@ algorithm:
       capacity: 48 # reservoir size in groups (~100 MB each on the driver); bounds memory and sample age
     global_pool: # V1 global experience pool feeding the gen OPD channel (SEED/GLOBAL_SKILL_POOL_V1.md)
       source: copy # "copy" = gen distills a copy of the episode skill (placeholder); "pool" = retrieve from the judged cross-task pool
-      capacity: 64 # max stored skills; evicts the lowest gate-EMA entry when full
+      capacity: 64 # max stored skills; evicts one entry when full (see evict_policy)
+      evict_policy: gate_ema # gate_ema = original (lowest gate EMA, 0.5 prior for never-injected); lru = least recently retrieved; window = admission-step FIFO + age expiry
+      window_steps: 48 # window policy only: entries admitted more than this many trainer steps ago are expired every step
       score_threshold: 0.6 # min judge transferability score for admission
       min_sim: 0.35 # min query-skill cosine for retrieval; below it the trajectory's gen channel is skipped
       dedup_sim: 0.9 # near-duplicate cosine threshold; duplicates merge as support += 1
@@ -312,6 +315,7 @@ algorithm:
     failed_only: False # if True, analyze and apply teacher OPD only on failed episodes
     failed_only_after_steps: null # null -> use failed_only; otherwise analyze all episodes through this step, then failed episodes only
     failure_success_threshold: 1.0 # when episode_success is unavailable, episode_rewards >= this value counts as success
+    failed_skill_positive: False # failed episodes: write the episode_skill as the rule to follow instead of avoidance rules (learnable by the one-sided OPD loss); pool admission then skips the spec-gap gate for them
     analysis_backend: "openai"
     analysis_prompt_version: "seed" # "seed" uses original SEED; "seed_visual" uses the SEED prompt format with image observations
     analysis_num_workers: 8

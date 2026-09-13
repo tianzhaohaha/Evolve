@@ -710,6 +710,8 @@ class RayPPOTrainer:
             ema_alpha=float(_select("ema_alpha", defaults.ema_alpha)),
             max_candidates_per_step=int(_select("max_candidates_per_step", defaults.max_candidates_per_step)),
             admit_failed=bool(_select("admit_failed", defaults.admit_failed)),
+            evict_policy=str(_select("evict_policy", defaults.evict_policy)),
+            window_steps=int(_select("window_steps", defaults.window_steps)),
             judge_model=str(_select("judge_model", defaults.judge_model)),
             judge_base_url=str(_select("judge_base_url", defaults.judge_base_url)),
             judge_api_key_env=str(_select("judge_api_key_env", defaults.judge_api_key_env)),
@@ -722,6 +724,12 @@ class RayPPOTrainer:
 
     def _is_seed_global_pool_enabled(self) -> bool:
         return str(OmegaConf.select(self.config, "algorithm.seed.global_pool.source") or "copy") == "pool"
+
+    def _is_seed_failed_skill_positive(self) -> bool:
+        """Failed-episode skills are written as positive rules (analysis prompt) and skip the
+        spec-gap admission gate (global pool); one switch because the second only makes sense
+        with the first."""
+        return bool(OmegaConf.select(self.config, "algorithm.seed.failed_skill_positive") or False)
 
     def _seed_ema_uses(self, target: str) -> bool:
         """Whether the EMA shadow replaces the KL reference ('ref') or the OPD teacher base ('teacher')."""
@@ -1242,7 +1250,16 @@ class RayPPOTrainer:
                 embed_backend=str(OmegaConf.select(config, "algorithm.seed.global_pool.embed_backend") or "local"),
                 embed_url=OmegaConf.select(config, "algorithm.seed.global_pool.embed_url"),
                 capacity=int(OmegaConf.select(config, "algorithm.seed.global_pool.capacity") or 64),
+                evict_policy=str(OmegaConf.select(config, "algorithm.seed.global_pool.evict_policy") or "gate_ema"),
+                window_steps=int(OmegaConf.select(config, "algorithm.seed.global_pool.window_steps") or 48),
             ).validate()
+            if bool(OmegaConf.select(config, "algorithm.seed.failed_skill_positive")) and not bool(
+                OmegaConf.select(config, "algorithm.seed.global_pool.admit_failed")
+            ):
+                module_logger.warning(
+                    "algorithm.seed.failed_skill_positive=True but global_pool.admit_failed=False: failed-episode "
+                    "skills are dropped before admission, so the switch only changes the analysis prompt."
+                )
         ema_mode = normalize_ema_mode(OmegaConf.select(config, "actor_rollout_ref.actor.ema_mode"))
         if ema_mode != "off":
             ema_tau = float(OmegaConf.select(config, "actor_rollout_ref.actor.ema_tau") or 0.0)
@@ -2196,6 +2213,7 @@ class RayPPOTrainer:
                 skill_mode=self._get_seed_skill_mode(),
                 analysis_prompt_version=self._get_seed_analysis_prompt_version(),
                 include_episode_summary=include_episode_summary,
+                failed_skill_positive=self._is_seed_failed_skill_positive(),
             )
         return self._seed_analyzer
 
@@ -2303,6 +2321,11 @@ class RayPPOTrainer:
         ``analysis["global_skill"]`` (empty string = skip the gen channel) and
         collect this batch's local skills as admission candidates."""
         pool, judge, embedder = self._lazy_init_seed_global_pool()
+        current_step = int(self.global_steps)
+        expired_before = pool.snapshot_metrics()["seed/global_pool/expired_total"]
+        # Clean up before candidate deduplication; retrieve() rechecks under its lock
+        # in case a delayed admission lands while the queries are being prepared.
+        pool.expire(current_step)
         task_meta = self._build_seed_traj_task_meta(batch)
         traj_uids = list(episode_analysis.keys())
         queries: List[str] = []
@@ -2353,7 +2376,7 @@ class RayPPOTrainer:
         retrieval_results = None
         if len(pool) > 0:
             try:
-                retrieval_results = pool.retrieve(embedder.encode(queries), task_keys)
+                retrieval_results = pool.retrieve(embedder.encode(queries), task_keys, current_step=current_step)
             except Exception as exc:
                 module_logger.warning(
                     "SEED global-pool retrieval failed; skipping gen injection for this batch: %s", exc
@@ -2394,7 +2417,9 @@ class RayPPOTrainer:
             )
         self._dump_seed_global_pool_events(events)
 
-        metrics.update(pool.snapshot_metrics())
+        pool_metrics = pool.snapshot_metrics()
+        metrics.update(pool_metrics)
+        metrics["seed/global_pool/expired"] = pool_metrics["seed/global_pool/expired_total"] - expired_before
         metrics["seed/global_pool/retrieval_hit_ratio"] = (
             float(len(injections)) / len(traj_uids) if traj_uids else 0.0
         )
@@ -2481,7 +2506,9 @@ class RayPPOTrainer:
             scored = [(candidate, None) for candidate in candidates]
         # Best candidate per task, ranked by signed utility, then capped — see
         # select_admission_candidates for why batch-order truncation is biased.
-        kept = select_admission_candidates(scored, pool.config.max_candidates_per_step)
+        kept = select_admission_candidates(
+            scored, pool.config.max_candidates_per_step, failed_skill_positive=self._is_seed_failed_skill_positive()
+        )
         metrics["seed/global_pool/candidates_kept"] = float(len(kept))
         admission_stats = self._drain_seed_pool_admission_counters()
         for name in ("jobs_ok", "jobs_failed", "judged", "accepted", "added"):

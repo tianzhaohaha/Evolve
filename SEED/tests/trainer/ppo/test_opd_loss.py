@@ -95,3 +95,24 @@ def test_opd_loss_returns_zero_when_no_steps_are_selected():
 
     for value in outputs:
         torch.testing.assert_close(value, torch.tensor(0.0))
+
+
+def test_opd_loss_positive_only_drops_negative_gap_tokens_only_from_the_loss():
+    log_prob = torch.tensor([[-1.0, -1.0]], requires_grad=True)
+    teacher_log_prob = torch.tensor([[-0.5, -2.0]])  # gaps: +0.5 (endorsed), -1.0 (teacher less confident)
+    response_mask = torch.ones_like(log_prob)
+    kwargs = dict(log_prob=log_prob, teacher_log_prob=teacher_log_prob, response_mask=response_mask, gate_beta=1.0)
+
+    default = compute_opd_loss(**kwargs)
+    positive = compute_opd_loss(**kwargs, positive_only=True)
+
+    gate = torch.sigmoid(teacher_log_prob - log_prob.detach())
+    # Only the positive-gap token contributes, but the token-mean denominator still counts both.
+    expected = gate[0, 0] * (teacher_log_prob[0, 0] - log_prob[0, 0]) / 2
+    torch.testing.assert_close(positive[0], expected)
+    assert positive[0] > default[0]  # the dropped term was negative
+    for metric_default, metric_positive in zip(default[1:], positive[1:]):
+        torch.testing.assert_close(metric_default, metric_positive)  # metrics keep the full mask
+
+    positive[0].backward()
+    torch.testing.assert_close(log_prob.grad, torch.tensor([[-gate[0, 0] / 2, 0.0]]))
