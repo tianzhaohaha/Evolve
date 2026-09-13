@@ -31,6 +31,9 @@ logs/
 runs/
 ray_results/
 
+# Generated visualization results
+/Visual/figs/
+
 # Local session caches
 /SEED/exgentic_session_cache/
 
