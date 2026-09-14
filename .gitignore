@@ -13,6 +13,9 @@ venv/
 env/
 
 # Model checkpoints and weights
+# Machine-local model assets; never populate these directories through Git.
+/LLMs/
+/ckpt/
 checkpoints/
 **/checkpoints/
 *.pt
@@ -45,6 +48,8 @@ ray_results/
 
 # Local configuration
 .env
+.env.*
+!.env.example
 .vscode/
 .idea/
 .DS_Store
