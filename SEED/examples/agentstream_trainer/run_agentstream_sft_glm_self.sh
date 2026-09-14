@@ -28,7 +28,6 @@ set -a
 source "$AGENTSTREAM_CONFIG"
 set +a
 
-export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 
 mode="${1:-${AS_STREAM_MODE:-sequential}}"
 if (( $# > 0 )); then

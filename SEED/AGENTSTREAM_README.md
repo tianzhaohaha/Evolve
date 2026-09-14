@@ -304,6 +304,11 @@ RL_OPD 日志中 `seed/analysis_num_requests`、`seed/teacher_batch_size` 和
 
 - swebench / hle / browsecompplus 为 Tier 2/3：分别有 Docker 并发、LLM judge 成本/噪声、
   检索服务依赖问题；建议 Tier 1（bfcl / tau2 / appworld）先全链路打通。
+- tau2 撞到 SEED 步数上限时，`SessionDriver._finalize` 先经 `BaseProxySession.stop()`
+  让 tau2 runner 以 agent-stop 收尾并写出结果，再 `score()`（否则 runner 仍在等下一动作，
+  评分会等 30s 后因结果缺失失败，奖励恒为 0）。评分失败按 `<slug>_score_error_rate` 上报。
+- browsecompplus 检索服务可纯 CPU 运行（`AGENTSTREAM_RETRIEVER_DEVICE=cpu`）：同一索引，
+  编码器 bf16；并发查询在 `Retriever` 内合并为一次前向。
 - `on_exhausted=cycle` 下 verl 以 `trainer.total_epochs` 计步，流长度与总步数解耦——
   正式实验需按流长度换算 `TOTAL_EPOCHS`（`stream_length = Σ num_tasks × block_passes`，
   每 step 消耗 `train_batch_size` 个流位置）。

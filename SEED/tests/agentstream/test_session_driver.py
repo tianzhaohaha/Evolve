@@ -21,11 +21,14 @@ step-budget exhaustion, unknown actions and per-benchmark observation caps.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from agent_system.environments.env_package.agentstream.exgentic_client import BenchmarkHub, SessionDriver
 
 SLUG = "exgentic.testing.benchmark:TestBenchmark"
+PROXY_SLUG = "tests.agentstream.proxy_benchmark:ProxyBenchmark"
 
 
 @pytest.fixture
@@ -87,3 +90,27 @@ def test_observation_cap_applies_per_episode(hub, driver):
     assert _reset(hub, driver)["observation"].startswith("st\n...[observation truncated]")
     driver.set_episode_limits(observation_max_chars=4096)
     assert _reset(hub, driver)["observation"] == "start"
+
+
+def test_step_budget_stops_proxy_runner_before_scoring(exgentic_root, tmp_path):
+    """tau2-style sessions: the budget must end the dialogue, then score it.
+
+    Without ``SessionDriver._stop_proxy_runner`` the runner is still waiting
+    for an action when ``score()`` runs, which fails (zero reward) although
+    the finished dialogue would have scored.
+    """
+    hub = BenchmarkHub(exgentic_root, [PROXY_SLUG], {}, runner=None, output_dir=str(tmp_path / "h"), run_id="p")
+    driver = SessionDriver(exgentic_root, runner=None, output_dir=str(tmp_path / "w"), run_id="p", max_steps=2)
+    try:
+        payload = driver.reset(PROXY_SLUG, "task-1", {}, hub.session_kwargs(PROXY_SLUG, "task-1"))
+        assert payload["observation"] == "hello"
+        obs, done, _ = driver.step({"name": "good", "arguments": {}})
+        assert (obs, done) == ("reply 1", False)
+        started = time.monotonic()
+        _, done, info = driver.step({"name": "good", "arguments": {}})
+        assert done and info["limit_reached"] and info["won"] and info["score"] == 1.0
+        assert "score_error" not in info
+        assert time.monotonic() - started < 5.0
+    finally:
+        driver.close()
+        hub.close()

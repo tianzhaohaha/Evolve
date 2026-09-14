@@ -30,10 +30,11 @@ SEED 论文流程与脚本阶段的对应关系：
    源码后按文末"重装 venv"步骤同步。
 2. `.env` 里提供 `HF_TOKEN`（`cais/hle` 为 gated 数据集）和判分器用的 API key
    （`AGENTSTREAM_API_MODEL`，默认与 tau2 用户模拟器相同）。
-3. BrowseComp-Plus 的共享检索服务由 Stage-3 运行脚本自动拉起（在
-   `AGENTSTREAM_RETRIEVER_GPU`（默认 0）上，已就绪则复用，pid/日志在
-   `logs/agentstream/browsecomp_retriever_<port>.{pid,log}`）；如需手动或在远程机起：
-   `GPU=0 PORT=60100 bash examples/agentstream_trainer/serve_browsecomp_retriever.sh`，
+3. BrowseComp-Plus 的共享检索服务由 Stage-3 运行脚本自动拉起（设备由
+  `AGENTSTREAM_RETRIEVER_DEVICE` 决定：GPU 卡号或 `cpu`，默认 `cpu`；已就绪则复用，
+   pid/日志在 `logs/agentstream/browsecomp_retriever_<port>.{pid,log}`）。Stage 1 的
+   benchmark 列表含 browsecompplus 时需先手动起服务；手动或在远程机起：
+   `DEVICE=cpu PORT=60100 bash examples/agentstream_trainer/serve_browsecomp_retriever.sh`，
    地址写入 `AGENTSTREAM_BROWSECOMP_RETRIEVER_URL`（默认 `http://127.0.0.1:60100`）。
 4. `AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus` 并提升
    `AGENTSTREAM_RUN_VERSION`。步数 / 观测长度上限已在
@@ -148,7 +149,7 @@ DNS 或外网故障只影响上传，本地 offline 记录和训练本身会继�
 只改 `agentstream_full.env` 里的 `AGENTSTREAM_BASE_MODEL_NAME`（可用名称见该文件注释），tag、数据目录、SFT 模型目录、实验名全部自动派生。模型需已下载到 `$AGENTSTREAM_LLMS_ROOT/<模型名>`（pipeline 不会自动下载），例如：
 
 ```bash
-HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-8B \
+huggingface-cli download Qwen/Qwen3-8B \
   --local-dir /home/jcgu/qyliu/LLMs/Qwen3-8B
 ```
 

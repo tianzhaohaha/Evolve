@@ -239,8 +239,10 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
     def _process_batch(self, batch_idx, total_batch_list, total_infos, success):
         """Per-episode success plus per-benchmark breakdown.
 
-        Emits ``success_rate`` (required by the base contract) and
-        ``<slug>_success_rate`` / ``<slug>_score`` so validation curves per
+        Emits ``success_rate`` (required by the base contract),
+        ``<slug>_success_rate`` / ``<slug>_score`` and ``<slug>_score_error_rate``
+        (episodes whose benchmark scoring failed, counted as zero reward) so
+        validation curves per
         benchmark are logged at every trainer.test_freq, which is exactly the
         forgetting / transfer measurement for sequential and interleaved
         streams. The inherited ``success_evaluator`` drives this hook.
@@ -257,4 +259,5 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
                 score = info.get("score", None)
                 if score is not None:
                     success[f"{slug}_score"].append(float(score))
+                success[f"{slug}_score_error_rate"].append(float(bool(info.get("score_error"))))
                 return

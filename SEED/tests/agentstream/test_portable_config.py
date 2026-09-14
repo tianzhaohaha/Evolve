@@ -19,7 +19,7 @@ VARIABLES = (
     "AGENTSTREAM_BASE_MODEL_PATH", "AGENTSTREAM_SFT_MODEL_DIR",
     "AGENTSTREAM_SFT_DATA_DIR", "EMBED_MODEL_PATH", "TMPDIR", "RAY_TMPDIR",
     "AGENTSTREAM_RL_GPUS", "AGENTSTREAM_RL_N_GPUS", "AGENTSTREAM_SFT_GPUS",
-    "AGENTSTREAM_SFT_NPROC", "AGENTSTREAM_POLICY_GPU", "AGENTSTREAM_RETRIEVER_GPU",
+    "AGENTSTREAM_SFT_NPROC", "AGENTSTREAM_POLICY_GPU", "AGENTSTREAM_RETRIEVER_DEVICE",
     "AGENTSTREAM_RL_TRAIN_DATA_SIZE", "AGENTSTREAM_RL_EPOCHS",
     "AGENTSTREAM_BENCHMARKS",
 )
@@ -68,7 +68,7 @@ class PortableConfigTests(unittest.TestCase):
             self.assertEqual(values[key], "0,1")
         for key in ("AGENTSTREAM_RL_N_GPUS", "AGENTSTREAM_SFT_NPROC", "AGENTSTREAM_RL_TRAIN_DATA_SIZE"):
             self.assertEqual(values[key], "2")
-        self.assertEqual(values["AGENTSTREAM_RETRIEVER_GPU"], "1")
+        self.assertEqual(values["AGENTSTREAM_RETRIEVER_DEVICE"], "cpu")
         self.assertEqual(values["AGENTSTREAM_RL_EPOCHS"], "144")
         self.assertEqual(values["AGENTSTREAM_BENCHMARKS"], "bfcl,tau2,browsecompplus")
 

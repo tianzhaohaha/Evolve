@@ -26,12 +26,12 @@ fi
 hostport="${url#*://}"; hostport="${hostport%%/*}"
 host="${hostport%%:*}"
 port="${hostport##*:}"; [[ "$port" == "$host" ]] && port=80
-gpu="${AGENTSTREAM_RETRIEVER_GPU:-0}"
+device="${AGENTSTREAM_RETRIEVER_DEVICE:-0}"   # cpu | GPU index
 
 if [[ "${AGENTSTREAM_RETRIEVER_AUTO_START:-1}" != "1" ]] \
    || [[ "$host" != "127.0.0.1" && "$host" != "localhost" && "$host" != "0.0.0.0" ]]; then
     echo "BrowseComp-Plus retriever not reachable at $url (auto-start disabled or remote host)." >&2
-    echo "Start it manually: GPU=$gpu PORT=$port bash $SCRIPT_DIR/serve_browsecomp_retriever.sh" >&2
+    echo "Start it manually: DEVICE=$device PORT=$port bash $SCRIPT_DIR/serve_browsecomp_retriever.sh" >&2
     exit 1
 fi
 
@@ -46,8 +46,8 @@ if [[ -s "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
     echo "Found starting retriever (pid $pid); waiting for $url/health"
 else
     rm -f "$pid_file"
-    echo "Starting BrowseComp-Plus retriever on GPU $gpu at $url (log: $log_file)"
-    GPU="$gpu" HOST="$host" PORT="$port" \
+    echo "Starting BrowseComp-Plus retriever on device $device at $url (log: $log_file)"
+    DEVICE="$device" HOST="$host" PORT="$port" \
         nohup bash "$SCRIPT_DIR/serve_browsecomp_retriever.sh" >"$log_file" 2>&1 &
     pid=$!
     echo "$pid" >"$pid_file"

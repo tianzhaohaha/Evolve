@@ -27,7 +27,6 @@ set -a
 source "$AGENTSTREAM_CONFIG"
 set +a
 
-export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 
 : "${CONDA_ENV:=seed}"
 : "${VLLM_CONDA_ENV:=$CONDA_ENV}"

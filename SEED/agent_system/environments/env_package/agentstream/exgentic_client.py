@@ -41,6 +41,11 @@ from .as_config import DEFAULT_OBSERVATION_MAX_CHARS
 
 _BOOTSTRAPPED: Dict[str, bool] = {}
 
+# Bounded wait for a proxy-style benchmark runner (tau2) to evaluate and write
+# its results after being told to stop; must stay well below
+# env.agentstream.step_timeout_s (600s) so the Ray worker is never killed here.
+PROXY_STOP_TIMEOUT_S = 120.0
+
 
 def bootstrap_exgentic(exgentic_root: str) -> None:
     """Make the bundled exgentic package importable (idempotent)."""
@@ -371,11 +376,14 @@ class SessionDriver:
         # gets the "[invalid action]" hint below and keeps its step budget).
         if action is not None and observation is None and not step_error:
             done = True
-        if self._steps >= self._max_steps:
-            done = True
-
-        if done:
-            return self._finalize(limit_reached=self._steps >= self._max_steps)
+        limit_reached = self._steps >= self._max_steps
+        if limit_reached and not done:
+            # Cut by SEED's budget while the benchmark is still live: a proxy
+            # runner (tau2) is parked waiting for the next action and has to be
+            # stopped before it can be scored.
+            self._stop_proxy_runner()
+        if done or limit_reached:
+            return self._finalize(limit_reached)
 
         if step_error:
             obs_text = f"[environment error] {step_error}. Choose a different action."
@@ -411,6 +419,26 @@ class SessionDriver:
             return None
         except Exception:
             return None
+
+    def _stop_proxy_runner(self) -> None:
+        """End a proxy-style session (tau2) whose runner still waits for an action.
+
+        Such sessions score from a results file their benchmark runner writes
+        only once its own loop terminates; scoring while the runner is parked
+        on the action queue waits 30s and then fails on the missing file (zero
+        reward, ``score_error``). ``BaseProxySession.stop`` makes the runner end
+        the dialogue as an agent stop and waits for it to write the results.
+        Ordinary sessions have no ``stop`` (the runner proxy raises
+        AttributeError, so ``getattr`` yields None): no-op. A stop timeout is
+        logged and left for ``score()`` to report.
+        """
+        stop = getattr(self._session, "stop", None)
+        if stop is None:
+            return
+        try:
+            stop(PROXY_STOP_TIMEOUT_S)
+        except TimeoutError as exc:
+            print(f"[SessionDriver] {self._slug}/{self._task_id}: {exc}")
 
     def _finalize(self, limit_reached: bool) -> Tuple[str, bool, Dict[str, Any]]:
         success = False

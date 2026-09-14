@@ -69,6 +69,21 @@ class BaseProxySession(Session, ABC):
             "score": max(0.0, 1.0 - (self.step_count - 1) * 0.1),
         }
 
+    def stop(self, timeout: float = 0.0) -> None:
+        """Ask the runner to end the episode as an agent stop, keeping the session scoreable.
+
+        Posts the same DONE sentinel as ``close()``: the proxy agent answers the
+        runner with its stop message, and the runner evaluates, writes its
+        results and finally posts a terminal ``None`` observation. With
+        ``timeout > 0`` this waits (bounded, ``TimeoutError`` on expiry) for that
+        terminal observation so a following ``score()`` finds the results. For
+        external drivers that cut an episode at their own step budget while the
+        runner is still waiting for the next action.
+        """
+        self._from_agent.put(DONE)
+        if timeout > 0:
+            _bounded_get(self._to_agent, timeout, "the runner to finish after stop()")
+
     def close(self):
         self.completed = True
         try:
