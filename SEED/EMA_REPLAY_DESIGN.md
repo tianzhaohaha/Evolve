@@ -68,12 +68,6 @@ off-policy 由 PPO 现有 ratio + dual clip 处理，回放行的 `old_log_probs
 `replay/frac_of_batch`、`replay/skipped_key_mismatch`、`timing_s/replay`。回放健康度看全局 `actor/pg_clipfrac`
 的前后变化。
 
-每次调用 `_mix_replay` 都记录 `skipped_key_mismatch` 与 `frac_of_batch`：空池为 0/0，合并失败为
-1/0，合并成功为 0/正数。旧版仅在失败时记录前者、成功时记录后者，W&B 上恒为 1 的失败曲线
-不代表每步失败，正的比例曲线也不代表每步成功；需按原始 step 对齐判断。`sampled_groups` 只说明
-抽样成功，不说明参与更新。`frac_of_batch = 1 - live_samples / padded_merged_samples` 包含补齐影响，
-不是严格的回放 token 比例。
-
 ## 4. 配置链路
 
 `agentstream_full.env`（`AGENTSTREAM_SEED_EMA_MODE` / `_EMA_TAU` / `_REPLAY_ENABLE` / `_REPLAY_GROUPS_PER_STEP` /

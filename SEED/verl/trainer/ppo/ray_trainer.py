@@ -759,10 +759,6 @@ class RayPPOTrainer:
         metrics.update(replay.metrics())
         metrics["replay/sampled_groups"] = float(len(sampled))
         metrics["replay/sampled_samples"] = float(sum(len(group) for group in sampled))
-        # Log both outcomes every step: sparse failure-only/success-only series
-        # otherwise hide skipped steps in dashboards such as W&B.
-        metrics["replay/skipped_key_mismatch"] = 0.0
-        metrics["replay/frac_of_batch"] = 0.0
         if not sampled:
             return batch
         merged, reason = merge_for_update(batch, sampled)
