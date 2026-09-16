@@ -57,7 +57,10 @@ off-policy 由 PPO 现有 ratio + dual clip 处理，回放行的 `old_log_probs
 - 写入用蓄水池采样：前 `capacity` 组直接存，之后第 n 组以 capacity/n 的概率顶替随机位置。缓冲区始终 ≈ 整条流
   的均匀子集，各域按出现比例自然保留，不用标签（task-free）。只存 advantage 非全零的组。
 - 每步顺序固定：`sample()` → `add_batch(live)` → 拼接，本步的组不会被本步回放。
-- 拼接（`merge_for_update` + `RayPPOTrainer._mix_replay`）：键集或张量形状不一致则跳过本步并 warning（回放绝不
+- 拼接（`merge_for_update` + `RayPPOTrainer._mix_replay`）：先剔除 rollout loop 广播到每个样本上的批级指标列
+  （`success_rate`、`<slug>_success_rate`、`<slug>_score`、`<slug>_score_error_rate`，它们只用于日志且键集随本步
+  含有的 benchmark 变化，interleaved 流下曾让每步拼接都失败），再比较键集与形状，不一致则跳过本步并 warning 给出
+  具体差异（回放绝不
   拖垮主更新）；`DataProto.concat` 后复用现有 `adjust_batch` 补齐整除（它与原流程一样使用全局 numpy 随机数）；用回放专用 Generator 全局置换后复用现有 `_balance_batch`（否则回放行全落
   到最后一张卡的末尾 mini batch）；重算 `global_token_num`。合并后的 batch 只交给 `update_actor`，活 batch
   原样留给所有下游日志 / 指标。存入的组 `meta_info` 置空，不引用活 batch 的逐步 payload。

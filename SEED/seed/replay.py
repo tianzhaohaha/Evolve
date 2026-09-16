@@ -17,6 +17,16 @@ from verl.protocol import DataProto
 
 # Trainer-internal bookkeeping column that must not survive into stored groups.
 _TRANSIENT_NON_TENSOR_KEYS = ("_batch_source_idx",)
+# Batch-level episode metrics that the rollout loop broadcasts onto every sample
+# (``success_evaluator`` output: success_rate, <slug>_success_rate, <slug>_score,
+# <slug>_score_error_rate). They only feed logging, and their key set follows the
+# benchmarks present in a step, so they are kept out of stored groups and of the
+# merge; the actor update never reads them.
+_EPISODE_METRIC_SUFFIXES = ("success_rate", "_score", "_score_error_rate")
+
+
+def _is_replayable_column(key: str) -> bool:
+    return key not in _TRANSIENT_NON_TENSOR_KEYS and not key.endswith(_EPISODE_METRIC_SUFFIXES)
 
 
 def split_groups(batch: DataProto) -> List[DataProto]:
@@ -25,8 +35,7 @@ def split_groups(batch: DataProto) -> List[DataProto]:
     groups = []
     for uid in dict.fromkeys(uids.tolist()):
         group = batch.select_idxs(np.flatnonzero(uids == uid))
-        for key in _TRANSIENT_NON_TENSOR_KEYS:
-            group.non_tensor_batch.pop(key, None)
+        group.non_tensor_batch = {k: v for k, v in group.non_tensor_batch.items() if _is_replayable_column(k)}
         group.meta_info = {}  # never keep a reference to the live batch's per-step payloads
         groups.append(group)
     return groups
@@ -40,7 +49,7 @@ def has_policy_signal(group: DataProto) -> bool:
 def _live_view(live: DataProto) -> DataProto:
     return DataProto(
         batch=live.batch,
-        non_tensor_batch={k: v for k, v in live.non_tensor_batch.items() if k not in _TRANSIENT_NON_TENSOR_KEYS},
+        non_tensor_batch={k: v for k, v in live.non_tensor_batch.items() if _is_replayable_column(k)},
         meta_info=dict(live.meta_info),
     )
 

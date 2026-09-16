@@ -8,7 +8,7 @@ from seed.replay import ReplayBuffer, describe_mismatch, has_policy_signal, merg
 from verl.protocol import DataProto
 
 
-def _batch(uids, adv_scale=1.0, extra_key=False, adv_width=2):
+def _batch(uids, adv_scale=1.0, extra_key=False, adv_width=2, slug="bfcl"):
     n = len(uids)
     tensors = {
         "input_ids": torch.arange(n * 4).view(n, 4),
@@ -17,9 +17,15 @@ def _batch(uids, adv_scale=1.0, extra_key=False, adv_width=2):
     }
     if extra_key:
         tensors["extra"] = torch.zeros(n, 1)
+    # Batch-level metrics the rollout loop broadcasts onto every sample; their
+    # names depend on which benchmarks the step happened to contain.
     non_tensors = {
         "uid": np.array(uids, dtype=object),
         "_batch_source_idx": np.arange(n, dtype=np.int64),
+        "success_rate": np.full(n, 0.5),
+        f"{slug}_success_rate": np.full(n, 0.5),
+        f"{slug}_score": np.full(n, 0.5),
+        f"{slug}_score_error_rate": np.zeros(n),
     }
     return DataProto.from_dict(tensors=tensors, non_tensors=non_tensors, meta_info={"global_token_num": [4] * n})
 
@@ -29,7 +35,7 @@ def test_split_groups_preserves_order_and_strips_transient_keys():
     groups = split_groups(batch)
     assert [g.non_tensor_batch["uid"][0] for g in groups] == ["b", "a", "c"]
     assert [len(g) for g in groups] == [2, 2, 1]
-    assert all("_batch_source_idx" not in g.non_tensor_batch and g.meta_info == {} for g in groups)
+    assert all(set(g.non_tensor_batch) == {"uid"} and g.meta_info == {} for g in groups)
     torch.testing.assert_close(groups[0].batch["input_ids"], batch.batch["input_ids"][[0, 2]])
 
 
@@ -73,6 +79,15 @@ def test_merge_concatenates_without_mutating_live_batch():
     merged.meta_info["global_token_num"] = [1]
     assert live.meta_info["global_token_num"] == [4, 4, 4]
     assert list(merged.non_tensor_batch["uid"]) == ["x", "x", "y", "r", "r"]
+
+
+def test_merge_ignores_per_step_episode_metric_columns():
+    """Interleaved streams: a tau2-only step must still replay groups stored on a bfcl step."""
+    live = _batch(["x"], slug="tau2")
+    merged, reason = merge_for_update(live, split_groups(_batch(["r"], slug="bfcl")))
+    assert reason == "" and len(merged) == 2
+    assert set(merged.non_tensor_batch) == {"uid"}
+    assert "tau2_score" in live.non_tensor_batch  # the live batch keeps its logging columns
 
 
 def test_merge_refuses_mismatched_keys_or_shapes():
