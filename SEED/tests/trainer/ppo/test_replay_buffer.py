@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from seed.replay import ReplayBuffer, has_policy_signal, merge_for_update, split_groups
+from seed.replay import ReplayBuffer, describe_mismatch, has_policy_signal, merge_for_update, split_groups
 from verl.protocol import DataProto
 
 
@@ -65,7 +65,8 @@ def test_reservoir_keeps_every_group_with_equal_probability():
 
 def test_merge_concatenates_without_mutating_live_batch():
     live = _batch(["x", "x", "y"])
-    merged = merge_for_update(live, split_groups(_batch(["r", "r"])))
+    merged, reason = merge_for_update(live, split_groups(_batch(["r", "r"])))
+    assert reason == ""
     assert len(merged) == 5
     assert "_batch_source_idx" not in merged.non_tensor_batch
     assert "_batch_source_idx" in live.non_tensor_batch and len(live) == 3
@@ -76,8 +77,11 @@ def test_merge_concatenates_without_mutating_live_batch():
 
 def test_merge_refuses_mismatched_keys_or_shapes():
     live = _batch(["x"])
-    assert merge_for_update(live, split_groups(_batch(["r"], extra_key=True))) is None
-    assert merge_for_update(live, split_groups(_batch(["r"], adv_width=3))) is None
+    extra_key = split_groups(_batch(["r"], extra_key=True))
+    wider_adv = split_groups(_batch(["r"], adv_width=3))
+    assert merge_for_update(live, extra_key) == (None, "group 0 tensor keys: only in live=[], only in replay=['extra']")
+    assert merge_for_update(live, wider_adv) == (None, "group 0 tensor 'advantages' shape: live=(2,), replay=(3,)")
+    assert describe_mismatch(live, split_groups(_batch(["r"]))) == ""
 
 
 def test_invalid_configuration_is_rejected():
@@ -87,7 +91,8 @@ def test_invalid_configuration_is_rejected():
         ReplayBuffer(capacity=1, groups_per_step=0)
 
 
-def test_mix_replay_pads_permutes_and_keeps_live_batch_intact():
+@pytest.mark.parametrize("mismatch_kwargs", [{"extra_key": True}, {"adv_width": 3}])
+def test_mix_replay_pads_permutes_and_keeps_live_batch_intact(mismatch_kwargs, caplog):
     from omegaconf import OmegaConf
 
     from verl.trainer.ppo.ray_trainer import RayPPOTrainer
@@ -116,6 +121,8 @@ def test_mix_replay_pads_permutes_and_keeps_live_batch_intact():
     first, metrics = _batch(["a", "a", "b"]), {}
     assert stub._mix_replay(first, metrics) is first  # empty buffer: nothing to mix
     assert metrics["replay/buffer_groups"] == 2.0 and metrics["replay/sampled_groups"] == 0.0
+    assert metrics["replay/skipped_key_mismatch"] == 0.0
+    assert metrics["replay/frac_of_batch"] == 0.0
 
     second, metrics = _batch(["c", "c", "c"]), {}
     merged = stub._mix_replay(second, metrics)
@@ -126,5 +133,22 @@ def test_mix_replay_pads_permutes_and_keeps_live_batch_intact():
     assert merged.meta_info["global_token_num"] == [4] * len(merged)
     assert second.meta_info["global_token_num"] == [4, 4, 4]
     assert 0.0 < metrics["replay/frac_of_batch"] < 1.0
+    assert metrics["replay/skipped_key_mismatch"] == 0.0
     uids = set(merged.non_tensor_batch["uid"])
     assert "c" in uids and (uids & {"a", "b"})
+
+    # A failed merge must explicitly log zero replay participation, even though
+    # sampling succeeded. Zero advantages keep this incompatible group out of
+    # the reservoir so the following step deterministically recovers.
+    third, metrics = _batch(["d", "d"], adv_scale=0.0, **mismatch_kwargs), {}
+    assert stub._mix_replay(third, metrics) is third
+    assert metrics["replay/sampled_groups"] == 1.0
+    assert metrics["replay/sampled_samples"] > 0.0
+    assert metrics["replay/skipped_key_mismatch"] == 1.0
+    assert metrics["replay/frac_of_batch"] == 0.0
+    assert "skipping replay this step" in caplog.text
+
+    fourth, metrics = _batch(["e", "e"]), {}
+    assert stub._mix_replay(fourth, metrics) is not fourth
+    assert metrics["replay/skipped_key_mismatch"] == 0.0
+    assert 0.0 < metrics["replay/frac_of_batch"] < 1.0

@@ -8,7 +8,7 @@ identity is used anywhere; the reservoir keeps every part of the stream
 represented in proportion on its own.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -37,28 +37,51 @@ def has_policy_signal(group: DataProto) -> bool:
     return bool(torch.any(group.batch["advantages"] != 0))
 
 
-def merge_for_update(live: DataProto, replay: List[DataProto]) -> Optional[DataProto]:
-    """Concatenate replay groups behind the live batch for the actor update.
-
-    Returns None when the groups cannot be concatenated (different key sets or
-    tensor shapes); replay must never take the main update down with it. The
-    live batch is not mutated: the merged proto carries a shallow copy of its
-    meta_info.
-    """
-    live_view = DataProto(
+def _live_view(live: DataProto) -> DataProto:
+    return DataProto(
         batch=live.batch,
         non_tensor_batch={k: v for k, v in live.non_tensor_batch.items() if k not in _TRANSIENT_NON_TENSOR_KEYS},
         meta_info=dict(live.meta_info),
     )
-    tensor_keys = set(live_view.batch.keys())
-    non_tensor_keys = set(live_view.non_tensor_batch.keys())
-    for group in replay:
-        if set(group.batch.keys()) != tensor_keys or set(group.non_tensor_batch.keys()) != non_tensor_keys:
-            return None
+
+
+def describe_mismatch(live: DataProto, replay: List[DataProto]) -> str:
+    """Name what keeps ``replay`` from being concatenated behind ``live`` ('' if nothing does).
+
+    Compared per stored group against the live batch: tensor / non-tensor key
+    sets, then per-key shapes beyond the batch dimension.
+    """
+    live_view = _live_view(live)
+    for i, group in enumerate(replay):
+        for kind, a, b in (
+            ("tensor", live_view.batch, group.batch),
+            ("non-tensor", live_view.non_tensor_batch, group.non_tensor_batch),
+        ):
+            a_keys, b_keys = set(a.keys()), set(b.keys())
+            if a_keys != b_keys:
+                return f"group {i} {kind} keys: only in live={sorted(a_keys - b_keys)}, only in replay={sorted(b_keys - a_keys)}"
+            for key in a_keys:
+                a_shape, b_shape = tuple(a[key].shape[1:]), tuple(b[key].shape[1:])
+                if a_shape != b_shape:
+                    return f"group {i} {kind} '{key}' shape: live={a_shape}, replay={b_shape}"
+    return ""
+
+
+def merge_for_update(live: DataProto, replay: List[DataProto]) -> Tuple[Optional[DataProto], str]:
+    """Concatenate replay groups behind the live batch for the actor update.
+
+    Returns ``(merged, "")``, or ``(None, reason)`` when the groups cannot be
+    concatenated (key sets, shapes, or a concat error); replay must never take
+    the main update down with it. The live batch is not mutated: the merged
+    proto carries a shallow copy of its meta_info.
+    """
+    reason = describe_mismatch(live, replay)
+    if reason:
+        return None, reason
     try:
-        return DataProto.concat([live_view, *replay])
-    except (RuntimeError, ValueError):
-        return None
+        return DataProto.concat([_live_view(live), *replay]), ""
+    except (RuntimeError, ValueError) as exc:
+        return None, f"concat failed: {type(exc).__name__}: {exc}"
 
 
 class ReplayBuffer:

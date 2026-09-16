@@ -759,11 +759,15 @@ class RayPPOTrainer:
         metrics.update(replay.metrics())
         metrics["replay/sampled_groups"] = float(len(sampled))
         metrics["replay/sampled_samples"] = float(sum(len(group) for group in sampled))
+        # Log both outcomes every step: sparse failure-only/success-only series
+        # otherwise hide skipped steps in dashboards such as W&B.
+        metrics["replay/skipped_key_mismatch"] = 0.0
+        metrics["replay/frac_of_batch"] = 0.0
         if not sampled:
             return batch
-        merged = merge_for_update(batch, sampled)
+        merged, reason = merge_for_update(batch, sampled)
         if merged is None:
-            module_logger.warning("Replay groups carry a different key set than the live batch; skipping replay this step.")
+            module_logger.warning("Replay groups cannot be merged with the live batch; skipping replay this step (%s).", reason)
             metrics["replay/skipped_key_mismatch"] = 1.0
             return batch
         merged = adjust_batch(self.config, merged)
