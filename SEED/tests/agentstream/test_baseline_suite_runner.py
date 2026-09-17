@@ -12,7 +12,7 @@ import unittest
 
 SEED_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path("examples/agentstream_trainer")
-BASELINES = ["vanilla", "grpo", "seed", "sdar", "opsd", "rlsd"]
+BASELINES = ["vanilla", "grpo", "grpo_base", "seed", "sdar", "opsd", "rlsd"]
 
 
 class BaselineSuiteRunnerTests(unittest.TestCase):

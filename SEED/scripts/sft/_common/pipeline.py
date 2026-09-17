@@ -961,14 +961,17 @@ def build_candidate_skill_record(
     *,
     trajectory: Dict[str, Any],
     skill_endpoint: ChatEndpoint,
+    skill_mode: str = "episode_only",
+    max_step_skills: int = 0,
 ) -> Dict[str, Any]:
+    """Annotate one trajectory with the same analyzer prompt Stage 3 uses for ``skill_mode``."""
     from seed.analysis import SEEDEpisodeAnalyzer
 
     analyzer = SEEDEpisodeAnalyzer(
         backend="openai",
         max_completion_tokens=skill_endpoint.max_completion_tokens,
-        max_step_skills_per_traj=0,
-        skill_mode="episode_only",
+        max_step_skills_per_traj=max_step_skills,
+        skill_mode=skill_mode,
     )
     skill_client = OpenAITextClient(skill_endpoint)
     skill_id = f"{trajectory['task_id']}:{trajectory['rollout_id']}"
@@ -983,7 +986,7 @@ def build_candidate_skill_record(
     )
     raw_output, api_error = skill_client.complete(normalize_messages(prompt))
     parse_ok = False
-    parsed: Dict[str, Any] = {"episode_summary": "", "episode_skill": ""}
+    parsed: Dict[str, Any] = {"episode_summary": "", "episode_skill": "", "step_skills": {}}
     parse_error = None
     if raw_output:
         try:
@@ -1004,6 +1007,7 @@ def build_candidate_skill_record(
         "llm_raw_output": raw_output,
         "episode_summary": parsed.get("episode_summary", ""),
         "episode_skill": parsed.get("episode_skill", ""),
+        "step_skills": parsed.get("step_skills", {}),
         "parse_ok": parse_ok,
         "analysis_error": api_error or parse_error,
     }

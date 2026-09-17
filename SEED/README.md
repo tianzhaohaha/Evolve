@@ -297,7 +297,7 @@ SEED 论文 Table 1 的基线在 AgentStream 流上统一由一个入口启动�
 
 ```bash
 bash examples/agentstream_trainer/run_agentstream_baseline.sh <baseline> <mode> [hydra 覆盖...]
-# baseline: vanilla | grpo | seed | sdar | opsd | rlsd    mode: random | isolated | sequential | interleaved
+# baseline: vanilla | grpo | grpo_base | seed | sdar | opsd | rlsd    mode: random | isolated | sequential | interleaved
 bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]   # 正式套件：五 benchmark 流上依次跑全部基线（PBS 入口，可重提续跑）
 bash examples/agentstream_trainer/run_stage12.sh [--dry-run] [prepare|sft|all]   # 正式 Stage 1/2：生成 SFT 数据并导出共享 SFT 起点
 bash examples/agentstream_trainer/run_ours_debug.sh [--dry-run] [hydra 覆盖...]  # 我们方法的小规模调试 run（全部机制开启，无 checkpoint）
@@ -307,6 +307,7 @@ bash examples/agentstream_trainer/run_ours_debug.sh [--dry-run] [hydra 覆盖...
 |---|---|---|
 | vanilla | 冻结策略走同一条流，只 rollout | `lr=0`，`enable_analysis=False`，`critic_warmup` 大数跳过更新，`test_freq=0` + `val_before_train=True` 只验证一次 |
 | grpo | 仅结果优势 | `opd_loss_coef=0`，`enable_analysis=False` |
+| grpo_base | 同 grpo，但从原始底座起跑（论文口径，量化 SFT 起点的贡献） | 上者 + `AGENTSTREAM_RL_INIT_FROM_BASE=true` |
 | seed | GRPO + 门控 OPD，自进化分析器 | `opd_loss_coef=0.01`，`analysis_backend=policy_vllm` |
 | sdar | 同 seed，但分析器固定为外部模型（近似 SDAR 的静态技能来源） | `analysis_backend=openai` |
 | opsd | 只有 teacher gap（纯自蒸馏） | `episode_skill_teacher_advantage_w=1`，`outcome_advantage_w=0` |

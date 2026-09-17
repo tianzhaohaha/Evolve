@@ -94,6 +94,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--holdout-after-tasks", type=int, default=0, help="RL stream size (env.agentstream.num_tasks_per_benchmark)")
     parser.add_argument("--holdout-tasks-per-benchmark", type=int, default=0, help="RL holdout size (env.agentstream.val_tasks_per_benchmark)")
     parser.add_argument("--rollouts-per-task", type=int, default=8)
+    # Skill schema the analyzer is trained on; must equal Stage 3's algorithm.seed.skill_mode.
+    parser.add_argument("--skill-mode", default="episode_only", choices=["episode_only", "episode_step"])
+    parser.add_argument("--max-step-skills", type=int, default=5, help="episode_step: step skills per trajectory")
     parser.add_argument("--parallel-sessions", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=30)
     # Per-benchmark overrides, same JSON shape as env.agentstream.*_per_benchmark.
@@ -555,7 +558,11 @@ def generate_skills(
     with ThreadPoolExecutor(max_workers=max(1, min(args.skill_gen_workers, len(pending)))) as executor:
         futures = {
             executor.submit(
-                build_candidate_skill_record, trajectory=t, skill_endpoint=skill_endpoint
+                build_candidate_skill_record,
+                trajectory=t,
+                skill_endpoint=skill_endpoint,
+                skill_mode=args.skill_mode,
+                max_step_skills=args.max_step_skills,
             ): t
             for t in pending
         }
@@ -604,6 +611,7 @@ def export_sft(
     output_dir: Path,
     val_ratio: float,
     seed: int,
+    skill_mode: str = "episode_only",
 ) -> List[Dict[str, Any]]:
     sft_records = []
     for candidate in candidates:
@@ -613,16 +621,17 @@ def export_sft(
         messages = prompt.get("messages", []) if isinstance(prompt, dict) else []
         if not messages:
             continue
+        # Target = exactly the JSON schema the analyzer prompt asks for in this skill mode.
+        target = {
+            "episode_summary": candidate.get("episode_summary", ""),
+            "episode_skill": candidate.get("episode_skill", ""),
+        }
+        if skill_mode == "episode_step":
+            target["step_skills"] = {str(k): v for k, v in (candidate.get("step_skills") or {}).items()}
         sft_records.append(
             {
                 "prompt": str(messages[-1].get("content", "")),
-                "response": json.dumps(
-                    {
-                        "episode_summary": candidate.get("episode_summary", ""),
-                        "episode_skill": candidate.get("episode_skill", ""),
-                    },
-                    ensure_ascii=False,
-                ),
+                "response": json.dumps(target, ensure_ascii=False),
                 "skill_id": candidate["skill_id"],
                 "task_id": candidate["task_id"],
                 "task_type": candidate["task_type"],
@@ -735,7 +744,7 @@ def main() -> None:
         sample_count=args.inspection_samples,
         max_chars=args.inspection_max_chars,
     )
-    sft_records = export_sft(candidates, output_dir, args.sft_val_ratio, args.seed)
+    sft_records = export_sft(candidates, output_dir, args.sft_val_ratio, args.seed, args.skill_mode)
 
     write_json(
         output_dir / "metrics.json",

@@ -4,7 +4,7 @@
 #
 # Usage:
 #   bash examples/agentstream_trainer/run_agentstream_baseline.sh <baseline> <mode> [hydra overrides...]
-#     baseline  vanilla | grpo | seed | sdar | opsd | rlsd
+#     baseline  vanilla | grpo | grpo_base | seed | sdar | opsd | rlsd
 #     mode      random | isolated | sequential | interleaved
 #
 # All baselines share one recipe (agentstream_full.env): same SFT init, stream, seed, group
@@ -14,6 +14,8 @@
 #   vanilla    frozen policy: no analysis, no actor update (critic_warmup), one validation
 #              before the stream (test_freq=0) -> online curve of the SFT model along the stream
 #   grpo       outcome advantage only, no analysis
+#   grpo_base  same objective, but started from the raw backbone instead of the SFT checkpoint
+#              (the SEED paper's GRPO row; isolates what the hindsight-skill SFT contributes)
 #   seed       GRPO + gated OPD, self-evolving analyzer (policy_vllm)     paper: lambda_opd=0.01, beta=5
 #   sdar       GRPO + gated OPD, fixed external analyzer (openai backend) approximates SDAR's static skill source
 #   opsd       teacher gap only (outcome_advantage_w=0); env reward is kept so success labels stay correct
@@ -47,6 +49,8 @@ case "$baseline" in
     vanilla)   overrides+=(actor_rollout_ref.actor.optim.lr=0 algorithm.seed.enable_analysis=False
                            trainer.critic_warmup=1000000 trainer.test_freq=0 trainer.val_before_train=True) ;;
     grpo)      overrides+=(algorithm.seed.enable_analysis=False) ;;
+    grpo_base) export AGENTSTREAM_RL_INIT_FROM_BASE=true
+               overrides+=(algorithm.seed.enable_analysis=False) ;;
     seed)      overrides+=(actor_rollout_ref.actor.opd_loss_coef=0.01) ;;
     sdar)      overrides+=(actor_rollout_ref.actor.opd_loss_coef=0.01 algorithm.seed.analysis_backend=openai) ;;
     opsd)      overrides+=(algorithm.seed.episode_skill_teacher_advantage_w=1.0 algorithm.seed.outcome_advantage_w=0) ;;
@@ -54,7 +58,7 @@ case "$baseline" in
                            algorithm.seed.teacher_adv_mode=multiplicative
                            algorithm.seed.teacher_adv_mult_eps=0.2) ;;
     *)
-        echo "Unknown baseline '$baseline'. Use vanilla, grpo, seed, sdar, opsd, or rlsd." >&2
+        echo "Unknown baseline '$baseline'. Use vanilla, grpo, grpo_base, seed, sdar, opsd, or rlsd." >&2
         exit 2
         ;;
 esac

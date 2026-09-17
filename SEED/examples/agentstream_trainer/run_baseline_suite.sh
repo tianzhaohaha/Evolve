@@ -38,7 +38,7 @@ export PYTHONUNBUFFERED=1
 # ===== Shared experiment settings: edit here (must match the runs of our own method) =====
 BATCH_SIZE=10          # tasks per RL step (x GROUP_SIZE rollouts); 5 x 50 tasks / 10 = 25 steps exactly
 STREAM_MODE=interleaved
-BASELINES=(vanilla grpo seed sdar opsd rlsd)
+BASELINES=(vanilla grpo grpo_base seed sdar opsd rlsd)
 COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass
@@ -63,7 +63,7 @@ set +a
 # One single pass over the stream: ceil(benchmarks x NUM_TASKS / BATCH_SIZE), derived by the config.
 TOTAL_STEPS="$AGENTSTREAM_RL_EPOCHS"
 
-SUITE_TAG="${AGENTSTREAM_MODEL_TAG}_agentstream_${AGENTSTREAM_RUN_VERSION}_n${AGENTSTREAM_NUM_TASKS}_${AGENTSTREAM_RL_STREAM_PROFILE}_b${BATCH_SIZE}_steps${TOTAL_STEPS}"
+SUITE_TAG="${AGENTSTREAM_MODEL_TAG}_agentstream_${AGENTSTREAM_RUN_VERSION}${_as_skill_suffix}_n${AGENTSTREAM_NUM_TASKS}_${AGENTSTREAM_RL_STREAM_PROFILE}_b${BATCH_SIZE}_steps${TOTAL_STEPS}"
 RUN_ID="${PBS_JOBID:-local_$(date +%Y%m%d_%H%M%S)_$$}"
 LOG_DIR="$PROJECT_ROOT/logs/agentstream"
 CKPT_ROOT="${CHECKPOINTS_ROOT:-$MODELS_ROOT/ckpt}"

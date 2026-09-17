@@ -27,6 +27,12 @@ set -a
 # shellcheck disable=SC1090
 source "$AGENTSTREAM_CONFIG"
 set +a
+# Stage-3-only switch: start from the raw backbone instead of the SFT checkpoint (the SEED
+# paper's GRPO row; set by run_agentstream_baseline.sh grpo_base). Kept out of full.env so a
+# leaked variable can never redirect Stage 2's export onto the backbone directory.
+if [[ "${AGENTSTREAM_RL_INIT_FROM_BASE:-false}" == "true" ]]; then
+    AGENTSTREAM_SFT_MODEL_DIR="$AGENTSTREAM_BASE_MODEL_PATH"
+fi
 
 
 mode="${1:-${AS_STREAM_MODE:-sequential}}"

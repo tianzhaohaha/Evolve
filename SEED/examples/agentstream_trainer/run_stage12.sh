@@ -3,10 +3,14 @@
 # five-benchmark AgentStream stream. The exported checkpoint is the shared starting point of
 # every Stage-3 run (baselines and our method). Activate Conda in the caller (the PBS wrapper does).
 #
-# Usage: bash examples/agentstream_trainer/run_stage12.sh [--dry-run] [prepare|sft|all]
+# Usage: bash examples/agentstream_trainer/run_stage12.sh [--dry-run] [--reuse-rollouts DIR] [prepare|sft|all]
 #   prepare  Stage 1 only: local vLLM rollouts -> GLM skill annotation -> parquet (resumable)
 #   sft      Stage 2 only: SFT on the Stage-1 parquet, export to AGENTSTREAM_SFT_MODEL_DIR
 #   all      both (default); Stage 2 starts only if the Stage-1 metrics check passes
+#   --reuse-rollouts DIR  seed a fresh Stage-1 data dir with DIR's task list and rollouts, so only
+#            the skill annotation, parquet export and SFT are redone. Typical use: a second
+#            skill schema on the same rollouts, e.g.
+#            AGENTSTREAM_SEED_SKILL_MODE=episode_step bash run_stage12.sh --reuse-rollouts outputs/<episode_only dir> all
 # Stage 1 needs the judge/user-simulator API keys and HF_TOKEN from .env; with browsecompplus
 # in the list the shared retriever is started here (CPU by default, see agentstream_full.env).
 # Submit with four GPUs (select=1:ncpus=48:ngpus=4): four vLLM replicas for Stage 1, four SFT ranks.
@@ -18,7 +22,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 DRY_RUN_STAGE=false
-[[ "${1:-}" == --dry-run ]] && { DRY_RUN_STAGE=true; shift; }
+REUSE_ROLLOUTS=""
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN_STAGE=true; shift ;;
+        --reuse-rollouts) REUSE_ROLLOUTS="${2:?--reuse-rollouts needs a directory}"; shift 2 ;;
+        *) echo "Unknown option $1" >&2; exit 2 ;;
+    esac
+done
 stage="${1:-all}"
 case "$stage" in
     prepare) RUN_PREPARE=true;  RUN_SFT=false ;;
@@ -50,6 +61,12 @@ set -a
 source "$AGENTSTREAM_CONFIG"
 set +a
 
+if [[ -n "$REUSE_ROLLOUTS" ]]; then
+    for f in sampled_tasks.jsonl baseline_rollouts.jsonl; do
+        [[ -s "$REUSE_ROLLOUTS/$f" ]] || { echo "--reuse-rollouts: $REUSE_ROLLOUTS/$f missing or empty" >&2; exit 1; }
+    done
+    [[ "$(cd "$REUSE_ROLLOUTS" && pwd)" == "$AGENTSTREAM_SFT_DATA_DIR" ]] && { echo "--reuse-rollouts must point at a different data dir" >&2; exit 1; }
+fi
 RUN_ID="${PBS_JOBID:-local_$(date +%Y%m%d_%H%M%S)_$$}"
 LOG="$PROJECT_ROOT/logs/agentstream/stage12_${stage}_${RUN_ID}.log"
 
@@ -57,7 +74,8 @@ echo "======================================================================"
 echo "AgentStream Stage 1/2 ($stage)   start $(date)"
 echo "  benchmarks : $AGENTSTREAM_BENCHMARKS  (SFT tasks/domain=$AGENTSTREAM_SFT_NUM_TASKS minus RL holdout ids[$AGENTSTREAM_NUM_TASKS:$((AGENTSTREAM_NUM_TASKS + AGENTSTREAM_VAL_TASKS))], rollouts/task=$AGENTSTREAM_SFT_ROLLOUTS_PER_TASK)"
 echo "  base model : $AGENTSTREAM_BASE_MODEL_PATH"
-echo "  SFT data   : $AGENTSTREAM_SFT_DATA_DIR"
+echo "  skill mode : $AGENTSTREAM_SEED_SKILL_MODE  (step skills <= $AGENTSTREAM_SEED_ANALYSIS_MAX_STEP_SKILLS, analysis tokens $AGENTSTREAM_SEED_ANALYSIS_MAX_COMPLETION_TOKENS)"
+echo "  SFT data   : $AGENTSTREAM_SFT_DATA_DIR${REUSE_ROLLOUTS:+  (rollouts reused from $REUSE_ROLLOUTS)}"
 echo "  SFT export : $AGENTSTREAM_SFT_MODEL_DIR  (epochs=$AGENTSTREAM_SFT_EPOCHS)"
 echo "  conda env  : $CONDA_ENV    policy GPUs: $AGENTSTREAM_POLICY_GPU    SFT GPUs: $AGENTSTREAM_SFT_GPUS (nproc=$AGENTSTREAM_SFT_NPROC, batch=$AGENTSTREAM_SFT_TRAIN_BATCH_SIZE)"
 echo "  log        : $LOG"
@@ -78,6 +96,14 @@ PY
 
 {
     if [[ "$RUN_PREPARE" == true ]]; then
+        if [[ -n "$REUSE_ROLLOUTS" ]]; then
+            # Task list + rollouts are the expensive, schema-independent part of Stage 1; with
+            # RESUME=true the pipeline skips rollouts it already has and re-annotates from scratch.
+            mkdir -p "$AGENTSTREAM_SFT_DATA_DIR"
+            for f in sampled_tasks.jsonl baseline_rollouts.jsonl; do
+                [[ -e "$AGENTSTREAM_SFT_DATA_DIR/$f" ]] || cp -a "$REUSE_ROLLOUTS/$f" "$AGENTSTREAM_SFT_DATA_DIR/$f"
+            done
+        fi
         bash "$SCRIPT_DIR/ensure_browsecomp_retriever.sh"   # no-op unless browsecompplus is listed
         AGENTSTREAM_RUN_SFT=false bash scripts/sft/agentstream/run_all.sh
         check_stage1

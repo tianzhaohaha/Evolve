@@ -119,6 +119,9 @@ args=(
     --skill-base-url "$SKILL_BASE_URL"
     --skill-api-key "$SKILL_API_KEY"
     --skill-model "$SKILL_MODEL"
+    --skill-max-completion-tokens "${SKILL_MAX_COMPLETION_TOKENS:-1024}"
+    --skill-mode "${SKILL_MODE:-episode_only}"
+    --max-step-skills "${MAX_STEP_SKILLS:-5}"
 )
 [[ -n "$MAX_CANDIDATES" ]] && args+=(--max-candidates "$MAX_CANDIDATES")
 # Extra request body for the policy endpoint, e.g. hybrid-thinking models:
