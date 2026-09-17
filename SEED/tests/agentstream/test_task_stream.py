@@ -54,3 +54,15 @@ def test_scheduler_state_round_trips_and_stops_when_exhausted():
 
     replicated = first.replicate(2)
     assert replicated.refs == [r for r in first.refs for _ in range(2)]
+
+
+def test_select_tasks_skips_reserved_ids_and_keeps_prefix_order():
+    from agent_system.environments.env_package.agentstream.task_stream import select_holdout_tasks
+
+    stream = select_tasks(UNIVERSE, 10)
+    holdout = select_holdout_tasks(UNIVERSE, 10, 5)
+    sft = select_tasks(UNIVERSE, 20, exclude=holdout)
+    for slug in UNIVERSE:
+        assert sft[slug][:10] == stream[slug]                       # same prefix as the RL stream
+        assert not set(sft[slug]) & set(holdout[slug])              # holdout never enters SFT
+        assert len(sft[slug]) == min(20, len(UNIVERSE[slug]) - 5)   # exhausted universes shrink

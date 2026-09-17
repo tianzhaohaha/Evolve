@@ -139,6 +139,7 @@ TENSOR_MODEL_PARALLEL_SIZE=${TENSOR_MODEL_PARALLEL_SIZE:-1}
 N_GPUS_PER_NODE=${N_GPUS_PER_NODE:-8}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-160}
 SAVE_FREQ=${SAVE_FREQ:-10}
+MAX_ACTOR_CKPT_TO_KEEP=${MAX_ACTOR_CKPT_TO_KEEP:-null}   # null = keep every checkpoint (verl default)
 TEST_FREQ=${TEST_FREQ:-5}
 # VAL_BEFORE_TRAIN=True logs the step-0 baseline on the same holdout set.
 # ACTOR_LR=0 gives a frozen-policy control run over the same stream.
@@ -367,6 +368,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=$N_GPUS_PER_NODE \
     trainer.nnodes=1 \
     trainer.save_freq=$SAVE_FREQ \
+    trainer.max_actor_ckpt_to_keep=$MAX_ACTOR_CKPT_TO_KEEP \
     trainer.test_freq=$TEST_FREQ \
     trainer.total_epochs=$TOTAL_EPOCHS \
     trainer.resume_mode=$RL_RESUME_MODE \

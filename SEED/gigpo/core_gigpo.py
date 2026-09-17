@@ -418,10 +418,21 @@ def compute_seed_advantage_components(
     similarity_thresh: float = 0.95,
     normalize_teacher_adv: bool = False,
     clip_teacher_adv: Optional[float] = None,
+    outcome_advantage_w: float = 1.0,
+    teacher_adv_mode: str = "additive",
+    teacher_adv_mult_eps: float = 0.2,
     metrics_prefix: str = "seed/state_group",
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, float]]:
     """
     Compute SEED advantages with independently weighted episode- and step-skill teacher terms.
+
+    ``outcome_advantage_w`` scales the environment-derived (episode + step) advantage;
+    0 leaves only the teacher term (pure on-policy self-distillation). ``teacher_adv_mode``
+    selects how the teacher gap enters the update:
+        additive        adv = outcome + teacher_gap                         (SEED teacher-advantage)
+        multiplicative  adv = outcome * clip(exp(sign(outcome) * teacher_gap),
+                                             1 - eps, 1 + eps)              (RLSD-style reweighting;
+                        the teacher only rescales the outcome update, never flips its sign)
     """
     remove_std = _mode_to_remove_std(mode)
 
@@ -473,12 +484,22 @@ def compute_seed_advantage_components(
         + step_skill_weight * step_teacher_advantages
     )
 
-    scores = (
-        episode_advantages
-        + step_weight * step_advantages
-        + teacher_advantages
-    )
+    outcome_weight = float(outcome_advantage_w)
+    # Returned episode/step terms carry the outcome weight so the share metrics reflect what enters `scores`.
+    episode_advantages = outcome_weight * episode_advantages
+    step_advantages = outcome_weight * step_advantages
+    outcome_advantages = episode_advantages + step_weight * step_advantages
+    if teacher_adv_mode == "multiplicative":
+        eps = float(teacher_adv_mult_eps)
+        reweight = torch.exp(torch.sign(outcome_advantages) * teacher_advantages).clamp(1.0 - eps, 1.0 + eps)
+        scores = outcome_advantages * reweight
+        # Report the teacher-induced change of the update so the share metrics stay meaningful.
+        teacher_advantages = scores - outcome_advantages
+    else:
+        scores = outcome_advantages + teacher_advantages
     step_group_metrics.update({
+        "seed/adv/outcome_advantage_weight": outcome_weight,
+        "seed/adv/teacher_adv_multiplicative": 1.0 if teacher_adv_mode == "multiplicative" else 0.0,
         "seed/adv/step_advantage_weight": step_weight,
         "seed/adv/episode_skill_teacher_weight": episode_skill_weight,
         "seed/adv/step_skill_teacher_weight": step_skill_weight,
@@ -548,6 +569,9 @@ def compute_seed_outcome_advantage(token_level_rewards: torch.Tensor,
                                    similarity_thresh: float = 0.95,
                                    normalize_teacher_adv: bool = False,
                                    clip_teacher_adv: Optional[float] = None,
+                                   outcome_advantage_w: float = 1.0,
+                                   teacher_adv_mode: str = "additive",
+                                   teacher_adv_mult_eps: float = 0.2,
                                    return_metrics: bool = False,
                                    ):
     """
@@ -578,6 +602,9 @@ def compute_seed_outcome_advantage(token_level_rewards: torch.Tensor,
         similarity_thresh=similarity_thresh,
         normalize_teacher_adv=normalize_teacher_adv,
         clip_teacher_adv=clip_teacher_adv,
+        outcome_advantage_w=outcome_advantage_w,
+        teacher_adv_mode=teacher_adv_mode,
+        teacher_adv_mult_eps=teacher_adv_mult_eps,
         metrics_prefix="seed/state_group",
     )
     if return_metrics:

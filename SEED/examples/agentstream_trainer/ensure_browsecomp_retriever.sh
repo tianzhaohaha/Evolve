@@ -47,13 +47,13 @@ if [[ -s "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
 else
     rm -f "$pid_file"
     echo "Starting BrowseComp-Plus retriever on device $device at $url (log: $log_file)"
-    DEVICE="$device" HOST="$host" PORT="$port" \
+    DEVICE="$device" HOST="$host" PORT="$port" OMP_NUM_THREADS="$AGENTSTREAM_RETRIEVER_THREADS" \
         nohup bash "$SCRIPT_DIR/serve_browsecomp_retriever.sh" >"$log_file" 2>&1 &
     pid=$!
     echo "$pid" >"$pid_file"
 fi
 
-deadline=$((SECONDS + ${AGENTSTREAM_RETRIEVER_STARTUP_TIMEOUT:-600}))
+deadline=$((SECONDS + ${AGENTSTREAM_RETRIEVER_STARTUP_TIMEOUT:-1200}))
 until retriever_ready; do
     if ! kill -0 "$pid" 2>/dev/null; then
         echo "Retriever (pid $pid) exited before becoming ready. See $log_file" >&2

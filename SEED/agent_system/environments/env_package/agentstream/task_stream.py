@@ -49,7 +49,7 @@ import hashlib
 import random
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence, TYPE_CHECKING, Tuple
+from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:  # annotation-only; keeps this module runnable standalone
     from .as_config import AgentStreamConfig
@@ -75,18 +75,22 @@ def select_tasks(
     task_universe: Dict[str, Sequence[str]],
     num_tasks: int,
     seed: int = AGENTSTREAM_SELECTION_SEED,
+    exclude: Optional[Dict[str, Sequence[str]]] = None,
 ) -> Dict[str, List[str]]:
     """Select ``num_tasks`` per benchmark with per-benchmark derived seeds.
 
     Matches AgentStream ``_select_tasks``: shuffle the full id list with the
-    derived seed, take the first ``num_tasks``.
+    derived seed, take the first ``num_tasks``. Ids listed in ``exclude`` (e.g.
+    the RL holdout) are skipped, so the selection stays a prefix of the same
+    shuffle minus the reserved ids.
     """
     per_bm: Dict[str, List[str]] = {}
     for slug in sorted(task_universe):
         all_ids = [str(t) for t in task_universe[slug]]
         rng = random.Random(derive_seed(seed, slug))
         rng.shuffle(all_ids)
-        per_bm[slug] = all_ids[:num_tasks]
+        reserved = set(map(str, (exclude or {}).get(slug, ())))
+        per_bm[slug] = [t for t in all_ids if t not in reserved][:num_tasks]
     return per_bm
 
 

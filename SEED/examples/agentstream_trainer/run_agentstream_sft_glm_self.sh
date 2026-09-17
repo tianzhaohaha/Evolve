@@ -80,8 +80,9 @@ if [[ "${AGENTSTREAM_RL_SKIP_ENTROPY_IN_LOG_PROB:-false}" == "true" ]]; then
 fi
 # NOTE: do not set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True here — vLLM's
 # sleep-mode CuMemAllocator asserts against it and rollout init fails.
-export AS_RESET_TIMEOUT="${AGENTSTREAM_RL_RESET_TIMEOUT:-600}"
-export AS_STEP_TIMEOUT="${AGENTSTREAM_RL_STEP_TIMEOUT:-600}"
+export AS_RESET_TIMEOUT="$AGENTSTREAM_RL_RESET_TIMEOUT"
+export AS_STEP_TIMEOUT="$AGENTSTREAM_RL_STEP_TIMEOUT"
+export MAX_ACTOR_CKPT_TO_KEEP="$AGENTSTREAM_RL_MAX_CKPT_TO_KEEP"
 export TRAIN_DATA_SIZE="$AGENTSTREAM_RL_TRAIN_DATA_SIZE"
 # Empty -> agentstream.sh derives benchmarks x val_tasks x repeats (isolated-safe).
 export VAL_DATA_SIZE="${AGENTSTREAM_RL_VAL_DATA_SIZE:-}"

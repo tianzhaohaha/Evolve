@@ -4,8 +4,9 @@
 Stage-1 (hindsight-skill SFT) pipeline for the AgentStream benchmark suite,
 mirroring scripts/sft/alfworld/pipeline.py:
 
-  1. sample tasks   — the same seed-42 stream selection used by RL training
-                      (agent_system/environments/env_package/agentstream),
+  1. sample tasks   — the first --num-tasks-per-benchmark ids of the seed-42
+                      shuffle used by RL training, skipping the RL holdout
+                      (--holdout-after-tasks / --holdout-tasks-per-benchmark),
                       so SFT data never leaks into the RL holdout;
   2. rollouts       — drive exgentic sessions with an OpenAI-compatible policy
                       endpoint (no Ray / GPU in this process);
@@ -47,7 +48,7 @@ from agent_system.environments.env_package.agentstream.projection import (  # no
     agentstream_projection_detailed,
 )
 from agent_system.environments.env_package.agentstream.prompts import render_prompt  # noqa: E402
-from agent_system.environments.env_package.agentstream.task_stream import select_tasks  # noqa: E402
+from agent_system.environments.env_package.agentstream.task_stream import select_holdout_tasks, select_tasks  # noqa: E402
 from scripts.sft._common.pipeline import (  # noqa: E402
     OpenAITextClient,
     append_jsonl,
@@ -87,8 +88,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmarks", default="bfcl", help="comma list, e.g. bfcl,tau2,appworld")
     parser.add_argument("--benchmark-kwargs-json", default="{}")
     parser.add_argument("--runner", default="venv")
-    # Same selection knob as RL (env.agentstream.num_tasks_per_benchmark).
+    # SFT tasks: first N ids of the RL seed-42 shuffle, minus the RL holdout
+    # (ids [holdout_after, holdout_after + holdout_n) of that shuffle; 0 = no holdout).
     parser.add_argument("--num-tasks-per-benchmark", type=int, default=50)
+    parser.add_argument("--holdout-after-tasks", type=int, default=0, help="RL stream size (env.agentstream.num_tasks_per_benchmark)")
+    parser.add_argument("--holdout-tasks-per-benchmark", type=int, default=0, help="RL holdout size (env.agentstream.val_tasks_per_benchmark)")
     parser.add_argument("--rollouts-per-task", type=int, default=8)
     parser.add_argument("--parallel-sessions", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=30)
@@ -232,7 +236,13 @@ def sample_tasks(args: argparse.Namespace, output_dir: Path, hub: BenchmarkHub) 
     path = output_dir / "sampled_tasks.jsonl"
     if args.resume and path.exists():
         return read_jsonl(path)
-    selected = select_tasks(hub.list_all_tasks(), args.num_tasks_per_benchmark)
+    universe = hub.list_all_tasks()
+    holdout = (
+        select_holdout_tasks(universe, args.holdout_after_tasks, args.holdout_tasks_per_benchmark)
+        if args.holdout_tasks_per_benchmark > 0
+        else None
+    )
+    selected = select_tasks(universe, args.num_tasks_per_benchmark, exclude=holdout)
     tasks = [{"slug": slug, "task_id": tid} for slug in sorted(selected) for tid in selected[slug]]
     for task in tasks:
         append_jsonl(path, task)

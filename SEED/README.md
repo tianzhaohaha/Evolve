@@ -289,6 +289,37 @@ bash examples/seed_trainer/run_sokoban_sft_gemini_self.sh
 （开关装配与 `expire` 调用）；测试见 `tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer}.py`。
 更多池机制见 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。
 
+## AgentStream 基线复现（`run_agentstream_baseline.sh`）
+
+SEED 论文 Table 1 的基线在 AgentStream 流上统一由一个入口启动，所有基线共用
+`agentstream_full.env` 的 SFT 起点、任务流、seed、group size、lr、KL 与步数，本仓库的扩展
+（gen 通道、global pool、EMA、replay、positive-only、failed-skill-positive）一律强制关闭，只有目标函数不同：
+
+```bash
+bash examples/agentstream_trainer/run_agentstream_baseline.sh <baseline> <mode> [hydra 覆盖...]
+# baseline: vanilla | grpo | seed | sdar | opsd | rlsd    mode: random | isolated | sequential | interleaved
+bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]   # 正式套件：五 benchmark 流上依次跑全部基线（PBS 入口，可重提续跑）
+bash examples/agentstream_trainer/run_stage12.sh [--dry-run] [prepare|sft|all]   # 正式 Stage 1/2：生成 SFT 数据并导出共享 SFT 起点
+bash examples/agentstream_trainer/run_ours_debug.sh [--dry-run] [hydra 覆盖...]  # 我们方法的小规模调试 run（全部机制开启，无 checkpoint）
+```
+
+| baseline | 目标 | 关键开关 |
+|---|---|---|
+| vanilla | 冻结策略走同一条流，只 rollout | `lr=0`，`enable_analysis=False`，`critic_warmup` 大数跳过更新，`test_freq=0` + `val_before_train=True` 只验证一次 |
+| grpo | 仅结果优势 | `opd_loss_coef=0`，`enable_analysis=False` |
+| seed | GRPO + 门控 OPD，自进化分析器 | `opd_loss_coef=0.01`，`analysis_backend=policy_vllm` |
+| sdar | 同 seed，但分析器固定为外部模型（近似 SDAR 的静态技能来源） | `analysis_backend=openai` |
+| opsd | 只有 teacher gap（纯自蒸馏） | `episode_skill_teacher_advantage_w=1`，`outcome_advantage_w=0` |
+| rlsd | GRPO 优势 × `clip(exp(sign(A)·gap), 1±ε)` | `episode_skill_teacher_advantage_w=1`，`teacher_adv_mode=multiplicative`，`teacher_adv_mult_eps=0.2` |
+
+新增的三个 `algorithm.seed.*` 键（`outcome_advantage_w` / `teacher_adv_mode` / `teacher_adv_mult_eps`，默认
+1.0 / additive / 0.2 = 原行为）实现在 `gigpo/core_gigpo.py::compute_seed_advantage_components`，
+`outcome_advantage_w` 对任何 SEED 配置生效，乘性模式只在 teacher-advantage 路径（`opd_loss_coef=0`）有定义；
+`_validate_config` 会拒绝无信号或互斥的组合。opsd 保留环境奖励（只把结果优势置零），因此分析器的成功/失败
+标签不受影响。全部基线开关都以 hydra 尾参传入（后者覆盖前者），`.env` 或 `agentstream_full.env` 里的值不会
+覆盖它们；子 launcher 打印的摘要仍显示 full.env 的默认值，以 hydra 命令行为准。实验名前缀自动以 baseline
+名开头（`AGENTSTREAM_METHOD_TAG`）。`DRY_RUN=true` 只打印解析结果。
+
 ## Merge Checkpoints
 
 See `scripts/model_merger.py` for FSDP/Megatron merge examples using paths under

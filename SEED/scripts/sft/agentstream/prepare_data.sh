@@ -100,6 +100,8 @@ args=(
     --benchmark-kwargs-json "$AS_BENCHMARK_KWARGS_JSON"
     --runner "$AS_RUNNER"
     --num-tasks-per-benchmark "$NUM_TASKS"
+    --holdout-after-tasks "${HOLDOUT_AFTER_TASKS:-0}"
+    --holdout-tasks-per-benchmark "${HOLDOUT_TASKS:-0}"
     --rollouts-per-task "$ROLLOUTS_PER_TASK"
     --parallel-sessions "$PARALLEL_SESSIONS"
     --max-steps "$MAX_STEPS"

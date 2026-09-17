@@ -324,6 +324,9 @@ def compute_advantage(
     seed_similarity_thresh=0.95,
     seed_normalize_teacher_adv=False,
     seed_clip_teacher_adv=None,
+    seed_outcome_advantage_w=1.0,
+    seed_teacher_adv_mode="additive",
+    seed_teacher_adv_mult_eps=0.2,
     **kwargs,
 ):
     """Compute advantage estimates for policy optimization.
@@ -492,6 +495,9 @@ def compute_advantage(
             similarity_thresh=seed_similarity_thresh,
             normalize_teacher_adv=seed_normalize_teacher_adv,
             clip_teacher_adv=seed_clip_teacher_adv,
+            outcome_advantage_w=seed_outcome_advantage_w,
+            teacher_adv_mode=seed_teacher_adv_mode,
+            teacher_adv_mult_eps=seed_teacher_adv_mult_eps,
             return_metrics=True,
         )
         data.batch['advantages'] = advantages
@@ -1232,6 +1238,49 @@ class RayPPOTrainer:
                 "actor_rollout_ref.actor.opd_gen_loss_coef > 0 requires algorithm.seed.skill_mode != 'step_only' "
                 "because the general-skill teacher is sourced from episode skills."
             )
+        opd_loss_coef = float(OmegaConf.select(config, "actor_rollout_ref.actor.opd_loss_coef") or 0.0)
+        analysis_enabled_config = OmegaConf.select(config, "algorithm.seed.enable_analysis")
+        if analysis_enabled_config is None:
+            analysis_enabled = True
+        elif isinstance(analysis_enabled_config, str):
+            analysis_enabled = analysis_enabled_config.lower() in ("1", "true", "yes", "on")
+        else:
+            analysis_enabled = bool(analysis_enabled_config)
+        outcome_advantage_w = OmegaConf.select(config, "algorithm.seed.outcome_advantage_w")
+        outcome_advantage_w = 1.0 if outcome_advantage_w is None else float(outcome_advantage_w)
+        teacher_adv_mode = str(OmegaConf.select(config, "algorithm.seed.teacher_adv_mode") or "additive")
+        if outcome_advantage_w < 0:
+            raise ValueError("algorithm.seed.outcome_advantage_w must be non-negative.")
+        if teacher_adv_mode not in ("additive", "multiplicative"):
+            raise ValueError("algorithm.seed.teacher_adv_mode must be 'additive' or 'multiplicative'.")
+        # Distillation signal exists only with analysis on; OPD losses take precedence over the teacher-advantage path.
+        opd_loss_active = opd_loss_coef > 0 or opd_gen_loss_coef > 0
+        distill_active = analysis_enabled and (
+            opd_loss_active or episode_skill_teacher_advantage_w > 0 or step_skill_teacher_advantage_w > 0
+        )
+        teacher_adv_active = distill_active and not opd_loss_active
+        if outcome_advantage_w == 0 and not distill_active:
+            raise ValueError(
+                "algorithm.seed.outcome_advantage_w=0 removes the environment advantage, so a distillation signal is "
+                "required (enable_analysis=True with an OPD loss coefficient or a teacher-advantage weight > 0)."
+            )
+        if teacher_adv_mode == "multiplicative":
+            teacher_adv_mult_eps = float(OmegaConf.select(config, "algorithm.seed.teacher_adv_mult_eps") or 0.0)
+            if not 0.0 < teacher_adv_mult_eps < 1.0:
+                raise ValueError("algorithm.seed.teacher_adv_mult_eps must lie in (0, 1) when teacher_adv_mode=multiplicative.")
+            if not teacher_adv_active or outcome_advantage_w == 0:
+                raise ValueError(
+                    "algorithm.seed.teacher_adv_mode=multiplicative rescales the outcome advantage by the teacher gap: "
+                    "it needs outcome_advantage_w > 0, enable_analysis=True, a teacher-advantage weight > 0 and "
+                    "actor.opd_loss_coef = opd_gen_loss_coef = 0."
+                )
+            if bool(OmegaConf.select(config, "algorithm.seed.normalize_teacher_adv")) or OmegaConf.select(
+                config, "algorithm.seed.clip_teacher_adv"
+            ) is not None:
+                raise ValueError(
+                    "algorithm.seed.teacher_adv_mode=multiplicative uses the raw teacher gap (its sign is the signal): "
+                    "set normalize_teacher_adv=False and clip_teacher_adv=null; the factor is bounded by teacher_adv_mult_eps."
+                )
         opd_gen_dominance = str(OmegaConf.select(config, "actor_rollout_ref.actor.opd_gen_dominance") or "none")
         if opd_gen_dominance not in ("none", "spec_first"):
             raise ValueError("actor_rollout_ref.actor.opd_gen_dominance must be 'none' or 'spec_first'.")
@@ -1269,8 +1318,7 @@ class RayPPOTrainer:
                 raise ValueError("actor_rollout_ref.actor.ema_mode currently supports only actor.strategy=fsdp without LoRA.")
             if ema_applies_to(ema_mode, "ref") and not config.actor_rollout_ref.actor.use_kl_loss:
                 raise ValueError("ema_mode=ref/both replaces the KL reference and requires actor.use_kl_loss=True.")
-            opd_loss_coef = float(OmegaConf.select(config, "actor_rollout_ref.actor.opd_loss_coef") or 0.0)
-            if ema_applies_to(ema_mode, "teacher") and opd_loss_coef <= 0 and opd_gen_loss_coef <= 0:
+            if ema_applies_to(ema_mode, "teacher") and not opd_loss_active:
                 raise ValueError("ema_mode=teacher/both re-bases the OPD teacher and requires an OPD loss coefficient > 0.")
         if bool(OmegaConf.select(config, "algorithm.seed.replay.enable") or False):
             # groups_per_step / capacity ranges are checked by ReplayBuffer itself at construction.
@@ -1281,13 +1329,6 @@ class RayPPOTrainer:
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
                 OmegaConf.select(config, "algorithm.seed.analysis_prompt_version") or "seed"
             )
-            analysis_enabled_config = OmegaConf.select(config, "algorithm.seed.enable_analysis")
-            if analysis_enabled_config is None:
-                analysis_enabled = True
-            elif isinstance(analysis_enabled_config, str):
-                analysis_enabled = analysis_enabled_config.lower() in ("1", "true", "yes", "on")
-            else:
-                analysis_enabled = bool(analysis_enabled_config)
             if analysis_backend not in {"openai", "policy_vllm"}:
                 raise ValueError("algorithm.seed.analysis_backend must be 'openai' or 'policy_vllm'.")
             if analysis_backend == "policy_vllm" and analysis_enabled:
@@ -4102,6 +4143,9 @@ class RayPPOTrainer:
                             seed_similarity_thresh=self.config.algorithm.seed.similarity_thresh,
                             seed_normalize_teacher_adv=self.config.algorithm.seed.normalize_teacher_adv,
                             seed_clip_teacher_adv=self.config.algorithm.seed.clip_teacher_adv,
+                            seed_outcome_advantage_w=self.config.algorithm.seed.outcome_advantage_w,
+                            seed_teacher_adv_mode=self.config.algorithm.seed.teacher_adv_mode,
+                            seed_teacher_adv_mult_eps=self.config.algorithm.seed.teacher_adv_mult_eps,
                         )
                         if self.config.algorithm.adv_estimator == AdvantageEstimator.SEED:
                             metrics.update(batch.meta_info.pop("seed_adv_metrics", {}))
