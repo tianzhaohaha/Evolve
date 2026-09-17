@@ -36,6 +36,8 @@ if [[ -f "$ENV_FILE" ]]; then
     set +a
 fi
 export ENV_FILE=/dev/null PYTHONUNBUFFERED=1
+# 60k-token SFT samples fragment the CUDA allocator badly (tens of GB reserved but unusable).
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # ===== Formal settings: must match run_baseline_suite.sh / run_global_ablation.sh =====
 export AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus
