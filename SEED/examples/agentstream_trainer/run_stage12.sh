@@ -36,8 +36,6 @@ if [[ -f "$ENV_FILE" ]]; then
     set +a
 fi
 export ENV_FILE=/dev/null PYTHONUNBUFFERED=1
-# 60k-token SFT samples fragment the CUDA allocator badly (tens of GB reserved but unusable).
-export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # ===== Formal settings: must match run_baseline_suite.sh / run_global_ablation.sh =====
 export AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus
@@ -85,7 +83,10 @@ PY
         check_stage1
     fi
     if [[ "$RUN_SFT" == true ]]; then
-        AGENTSTREAM_RUN_PREPARE=false bash scripts/sft/agentstream/run_all.sh
+        # SFT only: 60k-token samples fragment the CUDA allocator (tens of GB reserved but unusable).
+        # Kept off the Stage-1 vLLM servers, whose allocator rejects expandable segments.
+        PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+            AGENTSTREAM_RUN_PREPARE=false bash scripts/sft/agentstream/run_all.sh
         test -f "$AGENTSTREAM_SFT_MODEL_DIR/config.json" || { echo "Stage 2: export missing at $AGENTSTREAM_SFT_MODEL_DIR" >&2; exit 1; }
         echo "Stage 2: exported $AGENTSTREAM_SFT_MODEL_DIR"
     fi
