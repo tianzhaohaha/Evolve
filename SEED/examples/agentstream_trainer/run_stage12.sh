@@ -13,7 +13,8 @@
 #            AGENTSTREAM_SEED_SKILL_MODE=episode_step bash run_stage12.sh --reuse-rollouts outputs/<episode_only dir> all
 # Stage 1 needs the judge/user-simulator API keys and HF_TOKEN from .env; with browsecompplus
 # in the list the shared retriever is started here (CPU by default, see agentstream_full.env).
-# Submit with four GPUs (select=1:ncpus=48:ngpus=4): four vLLM replicas for Stage 1, four SFT ranks.
+# Submit with four GPUs (select=1:ncpus=48:ngpus=4): four vLLM replicas for Stage 1, four SFT ranks;
+# STAGE12_NGPUS=2 fits a two-GPU allocation (select=1:ncpus=24:ngpus=2).
 
 set -eo pipefail
 
@@ -50,8 +51,12 @@ export ENV_FILE=/dev/null PYTHONUNBUFFERED=1
 
 # ===== Formal settings: must match run_baseline_suite.sh / run_global_ablation.sh =====
 export AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
-# Stage 1/2 run on four GPUs (PBS: ngpus=4); Stage 3 keeps its own two-GPU setting.
-export AGENTSTREAM_POLICY_GPU=0,1,2,3 AGENTSTREAM_SFT_GPUS=0,1,2,3 AGENTSTREAM_SFT_NPROC=4
+# Stage 1/2 use the first STAGE12_NGPUS GPUs (default 4: PBS ngpus=4). STAGE12_NGPUS=2 halves the
+# vLLM replicas and SFT ranks (about twice the wall time) when only two GPUs are free.
+# Stage 3 keeps its own two-GPU setting from .env.
+STAGE12_NGPUS="${STAGE12_NGPUS:-4}"
+_gpus="$(seq -s, 0 $((STAGE12_NGPUS - 1)))"
+export AGENTSTREAM_POLICY_GPU="$_gpus" AGENTSTREAM_SFT_GPUS="$_gpus" AGENTSTREAM_SFT_NPROC="$STAGE12_NGPUS"
 export CONDA_ENV="${CONDA_ENV:-${CONDA_DEFAULT_ENV:-seed}}"   # vLLM + SFT run in the active env
 export AGENTSTREAM_RUN_PREPARE=$RUN_PREPARE AGENTSTREAM_RUN_SFT=$RUN_SFT AGENTSTREAM_RUN_RL=false
 
