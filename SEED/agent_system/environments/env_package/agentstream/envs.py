@@ -227,6 +227,8 @@ class AgentStreamEnvs:
         infos: List[Dict[str, Any]] = []
         for i, payload in enumerate(payloads):
             slug, task_id = batch.refs[i]
+            if payload.get("reset_error"):
+                print(f"[agentstream] worker {i} reset error on {slug}/{task_id}: {payload.get('observation', '')[:200]}")
             infos.append(
                 {
                     "slug": slug,

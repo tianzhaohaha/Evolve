@@ -15,7 +15,7 @@
 # =============================================================================
 # 共同前提：.env 里有 OPENAI_* / OPENROUTER_API_KEY / HF_TOKEN，公共配置在
 # examples/agentstream_trainer/agentstream_full.env（v4：5 域、每域 50 题、holdout 32、
-# batch 10 x 25 步、history 4、prompt 38912、episode_only）。改 benchmark / 题数 / 步数 JSON
+# batch 10 x 25 步、history 3、prompt 38912、response 512、episode_only）。改 benchmark / 题数 / 步数 JSON
 # 后先提升 AGENTSTREAM_RUN_VERSION，再从 Stage 1 重来。
 #
 # Stage 1+2：SFT 数据 + SFT 模型（PBS: select=1:ncpus=48:ngpus=4）

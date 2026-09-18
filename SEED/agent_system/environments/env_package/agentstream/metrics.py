@@ -37,6 +37,11 @@ Two estimators of the per-pass score are maintained side by side:
 ``snapshot()`` exposes both (globally and per benchmark) as trainer metrics so
 they can be pushed to wandb every step under the ``online/`` prefix.
 
+Episodes the environment itself broke (``env_error``: reset failure or worker
+timeout) are still written to the JSONL for auditing but never enter the
+averages; ``online/env_error_episodes`` (and the per-benchmark variant) counts
+them so runs remain comparable.
+
 Resume semantics (``restore_up_to_step``): when the trainer resumes from a
 checkpoint the accumulators are rebuilt from the existing JSONL, taking only
 rows written at or before the checkpointed global step (later rows belong to
@@ -129,6 +134,7 @@ class OnlineMetricsRecorder:
             lambda: (_CumulativeStats(), _CumulativeStats())
         )
 
+        self._env_errors: Dict[str, int] = defaultdict(int)  # per benchmark
         self._seen: Set[Tuple[str, str, int, int]] = set()
         if restore_up_to_step is not None:
             self._restore_from_file(int(restore_up_to_step))
@@ -149,17 +155,22 @@ class OnlineMetricsRecorder:
         rollout_slot: int,
         score: float,
         success: bool,
+        env_error: bool = False,
     ) -> bool:
         """Fold one episode into the accumulators of its pass.
 
         Returns False (and changes nothing) for a duplicate key, which only
-        happens when steps are replayed after a resume.
+        happens when steps are replayed after a resume. Environment failures
+        are counted per benchmark instead of averaged.
         """
         key = (slug, str(task_id), int(pass_idx), int(rollout_slot))
         if key in self._seen:
             return False
         self._seen.add(key)
 
+        if env_error:
+            self._env_errors[slug] += 1
+            return True
         stats_all, stats_single = self._passes[int(pass_idx)]
         stats_all.add(slug, score, success)
         if int(rollout_slot) % self.group_n == 0:
@@ -198,6 +209,7 @@ class OnlineMetricsRecorder:
                             rollout_slot=int(row.get("rollout_slot", 0) or 0),
                             score=float(row.get("score", 0.0) or 0.0),
                             success=bool(row.get("success", False)),
+                            env_error=bool(row.get("env_error", False)),
                         ):
                             restored += 1
                     except (ValueError, TypeError):
@@ -230,6 +242,7 @@ class OnlineMetricsRecorder:
         episode_steps: int,
         global_step: Optional[int] = None,
         action_stats: Optional[Dict[str, int]] = None,
+        env_error: bool = False,
     ) -> None:
         first_pass = pass_idx == 0
         first_attempt = int(rollout_slot) % self.group_n == 0
@@ -243,6 +256,7 @@ class OnlineMetricsRecorder:
                     rollout_slot=rollout_slot,
                     score=float(score),
                     success=bool(success),
+                    env_error=bool(env_error),
                 )
 
             # Row-level cumulative fields keep their historical meaning: the
@@ -262,6 +276,7 @@ class OnlineMetricsRecorder:
                 "rollout_slot": rollout_slot,
                 "success": bool(success),
                 "score": float(score),
+                "env_error": bool(env_error),
                 "episode_steps": int(episode_steps),
                 "cumulative_avg_score": fp_all.avg_score(),
                 "benchmark_cumulative_avg_score": fp_all.avg_score(slug),
@@ -286,6 +301,8 @@ class OnlineMetricsRecorder:
             online/single/cumulative_success_rate
             online/single/first_pass_episodes
             online/<bm>/...  and  online/<bm>/single/...   same, per benchmark
+            online/env_error_episodes  and  online/<bm>/env_error_episodes
+                                                   environment failures (excluded above)
 
         With ``track_repeat_passes`` the same subtree is emitted once more per
         repeat pass under ``online/pass<K>/`` (``episodes`` instead of
@@ -306,4 +323,8 @@ class OnlineMetricsRecorder:
                 for slug in sorted(stats_all.bm_num):
                     stats_all.emit(out, f"{base}{slug}/", n_key, slug)
                     stats_single.emit(out, f"{base}{slug}/single/", n_key, slug)
+            if self._env_errors:
+                out["online/env_error_episodes"] = float(sum(self._env_errors.values()))
+                for slug, n in sorted(self._env_errors.items()):
+                    out[f"online/{slug}/env_error_episodes"] = float(n)
             return out

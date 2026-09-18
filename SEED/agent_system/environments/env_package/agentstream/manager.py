@@ -24,7 +24,10 @@ to change. Only two stable SEED APIs are imported:
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from typing import Dict, List, Optional
+
+import numpy as np
 
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 from agent_system.memory import SimpleMemory
@@ -58,6 +61,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self._stream_indices: List[int] = []
         self._pass_indices: List[int] = []
         self._recorded: List[bool] = []
+        self._env_error: List[bool] = []  # reset failed / worker timed out: episode unusable
         self._episode_steps: List[int] = []
         self._episode_action_stats: List[Dict[str, int]] = []
         self.tasks: List[str] = []
@@ -80,6 +84,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self._stream_indices = [int(info.get("stream_index", -1)) for info in infos]
         self._pass_indices = [int(info.get("pass_idx", 0)) for info in infos]
         self._recorded = [False] * batch_size
+        self._env_error = [bool(info.get("reset_error", False)) for info in infos]
         self._episode_steps = [0] * batch_size
         self._episode_action_stats = [
             {"steps": 0, "valid": 0, "think_present": 0, "tool_call_alias": 0}
@@ -138,6 +143,11 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
                     key = f"invalid_{reason}"
                     stats[key] = stats.get(key, 0) + 1
             infos[i].setdefault("won", False)
+            # Sticky: once the environment itself failed (reset error or step timeout) every
+            # later row of the trajectory carries the flag, so the rollout loop drops the
+            # whole trajectory and the metrics below report it instead of scoring it.
+            self._env_error[i] = self._env_error[i] or bool(infos[i].get("env_timeout", False))
+            infos[i]["env_error"] = self._env_error[i]
 
         self._record_finished_episodes(dones, infos)
 
@@ -169,6 +179,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
                 episode_steps=int(info.get("step_count", self._episode_steps[i])),
                 global_step=self._global_step,
                 action_stats=dict(self._episode_action_stats[i]),
+                env_error=self._env_error[i],
             )
 
     def stream_state_dict(self) -> Optional[Dict[str, object]]:
@@ -236,25 +247,44 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
 
     # ------------------------------------------------------------------ metrics
 
+    def success_evaluator(self, *args, **kwargs) -> Dict[str, np.ndarray]:
+        """Base contract minus its ``len(success_rate) == batch_size`` assertion:
+        episodes broken by the environment are reported under ``env_error_rate``
+        only, so the score keys stay model-only (see ``_process_batch``)."""
+        total_batch_list, total_infos = kwargs["total_batch_list"], kwargs["total_infos"]
+        success: Dict[str, list] = defaultdict(list)
+        for bs in range(len(total_batch_list)):
+            self._process_batch(bs, total_batch_list, total_infos, success)
+        return {key: np.array(value) for key, value in success.items()}
+
     def _process_batch(self, batch_idx, total_batch_list, total_infos, success):
         """Per-episode success plus per-benchmark breakdown.
 
-        Emits ``success_rate`` (required by the base contract),
-        ``<slug>_success_rate`` / ``<slug>_score`` and ``<slug>_score_error_rate``
-        (episodes whose benchmark scoring failed, counted as zero reward) so
-        validation curves per
-        benchmark are logged at every trainer.test_freq, which is exactly the
-        forgetting / transfer measurement for sequential and interleaved
-        streams. The inherited ``success_evaluator`` drives this hook.
+        Emits ``success_rate``, ``<slug>_success_rate`` / ``<slug>_score`` and
+        ``<slug>_score_error_rate`` (episodes whose benchmark scoring failed,
+        counted as zero reward) so validation curves per benchmark are logged at
+        every trainer.test_freq, which is exactly the forgetting / transfer
+        measurement for sequential and interleaved streams.
+
+        ``env_error_rate`` / ``<slug>_env_error_rate`` count episodes the
+        environment itself broke (reset error, worker timeout). Those episodes
+        are excluded from every other key: their rows never reach the training
+        batch (rollout loop) and a zero there would measure the infrastructure,
+        not the policy.
         """
+        infos = total_infos[batch_idx]
+        env_error = bool(infos[-1].get("env_error", False)) if infos else False
+        slug = (str(infos[-1].get("slug", "")) or "unknown") if infos else "unknown"
+        success["env_error_rate"].append(float(env_error))
+        success[f"{slug}_env_error_rate"].append(float(env_error))
+        if env_error:
+            return
         for i in reversed(range(len(total_batch_list[batch_idx]))):
             batch_item = total_batch_list[batch_idx][i]
             if batch_item["active_masks"]:
                 info = total_infos[batch_idx][i]
                 won_value = float(info.get("won", False))
                 success["success_rate"].append(won_value)
-
-                slug = str(info.get("slug", "")) or "unknown"
                 success[f"{slug}_success_rate"].append(won_value)
                 score = info.get("score", None)
                 if score is not None:

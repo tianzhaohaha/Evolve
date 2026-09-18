@@ -32,7 +32,9 @@ def load_run(path: Path) -> list[dict]:
 
 
 def summarize(path: Path, rows: list[dict]) -> dict:
-    first = [r for r in rows if r.get("first_pass", True)]
+    # Same convention as the recorder: environment failures are counted, not scored.
+    first = [r for r in rows if r.get("first_pass", True) and not r.get("env_error", False)]
+    env_errors = sum(1 for r in rows if r.get("env_error", False))
     # Average GRPO group rollouts per (benchmark, task) first.
     per_task: dict[tuple, list[float]] = defaultdict(list)
     for r in first:
@@ -52,6 +54,7 @@ def summarize(path: Path, rows: list[dict]) -> dict:
         "stream_seed": meta.get("stream_seed", ""),
         "episodes": len(rows),
         "first_pass_tasks": len(task_scores),
+        "env_error_episodes": env_errors,
         "online_avg_score": (
             sum(task_scores.values()) / len(task_scores) if task_scores else 0.0
         ),
@@ -85,13 +88,13 @@ def main() -> int:
         print("No data.", file=sys.stderr)
         return 1
 
-    header = f"{'run':<40} {'mode':<12} {'protocol':<8} {'seed':<5} {'tasks':<6} {'online_avg':<10}"
+    header = f"{'run':<40} {'mode':<12} {'protocol':<8} {'seed':<5} {'tasks':<6} {'online_avg':<10} {'env_err':<7}"
     print(header)
     print("-" * len(header))
     for s in summaries:
         print(
             f"{s['run'][:39]:<40} {s['stream_mode']:<12} {s['protocol']:<8} "
-            f"{str(s['stream_seed']):<5} {s['first_pass_tasks']:<6} {s['online_avg_score']:<10.4f}"
+            f"{str(s['stream_seed']):<5} {s['first_pass_tasks']:<6} {s['online_avg_score']:<10.4f} {s['env_error_episodes']:<7}"
         )
         for slug, (avg, n) in s["per_benchmark"].items():
             print(f"    {slug:<28} avg={avg:.4f}  (n={n})")

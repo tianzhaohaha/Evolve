@@ -53,6 +53,7 @@ from verl.trainer.ppo.metric_utils import (
     compute_subtask_success_rate_mean,
     compute_throughout_metrics,
     compute_timing_metrics,
+    is_episode_metric_key,
     process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
@@ -2085,9 +2086,9 @@ class RayPPOTrainer:
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
-            # success rate
+            # per-episode summary keys (success rates, per-benchmark scores, error rates)
             for k in test_batch.non_tensor_batch.keys():
-                if 'success_rate' in k:
+                if is_episode_metric_key(k):
                     if k not in success_rate_dict:
                         success_rate_dict[k] = []
                     success_rate_dict[k].append(test_batch.non_tensor_batch[k][0])

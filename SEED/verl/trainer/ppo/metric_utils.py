@@ -26,6 +26,14 @@ from verl import DataProto
 from verl.utils.import_utils import deprecated
 
 
+def is_episode_metric_key(key: str) -> bool:
+    """Per-episode summary keys an env manager's ``success_evaluator`` attaches to every
+    row (batch-wide means): ``success_rate`` and its ``<slug>_`` variants, per-benchmark
+    ``<slug>_score`` and error rates such as ``<slug>_env_error_rate``. Forwarded to the
+    logger under ``episode/`` (train) and ``val/`` (validation)."""
+    return "success_rate" in key or key.endswith("_score") or key.endswith("_rate")
+
+
 def compute_subtask_success_rate_mean(success_rates: Dict[str, Any]) -> Optional[float]:
     """Compute the macro average over available subtask success rates."""
     subtask_success_rates = [
@@ -197,7 +205,7 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
         #     batch.non_tensor_batch["tool_callings"][unique_idx].max().item(),
         # "episode/tool_call_count/min":
         #     batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
-        **({f"episode/{k}": v[0].item() for k, v in batch.non_tensor_batch.items() if "success_rate" in k}),
+        **({f"episode/{k}": v[0].item() for k, v in batch.non_tensor_batch.items() if is_episode_metric_key(k)}),
     }
     return metrics
 

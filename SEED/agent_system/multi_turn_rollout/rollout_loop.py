@@ -23,7 +23,7 @@ from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
 from transformers import PreTrainedTokenizer
 import uuid
-from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
+from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data, drop_env_error_trajectories
 from agent_system.environments import EnvironmentManagerBase
 from typing import Any, List, Dict, Optional
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
@@ -659,9 +659,9 @@ class TrajectoryCollector:
         """
         batch_size = len(total_batch_list)
 
-        success_rate = {}
-        for key, value in success.items():
-            success_rate[key] = np.mean(value)
+        # Keys may cover fewer episodes than the batch (env_error episodes are excluded);
+        # a key with no episode at all is simply not reported this step.
+        success_rate = {key: np.mean(value) for key, value in success.items() if len(value)}
         
         effective_batch = []
         rollout_group_size = int(self.config.env.rollout.n) if self.config.env.rollout.n > 0 else 1
@@ -895,7 +895,8 @@ class TrajectoryCollector:
 
             # Update done states
             is_done = np.logical_or(is_done, dones)
-                
+            drop_env_error_trajectories(total_batch_list, infos)
+
             # Update observations for next step
             obs = next_obs
 

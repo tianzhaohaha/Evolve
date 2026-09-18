@@ -153,6 +153,20 @@ def adjust_batch(config, data: DataProto, mode="copy", track_source_indices: boo
     return adjusted_batch
 
 
+def drop_env_error_trajectories(total_batch_list: List[List[Dict]], infos: List[Dict]) -> int:
+    """Deactivate every row of trajectories whose env manager flagged ``env_error``
+    (reset failure / worker timeout): they carry no usable outcome, so neither the
+    policy update nor the success metrics should see them. Returns the number of
+    trajectories dropped in this call."""
+    dropped = 0
+    for i, info in enumerate(infos):
+        if info.get("env_error", False) and any(row["active_masks"] for row in total_batch_list[i]):
+            for row in total_batch_list[i]:
+                row["active_masks"] = False
+            dropped += 1
+    return dropped
+
+
 def filter_group_data(batch_list : List[Dict],
                         episode_rewards: np.ndarray,
                         episode_lengths: np.ndarray,
