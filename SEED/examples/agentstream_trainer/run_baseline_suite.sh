@@ -38,7 +38,7 @@ export PYTHONUNBUFFERED=1
 # ===== Shared experiment settings: edit here (must match the runs of our own method) =====
 BATCH_SIZE=10          # tasks per RL step (x GROUP_SIZE rollouts); 3 x 64 tasks / 10 -> 20 steps (last one padded from the tail)
 STREAM_MODE=interleaved
-BASELINES=(vanilla grpo grpo_base seed sdar opsd rlsd)
+BASELINES=(vanilla grpo seed opsd rlsd)
 COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass

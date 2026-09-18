@@ -12,7 +12,7 @@ import unittest
 
 SEED_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path("examples/agentstream_trainer")
-BASELINES = ["vanilla", "grpo", "grpo_base", "seed", "sdar", "opsd", "rlsd"]
+BASELINES = ["vanilla", "grpo", "seed", "opsd", "rlsd"]  # formal set; grpo_base / sdar stay available via run_agentstream_baseline.sh
 
 
 class BaselineSuiteRunnerTests(unittest.TestCase):
@@ -65,8 +65,6 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
             self.assertEqual(env["ENV_FILE"], "/dev/null")
             self.assertTrue(env["AGENTSTREAM_EXPERIMENT_PREFIX"].startswith(argv[0] + "_"))
             self.assertNotIn("EXPERIMENT_NAME", env)
-        sdar = next(c for c in calls if c["argv"][0] == "sdar")
-        self.assertIn("algorithm.seed.analysis_num_workers=32", sdar["argv"])
 
     def test_skips_completed_and_continues_after_failure(self):
         # Experiment name follows agentstream_full.env; read the run version from it rather than hard-coding.
