@@ -49,7 +49,7 @@ fi
 export ENV_FILE=/dev/null PYTHONUNBUFFERED=1
 
 # ===== Formal settings: must match run_baseline_suite.sh / run_global_ablation.sh =====
-export AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus
+export AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
 # Stage 1/2 run on four GPUs (PBS: ngpus=4); Stage 3 keeps its own two-GPU setting.
 export AGENTSTREAM_POLICY_GPU=0,1,2,3 AGENTSTREAM_SFT_GPUS=0,1,2,3 AGENTSTREAM_SFT_NPROC=4
 export CONDA_ENV="${CONDA_ENV:-${CONDA_DEFAULT_ENV:-seed}}"   # vLLM + SFT run in the active env

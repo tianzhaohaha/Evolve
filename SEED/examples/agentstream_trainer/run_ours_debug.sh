@@ -14,9 +14,9 @@
 # 全流程命令（在 SEED 根目录执行；PBS 作业只需在激活 Conda 后调用对应的一行）
 # =============================================================================
 # 共同前提：.env 里有 OPENAI_* / OPENROUTER_API_KEY / HF_TOKEN，公共配置在
-# examples/agentstream_trainer/agentstream_full.env（v4：5 域、每域 50 题、holdout 32、
-# batch 10 x 25 步、history 3、prompt 38912、response 512、episode_only）。改 benchmark / 题数 / 步数 JSON
-# 后先提升 AGENTSTREAM_RUN_VERSION，再从 Stage 1 重来。
+# examples/agentstream_trainer/agentstream_full.env（v5：bfcl/tau2/browsecompplus 三域、每域 64 题、
+# holdout 32、batch 10 x 20 步、group 6、history 3、prompt 38912、response 512、episode_only）。
+# 改 benchmark / 题数 / 步数 JSON 后先提升 AGENTSTREAM_RUN_VERSION，再从 Stage 1 重来。
 #
 # Stage 1+2：SFT 数据 + SFT 模型（PBS: select=1:ncpus=48:ngpus=4）
 #   bash examples/agentstream_trainer/run_stage12.sh --dry-run all      # 只打印解析结果
@@ -25,7 +25,7 @@
 #   # 建议 prepare / sft 分两个 PBS 作业提交；Stage 1 中断可原样重提（RESUME）
 #   # 换 skill 模式而复用 rollout（可选，非正式基线）：
 #   AGENTSTREAM_SEED_SKILL_MODE=episode_step bash examples/agentstream_trainer/run_stage12.sh \
-#       --reuse-rollouts outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4 all
+#       --reuse-rollouts outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v5 all
 #
 # Stage 3 基线套件（PBS: select=1:ncpus=48:ngpus=2，walltime 168h）
 #   bash examples/agentstream_trainer/run_baseline_suite.sh --dry-run    # 预览 7 条命令
@@ -39,7 +39,7 @@
 #   bash examples/agentstream_trainer/run_global_ablation.sh             # 正式消融：与基线同 batch / 步数
 #
 # Stage 3 使用 episode_step（episode skill + 关键步 skill；正式基线不用，作为我们方法的消融）
-#   前提：已用上面的 --reuse-rollouts 命令生成 ..._v4-episode_step 数据并导出 ...-sft-v4-episode_step 模型。
+#   前提：已用上面的 --reuse-rollouts 命令生成 ..._v5-episode_step 数据并导出 ...-sft-v5-episode_step 模型。
 #   只需在调用任何 Stage-3 脚本前导出同一个变量（PBS 里放在 conda activate 之后）：
 #     export AGENTSTREAM_SEED_SKILL_MODE=episode_step
 #     bash examples/agentstream_trainer/run_ours_debug.sh --dry-run      # 检查 "skill mode"/"model" 两行
@@ -81,7 +81,7 @@ export ENV_FILE=/dev/null PYTHONUNBUFFERED=1
 # from the config; a 4-step run therefore validates once, at its last step. =====
 STREAM_MODE="${STREAM_MODE:-interleaved}"
 COMMON_ENV=(
-    AGENTSTREAM_BENCHMARKS=bfcl,appworld,tau2,hle,browsecompplus
+    AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass
     AGENTSTREAM_RL_TRAIN_DATA_SIZE=10                                     # tasks per step, as formal
     "AGENTSTREAM_RL_EPOCHS=${AGENTSTREAM_RL_EPOCHS:-4}"                   # debug: first steps of the stream

@@ -66,3 +66,16 @@ def test_select_tasks_skips_reserved_ids_and_keeps_prefix_order():
         assert sft[slug][:10] == stream[slug]                       # same prefix as the RL stream
         assert not set(sft[slug]) & set(holdout[slug])              # holdout never enters SFT
         assert len(sft[slug]) == min(20, len(UNIVERSE[slug]) - 5)   # exhausted universes shrink
+
+
+def test_stop_mode_tags_the_padded_tail_as_a_repeat_pass():
+    # 8 tasks, batches of 3: the third batch has 2 new tasks and re-serves 1 from the tail.
+    train = select_tasks(UNIVERSE, 4)
+    sched = TaskStreamScheduler(train_tasks=train, mode="interleaved", stream_seed=44, on_exhausted="stop")
+    sched.next_batch(3)
+    sched.next_batch(3)
+    last = sched.next_batch(3)
+    assert last.passes == [0, 0, 1]
+    assert last.stream_indices == [6, 7, 5 + 8]  # repeat index lives in the pass-1 range
+    assert last.refs[2] == sched._ordered[5]           # the re-served task is the stream tail
+

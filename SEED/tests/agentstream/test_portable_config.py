@@ -69,7 +69,7 @@ class PortableConfigTests(unittest.TestCase):
         for key in ("AGENTSTREAM_RL_N_GPUS", "AGENTSTREAM_SFT_NPROC", "AGENTSTREAM_RL_TRAIN_DATA_SIZE"):
             self.assertEqual(values[key], "2")
         self.assertEqual(values["AGENTSTREAM_RETRIEVER_DEVICE"], "cpu")
-        self.assertEqual(values["AGENTSTREAM_RL_EPOCHS"], "75")  # 3 default benchmarks x 50 tasks / 2 per step
+        self.assertEqual(values["AGENTSTREAM_RL_EPOCHS"], "96")  # 3 default benchmarks x 64 tasks / 2 per step
         self.assertEqual(values["AGENTSTREAM_BENCHMARKS"], "bfcl,tau2,browsecompplus")
 
     def test_explicit_storage_overrides(self):

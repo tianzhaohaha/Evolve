@@ -300,18 +300,23 @@ class TaskStreamScheduler:
         refs: List[TaskRef] = []
         idx: List[int] = []
         passes: List[int] = []
+        repeat = 0  # 'stop': the final partial batch re-serves the stream tail
         for _ in range(env_num):
             if self._cursor >= len(self._ordered):
                 if self.on_exhausted == "stop":
-                    self._cursor = len(self._ordered) - env_num
-                    self._cursor = max(0, self._cursor)
+                    # Keep the env count fixed by re-serving the last window. Those
+                    # tasks are met a second time, so they are tagged pass+1 and stay
+                    # out of the first-pass online metrics (still used for training).
+                    self._cursor = max(0, len(self._ordered) - env_num)
+                    repeat = 1
                 else:  # cycle
                     self._cursor = 0
                     self._pass += 1
             position = self._cursor
+            pass_idx = self._pass + repeat
             refs.append(self._ordered[position])
-            idx.append(position + self._pass * len(self._ordered))
-            passes.append(self._pass)
+            idx.append(position + pass_idx * len(self._ordered))
+            passes.append(pass_idx)
             self._cursor += 1
         return StreamBatch(refs=refs, stream_indices=idx, passes=passes)
 

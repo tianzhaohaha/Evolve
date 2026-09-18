@@ -59,9 +59,9 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
             argv, env = call["argv"], call["env"]
             self.assertEqual(argv[1], "interleaved")
             self.assertIn("trainer.resume_mode=auto", argv)
-            self.assertEqual(env["AGENTSTREAM_BENCHMARKS"], "bfcl,appworld,tau2,hle,browsecompplus")
+            self.assertEqual(env["AGENTSTREAM_BENCHMARKS"], "bfcl,tau2,browsecompplus")
             self.assertEqual(env["AGENTSTREAM_RL_TRAIN_DATA_SIZE"], "10")
-            self.assertEqual(env["AGENTSTREAM_RL_EPOCHS"], "25")  # 5 x 50 / 10: one single pass
+            self.assertEqual(env["AGENTSTREAM_RL_EPOCHS"], "20")  # ceil(3 x 64 / 10): one single pass
             self.assertEqual(env["ENV_FILE"], "/dev/null")
             self.assertTrue(env["AGENTSTREAM_EXPERIMENT_PREFIX"].startswith(argv[0] + "_"))
             self.assertNotIn("EXPERIMENT_NAME", env)
@@ -72,9 +72,9 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
         # Experiment name follows agentstream_full.env; read the run version from it rather than hard-coding.
         env_text = (SEED_ROOT / RUNNER_DIR / "agentstream_full.env").read_text()
         version = re.search(r"AGENTSTREAM_RUN_VERSION=\$\{AGENTSTREAM_RUN_VERSION:-(\w+)\}", env_text).group(1)
-        exp = f"grpo_qwen3_4b_2507_agentstream_{version}_n50_single_pass_b10_steps25_interleaved_online_s44"
+        exp = f"grpo_qwen3_4b_2507_agentstream_{version}_n64_single_pass_b10_steps20_interleaved_online_s44"
         (self.ckpt / exp).mkdir(parents=True)
-        (self.ckpt / exp / "latest_checkpointed_iteration.txt").write_text("25\n")
+        (self.ckpt / exp / "latest_checkpointed_iteration.txt").write_text("20\n")
         result = self.run_suite(FAIL_BASELINE="seed")
         self.assertEqual(result.returncode, 1)
         self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != "grpo"])
