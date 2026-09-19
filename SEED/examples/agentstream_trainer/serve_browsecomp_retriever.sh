@@ -28,11 +28,14 @@ else
     CUDA_VISIBLE_DEVICES=$DEVICE
     TORCH_DTYPE=${TORCH_DTYPE:-float16}
 fi
-MAX_BATCH=${MAX_BATCH:-32}                            # 1 = one forward per query
+MAX_BATCH=${MAX_BATCH:-64}                            # 1 = one forward per query; 64 = an isolated
+                                                      # browsecompplus batch (10 tasks x 6) in one forward
 BATCH_WINDOW_S=${BATCH_WINDOW_S:-0.02}
-# torch/faiss size their thread pools from the whole node; under PBS/cgroups
-# that oversubscribes the cores actually allocated to this job.
-export OMP_NUM_THREADS=${OMP_NUM_THREADS:-$(nproc)}
+# Encoder threads: two thirds of the cores this job owns (PBS exports NCPUS; nproc
+# honours cgroup limits elsewhere). The rest stays free for vLLM, FSDP and the
+# benchmark runner processes that run alongside the retriever during rollout;
+# taking every core starves them and the env step stalls behind the encoder.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-$(( ${NCPUS:-$(nproc)} * 2 / 3 ))}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-$OMP_NUM_THREADS}
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-60100}
