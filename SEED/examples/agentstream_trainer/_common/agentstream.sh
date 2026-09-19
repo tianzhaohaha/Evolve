@@ -63,6 +63,9 @@ fi
 : "${AGENTSTREAM_EXGENTIC_ROOT:?Please set AGENTSTREAM_EXGENTIC_ROOT to the AgentStream/exgentic checkout}"
 export AGENTSTREAM_EXGENTIC_ROOT
 
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/exgentic_env.sh"
+
 # Stream configuration.
 AS_BENCHMARKS=${AS_BENCHMARKS:-bfcl}
 AS_STREAM_MODE=${AS_STREAM_MODE:-random}

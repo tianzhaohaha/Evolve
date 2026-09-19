@@ -32,6 +32,9 @@ fi
 
 : "${AGENTSTREAM_EXGENTIC_ROOT:?Please set AGENTSTREAM_EXGENTIC_ROOT to the AgentStream/exgentic checkout}"
 
+# shellcheck disable=SC1091
+source "$PROJECT_ROOT/examples/agentstream_trainer/_common/exgentic_env.sh"
+
 RUN_MODE="${RUN_MODE:-full}"  # full or smoke
 AS_BENCHMARKS="${AS_BENCHMARKS:-bfcl,tau2,appworld}"
 if [[ -z "${AS_BENCHMARK_KWARGS_JSON:-}" ]]; then

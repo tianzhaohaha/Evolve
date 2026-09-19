@@ -164,3 +164,7 @@ ray_results/
 *.bak
 *.orig
 *.rej
+
+# exgentic diskcaches (relocated to node-local storage by _common/exgentic_env.sh)
+exgentic_session_cache*
+appworld_disk_cache

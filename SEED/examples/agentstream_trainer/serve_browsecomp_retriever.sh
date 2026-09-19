@@ -18,6 +18,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_common/exgentic_env.sh"   # the retriever is an exgentic process too
 DEVICE=${DEVICE:-0}                                   # cpu | GPU index
 if [[ "$DEVICE" == cpu ]]; then
     CUDA_VISIBLE_DEVICES=""
