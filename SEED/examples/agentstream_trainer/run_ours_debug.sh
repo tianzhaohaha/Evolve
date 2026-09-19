@@ -28,7 +28,8 @@
 #       --reuse-rollouts outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v5 all
 #
 # Stage 3 基线套件（PBS: select=1:ncpus=48:ngpus=2，walltime 168h）
-#   bash examples/agentstream_trainer/run_baseline_suite.sh --dry-run    # 预览 7 条命令
+#   bash examples/agentstream_trainer/run_baseline_suite.sh --dry-run    # 预览各 baseline 的命令
+#   STREAM_MODE=isolated bash examples/agentstream_trainer/run_baseline_suite.sh   # 每域独立 run（<实验名>_<域>）
 #   bash examples/agentstream_trainer/run_baseline_suite.sh              # vanilla grpo grpo_base seed sdar opsd rlsd
 #   # 幂等：已到 25 步的基线自动跳过，未完成的从最近 checkpoint 续跑，原样重提即可
 #   # 单跑一个基线：bash examples/agentstream_trainer/run_agentstream_baseline.sh grpo interleaved

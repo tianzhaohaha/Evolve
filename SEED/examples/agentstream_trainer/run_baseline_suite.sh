@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # PBS/local Stage-3 baseline suite: runs the SEED-paper baselines one after another on the
-# five-benchmark AgentStream stream (bfcl, appworld, tau2, hle, browsecompplus) from the
-# shared SFT checkpoint. Activate Conda in the caller (the PBS wrapper does).
+# three-benchmark AgentStream stream (bfcl, tau2, browsecompplus; appworld and hle carry no
+# signal for a 4B policy) from the shared SFT checkpoint. Activate Conda in the caller (the PBS
+# wrapper does).
 #
-# Usage: bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]
+# Usage: [STREAM_MODE=interleaved|isolated|sequential] bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]
+#
+# isolated runs one independent training run per benchmark (weights never shared); the
+# launcher names them <experiment>_<benchmark> and a baseline counts as complete only when
+# every benchmark run has checkpointed its last step.
 #
 # Every baseline uses identical shared settings (below) and differs only in the objective
 # (see run_agentstream_baseline.sh). Runs are resumable and idempotent: a baseline whose
@@ -37,7 +42,7 @@ export PYTHONUNBUFFERED=1
 
 # ===== Shared experiment settings: edit here (must match the runs of our own method) =====
 BATCH_SIZE=10          # tasks per RL step (x GROUP_SIZE rollouts); 3 x 64 tasks / 10 -> 20 steps (last one padded from the tail)
-STREAM_MODE=interleaved
+STREAM_MODE="${STREAM_MODE:-interleaved}"
 BASELINES=(vanilla grpo seed opsd rlsd)
 COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
@@ -60,8 +65,15 @@ set -a
 # shellcheck disable=SC1090
 source "$AGENTSTREAM_CONFIG"
 set +a
-# One single pass over the stream: ceil(benchmarks x NUM_TASKS / BATCH_SIZE), derived by the config.
-TOTAL_STEPS="$AGENTSTREAM_RL_EPOCHS"
+# One single pass over the stream, derived by the config: ceil(benchmarks x NUM_TASKS / BATCH_SIZE)
+# for a mixed stream, ceil(NUM_TASKS / BATCH_SIZE) per benchmark run when isolated.
+if [[ "$STREAM_MODE" == isolated ]]; then
+    STEPS_KEY=AGENTSTREAM_RL_ISOLATED_EPOCHS; TOTAL_STEPS="$AGENTSTREAM_RL_ISOLATED_EPOCHS"
+    IFS=',' read -ra RUN_SUFFIXES <<< "_${AGENTSTREAM_BENCHMARKS//,/,_}"   # one run per benchmark
+else
+    STEPS_KEY=AGENTSTREAM_RL_EPOCHS; TOTAL_STEPS="$AGENTSTREAM_RL_EPOCHS"
+    RUN_SUFFIXES=("")
+fi
 
 SUITE_TAG="${AGENTSTREAM_MODEL_TAG}_agentstream_${AGENTSTREAM_RUN_VERSION}${_as_skill_suffix}_n${AGENTSTREAM_NUM_TASKS}_${AGENTSTREAM_RL_STREAM_PROFILE}_b${BATCH_SIZE}_steps${TOTAL_STEPS}"
 RUN_ID="${PBS_JOBID:-local_$(date +%Y%m%d_%H%M%S)_$$}"
@@ -72,9 +84,14 @@ CKPT_ROOT="${CHECKPOINTS_ROOT:-$MODELS_ROOT/ckpt}"
 declare -A STATUS LOG
 FAILED=()
 
-completed_steps() {  # <experiment name> -> last checkpointed step (0 if none)
-    local f="$CKPT_ROOT/$1/latest_checkpointed_iteration.txt"
-    [[ -f "$f" ]] && cat "$f" || echo 0
+completed_steps() {  # <experiment name> -> steps checkpointed by every run of it (0 if any is missing)
+    local suffix f n min=""
+    for suffix in "${RUN_SUFFIXES[@]}"; do
+        f="$CKPT_ROOT/$1$suffix/latest_checkpointed_iteration.txt"
+        n=$([[ -f "$f" ]] && cat "$f" || echo 0)
+        [[ -z "$min" || n -lt min ]] && min=$n
+    done
+    echo "$min"
 }
 
 run_baseline() {  # <baseline>
@@ -90,7 +107,7 @@ run_baseline() {  # <baseline>
     local -a extra=(${EXTRA_OVERRIDES[$baseline]:-})
     local -a command=(
         env -u EXPERIMENT_NAME -u EXPERIMENT_NAME_PREFIX -u DEFAULT_LOCAL_DIR
-        "${COMMON_ENV[@]}" "AGENTSTREAM_RL_EPOCHS=$TOTAL_STEPS" "AGENTSTREAM_EXPERIMENT_PREFIX=$prefix"
+        "${COMMON_ENV[@]}" "$STEPS_KEY=$TOTAL_STEPS" "AGENTSTREAM_EXPERIMENT_PREFIX=$prefix"
         bash "$SCRIPT_DIR/run_agentstream_baseline.sh" "$baseline" "$STREAM_MODE"
         "${COMMON_OVERRIDES[@]}" "${extra[@]}"
     )

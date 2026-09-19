@@ -78,3 +78,26 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
         self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != "grpo"])
         self.assertIn("[SKIP] grpo", result.stdout)
         self.assertIn("Failed baseline: seed", result.stdout)
+
+    def test_isolated_mode_runs_per_benchmark_and_skips_only_when_all_runs_finished(self):
+        env_text = (SEED_ROOT / RUNNER_DIR / "agentstream_full.env").read_text()
+        version = re.search(r"AGENTSTREAM_RUN_VERSION=\$\{AGENTSTREAM_RUN_VERSION:-(\w+)\}", env_text).group(1)
+        exp = f"grpo_qwen3_4b_2507_agentstream_{version}_n64_single_pass_b10_steps7_isolated_online_s44"
+        for bench in ("bfcl", "tau2"):  # browsecompplus run missing -> grpo must still run
+            (self.ckpt / f"{exp}_{bench}").mkdir(parents=True)
+            (self.ckpt / f"{exp}_{bench}" / "latest_checkpointed_iteration.txt").write_text("7\n")
+        result = self.run_suite(STREAM_MODE="isolated")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertEqual([c["argv"][0] for c in calls], BASELINES)
+        for call in calls:
+            self.assertEqual(call["argv"][1], "isolated")
+            self.assertEqual(call["env"]["AGENTSTREAM_RL_ISOLATED_EPOCHS"], "7")  # ceil(64 / 10) per benchmark
+            self.assertTrue(call["env"]["AGENTSTREAM_EXPERIMENT_PREFIX"].endswith("_b10_steps7"))
+
+        (self.ckpt / f"{exp}_browsecompplus").mkdir()
+        (self.ckpt / f"{exp}_browsecompplus" / "latest_checkpointed_iteration.txt").write_text("7\n")
+        self.capture.unlink()
+        result = self.run_suite(STREAM_MODE="isolated")
+        self.assertIn("[SKIP] grpo", result.stdout)
+        self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != "grpo"])
