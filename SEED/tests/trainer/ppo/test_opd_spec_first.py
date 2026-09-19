@@ -19,7 +19,8 @@ def run_update(monkeypatch):
     monkeypatch.setattr(dp_actor, "get_torch_device", lambda: SimpleNamespace(current_device=lambda: "cpu"))
 
     def run(mask_dtype=torch.int64, dominance="spec_first", gate_eps=0.0, positive_only=False,
-            spec_coef=0.5, gen_coef=0.3, token_spec_mask=False, has_spec=True, gen_active=True):
+            spec_coef=0.5, gen_coef=0.3, token_spec_mask=False, has_spec=True, gen_active=True,
+            extra_tensors=None):
         config = OmegaConf.create({
             "use_remove_padding": False, "use_torch_compile": False,
             "ulysses_sequence_parallel_size": 1, "use_dynamic_bsz": False,
@@ -66,6 +67,7 @@ def run_update(monkeypatch):
                 torch.tensor([[True, True, True, False], [True, False, True, True]])
                 if token_spec_mask else torch.tensor([True, False])
             )
+        tensors.update(extra_tensors or {})
         batch = DataProto.from_dict(tensors=tensors, meta_info={"temperature": 1.0})
         original_masks = {k: v.clone() for k, v in tensors.items() if "mask" in k}
         metrics = actor.update_policy(batch)

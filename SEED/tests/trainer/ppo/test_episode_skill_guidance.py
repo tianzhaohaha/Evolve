@@ -92,6 +92,34 @@ def test_augmented_observation_without_episode_skill_is_unchanged():
     assert augmented == PROMPT
 
 
+def test_augmented_observation_injects_reference_solution_after_task_line():
+    skeleton = 'Step 0 | obs: shop home | action: {"name":"search","arguments":{"q":"red mug"}}'
+    augmented = build_augmented_observation_text(observation=PROMPT, reference_solution=skeleton)
+
+    assert "Reference Solution" in augmented
+    assert skeleton in augmented
+    assert augmented.index("Your task is to:") < augmented.index("Reference Solution")
+    assert augmented.index("Reference Solution") < augmented.index("Now it's your turn")
+    assert "Episode-Level Skill" not in augmented
+    assert "General Skill" not in augmented
+
+
+def test_augmented_observation_orders_episode_reference_and_global_sections():
+    augmented = build_augmented_observation_text(
+        observation=PROMPT,
+        episode_skill="Check price and color before selecting the product.",
+        reference_solution="Step 0 | obs: shop | action: {\"name\":\"finish\",\"arguments\":{}}",
+        global_skill="Always verify constraints before committing to an action.",
+    )
+
+    assert augmented.index("Episode-Level Skill") < augmented.index("Reference Solution")
+    assert augmented.index("Reference Solution") < augmented.index("General Skill")
+
+
+def test_augmented_observation_without_reference_solution_is_unchanged():
+    assert build_augmented_observation_text(observation=PROMPT, reference_solution="") == PROMPT
+
+
 def test_step_priority_uses_only_step_skill_when_available():
     assert select_skill_teacher_sources(
         step_skill="Check the receptacle first.",

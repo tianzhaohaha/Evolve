@@ -206,6 +206,10 @@ SEED_FAILED_ONLY=${SEED_FAILED_ONLY:-False}
 SEED_FAILED_ONLY_AFTER_STEPS=${SEED_FAILED_ONLY_AFTER_STEPS:-null}
 SEED_FAILURE_SUCCESS_THRESHOLD=${SEED_FAILURE_SUCCESS_THRESHOLD:-1.0}
 SEED_FAILED_SKILL_POSITIVE=${SEED_FAILED_SKILL_POSITIVE:-False}
+# Sibling-success local teacher and sample routing (README "可选改进开关" [4][5]); defaults = original logic.
+SEED_LOCAL_TEACHER_SOURCE=${SEED_LOCAL_TEACHER_SOURCE:-skill}
+SEED_ROUTE_MODE=${SEED_ROUTE_MODE:-none}
+SEED_ROUTE_PG_FAILED_WEIGHT=${SEED_ROUTE_PG_FAILED_WEIGHT:-0.0}
 
 SEED_ENABLE_ANALYSIS=${SEED_ENABLE_ANALYSIS:-True}
 SEED_SELECTOR=${SEED_SELECTOR:-llm}
@@ -325,6 +329,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.failed_only_after_steps=$SEED_FAILED_ONLY_AFTER_STEPS \
     algorithm.seed.failure_success_threshold=$SEED_FAILURE_SUCCESS_THRESHOLD \
     algorithm.seed.failed_skill_positive=$SEED_FAILED_SKILL_POSITIVE \
+    algorithm.seed.local_teacher_source=$SEED_LOCAL_TEACHER_SOURCE \
+    algorithm.seed.route_mode=$SEED_ROUTE_MODE \
+    algorithm.seed.route_pg_failed_weight=$SEED_ROUTE_PG_FAILED_WEIGHT \
     algorithm.seed.mode=$SEED_MODE \
     algorithm.seed.enable_analysis=$SEED_ENABLE_ANALYSIS \
     algorithm.seed.selector=$SEED_SELECTOR \

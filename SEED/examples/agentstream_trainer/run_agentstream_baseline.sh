@@ -44,6 +44,8 @@ overrides=(
     algorithm.seed.global_pool.admit_failed=False
     algorithm.seed.failed_skill_positive=False
     algorithm.seed.replay.enable=False
+    algorithm.seed.local_teacher_source=skill
+    algorithm.seed.route_mode=none
 )
 case "$baseline" in
     vanilla)   overrides+=(actor_rollout_ref.actor.optim.lr=0 algorithm.seed.enable_analysis=False

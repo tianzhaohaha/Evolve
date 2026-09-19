@@ -40,10 +40,12 @@ def build_augmented_observation_text(
     *,
     observation: str,
     episode_skill: str = "",
+    reference_solution: str = "",
     global_skill: str = "",
     step_skill: str = "",
 ) -> str:
-    """Insert episode-level, general (global), and optional critical-step teacher context into a prompt."""
+    """Insert episode-level, reference-solution (sibling success), general (global), and optional
+    critical-step teacher context into a prompt. Empty sections are omitted."""
 
     def _format_skill_section(title: str, instruction: str, body: Any) -> str:
         body_text = str(body).strip()
@@ -115,6 +117,14 @@ def build_augmented_observation_text(
         ),
         episode_skill,
     )
+    reference_section = _format_skill_section(
+        "Reference Solution",
+        (
+            "A successful attempt at this exact task, listed as observation to action steps. "
+            "Use it to decide the current action"
+        ),
+        reference_solution,
+    )
     global_section = _format_skill_section(
         "General Skill",
         (
@@ -128,7 +138,9 @@ def build_augmented_observation_text(
         "Use this current-step skill for this decision only",
         step_skill,
     )
-    prompt_text = _insert_after_task_description(str(observation).strip(), [episode_section, global_section])
+    prompt_text = _insert_after_task_description(
+        str(observation).strip(), [episode_section, reference_section, global_section]
+    )
     return _insert_before_anchor(
         prompt_text,
         [step_section],

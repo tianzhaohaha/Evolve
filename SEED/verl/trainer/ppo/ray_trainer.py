@@ -76,6 +76,7 @@ from seed.prompting import (
     validate_skill_mode,
 )
 from seed.replay import ReplayBuffer, merge_for_update
+from seed.sibling import SIBLING_ANALYSIS_MODE, compute_pg_row_weights, select_sibling_references
 from verl.utils.ema import ema_applies_to, normalize_ema_mode
 from seed.global_pool import (
     GlobalPoolConfig,
@@ -738,6 +739,20 @@ class RayPPOTrainer:
         with the first."""
         return bool(OmegaConf.select(self.config, "algorithm.seed.failed_skill_positive") or False)
 
+    def _get_seed_local_teacher_source(self) -> str:
+        return str(OmegaConf.select(self.config, "algorithm.seed.local_teacher_source") or "skill")
+
+    def _is_seed_sibling_teacher(self) -> bool:
+        """Local OPD teacher context = action skeleton of a successful sibling rollout (seed/sibling.py)."""
+        return self._get_seed_local_teacher_source() == SIBLING_ANALYSIS_MODE
+
+    def _get_seed_route_mode(self) -> str:
+        return str(OmegaConf.select(self.config, "algorithm.seed.route_mode") or "none")
+
+    def _get_seed_route_pg_failed_weight(self) -> float:
+        value = OmegaConf.select(self.config, "algorithm.seed.route_pg_failed_weight")
+        return 0.0 if value is None else float(value)
+
     def _seed_ema_uses(self, target: str) -> bool:
         """Whether the EMA shadow replaces the KL reference ('ref') or the OPD teacher base ('teacher')."""
         return ema_applies_to(self._seed_ema_mode, target)
@@ -780,6 +795,34 @@ class RayPPOTrainer:
         merged.meta_info["global_token_num"] = torch.sum(merged.batch["attention_mask"], dim=-1).tolist()
         metrics["replay/frac_of_batch"] = 1.0 - len(batch) / len(merged)
         return merged
+
+    def _apply_seed_sample_routing(self, batch: DataProto, metrics: Dict[str, float]) -> DataProto:
+        """route_mode=sample: attach the per-row policy-gradient weight consumed by dp_actor.
+
+        Successful trajectories keep weight 1.0; failed trajectories of mixed-outcome groups get
+        ``route_pg_failed_weight`` (their token-level signal comes from the OPD teacher); rows of
+        all-fail / all-success groups keep 1.0. KL / entropy / OPD terms are untouched. Runs before
+        replay mixing so stored groups carry the key as well.
+        """
+        traj_success = self._build_seed_traj_success_map(batch)
+        if not traj_success:
+            module_logger.warning(
+                "SEED sample routing needs episode_success/episode_rewards; every row keeps PG weight 1.0 this step."
+            )
+            metrics["seed/route/skipped_no_success_labels"] = 1.0
+        weights, route_metrics = compute_pg_row_weights(
+            uids=batch.non_tensor_batch["uid"],
+            traj_uids=batch.non_tensor_batch["traj_uid"],
+            traj_success=traj_success,
+            failed_weight=self._get_seed_route_pg_failed_weight(),
+        )
+        batch.batch["pg_row_weight"] = torch.as_tensor(
+            weights, dtype=torch.float32, device=batch.batch["responses"].device
+        )
+        metrics.update(route_metrics)
+        if "teacher_signal_mask" in batch.batch.keys():
+            metrics["seed/route/teacher_rows"] = float(batch.batch["teacher_signal_mask"].sum().item())
+        return batch
 
     @staticmethod
     def _config_bool(config, key: str, default: bool = False) -> bool:
@@ -1325,6 +1368,52 @@ class RayPPOTrainer:
             # groups_per_step / capacity ranges are checked by ReplayBuffer itself at construction.
             if config.algorithm.adv_estimator != AdvantageEstimator.SEED and str(config.algorithm.adv_estimator) != AdvantageEstimator.SEED.value:
                 raise ValueError("algorithm.seed.replay.enable requires algorithm.adv_estimator=seed.")
+        # Sibling-success local teacher and sample routing (seed/sibling.py); defaults keep the original logic.
+        local_teacher_source = str(OmegaConf.select(config, "algorithm.seed.local_teacher_source") or "skill")
+        if local_teacher_source not in ("skill", SIBLING_ANALYSIS_MODE):
+            raise ValueError("algorithm.seed.local_teacher_source must be 'skill' or 'sibling_success'.")
+        if local_teacher_source == SIBLING_ANALYSIS_MODE:
+            if opd_gen_loss_coef > 0:
+                raise ValueError(
+                    "algorithm.seed.local_teacher_source=sibling_success skips the analyzer and requires "
+                    "actor_rollout_ref.actor.opd_gen_loss_coef=0 (the gen channel / global pool need analyzer skills)."
+                )
+            if str(OmegaConf.select(config, "algorithm.seed.skill_mode") or "episode_step") == "step_only":
+                raise ValueError("algorithm.seed.local_teacher_source=sibling_success requires algorithm.seed.skill_mode != step_only.")
+            if str(OmegaConf.select(config, "algorithm.seed.analysis_prompt_version") or "seed") == "seed_visual":
+                raise ValueError("algorithm.seed.local_teacher_source=sibling_success does not support analysis_prompt_version=seed_visual.")
+            if bool(OmegaConf.select(config, "algorithm.seed.skill_gen.enable") or False) and float(
+                config.actor_rollout_ref.actor.get("skill_gen_loss_coef", 0.0) or 0.0
+            ) > 0:
+                raise ValueError("algorithm.seed.local_teacher_source=sibling_success produces no analyzer samples; disable skill_gen.")
+            if not distill_active:
+                module_logger.warning(
+                    "algorithm.seed.local_teacher_source=sibling_success has no consumer: enable an OPD loss "
+                    "coefficient or a teacher-advantage weight (and analysis) for it to take effect."
+                )
+        route_mode = str(OmegaConf.select(config, "algorithm.seed.route_mode") or "none")
+        if route_mode not in ("none", "sample"):
+            raise ValueError("algorithm.seed.route_mode must be 'none' or 'sample'.")
+        if route_mode == "sample":
+            if config.algorithm.adv_estimator != AdvantageEstimator.SEED and str(config.algorithm.adv_estimator) != AdvantageEstimator.SEED.value:
+                raise ValueError("algorithm.seed.route_mode=sample requires algorithm.adv_estimator=seed.")
+            failed_weight = OmegaConf.select(config, "algorithm.seed.route_pg_failed_weight")
+            failed_weight = 0.0 if failed_weight is None else float(failed_weight)
+            if not 0.0 <= failed_weight <= 1.0:
+                raise ValueError("algorithm.seed.route_pg_failed_weight must be in [0, 1].")
+            if str(OmegaConf.select(config, "actor_rollout_ref.actor.policy_loss.loss_mode") or "vanilla") != "vanilla":
+                raise ValueError("algorithm.seed.route_mode=sample requires actor.policy_loss.loss_mode=vanilla.")
+            loss_agg_mode = str(OmegaConf.select(config, "actor_rollout_ref.actor.loss_agg_mode") or "token-mean")
+            if failed_weight == 0.0 and loss_agg_mode == "seq-mean-token-mean":
+                raise ValueError(
+                    "algorithm.seed.route_mode=sample with route_pg_failed_weight=0 divides by a zero row weight "
+                    "under loss_agg_mode=seq-mean-token-mean; use token-mean."
+                )
+            if not distill_active:
+                module_logger.warning(
+                    "algorithm.seed.route_mode=sample without an OPD/teacher signal only down-weights the "
+                    "failed rows of mixed-outcome groups (no distillation replaces their policy gradient)."
+                )
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
@@ -1728,6 +1817,7 @@ class RayPPOTrainer:
                     },
                     "llm_prompt": analysis.get("llm_prompt"),
                     "llm_raw_output": analysis.get("llm_raw_output"),
+                    "reference_traj_uid": analysis.get("reference_traj_uid"),
                 }
                 f.write(_safe_json_dumps(entry) + "\n")
 
@@ -2654,6 +2744,87 @@ class RayPPOTrainer:
                 traj_success[traj_uid] = float(episode_success_np[sample_idx])
         return traj_success
 
+    @staticmethod
+    def _record_seed_analyzed_counts(metrics: Dict[str, float], *, analyzed: int, total: int) -> None:
+        metrics["seed/analyzed_traj_count"] = float(analyzed)
+        metrics["seed/failed_traj_count"] = float(analyzed)
+        metrics["seed/skipped_success_traj_count"] = float(max(total - analyzed, 0))
+
+    def _build_seed_sibling_analysis(
+        self,
+        *,
+        batch: DataProto,
+        episodes: Dict[object, List[Dict[str, object]]],
+        traj_success: Dict[object, float],
+        analysis_tasks: Dict[object, Dict[str, object]],
+        episode_analysis: Dict[object, Dict[str, object]],
+        metrics: Dict[str, float],
+    ) -> None:
+        """local_teacher_source=sibling_success: fill the analysis dicts from successful sibling
+        rollouts instead of the LLM analyzer.
+
+        Only the failed trajectories of mixed-outcome GRPO groups get an entry. Their
+        ``episode_skill`` holds the reference action skeleton (shortest successful sibling) and
+        ``analysis_mode`` marks it, so the prompt loop renders a "Reference Solution" section while
+        the mask / scoring / dump code paths stay the ones of the analyzer mode.
+        """
+        if not traj_success or "uid" not in batch.non_tensor_batch:
+            module_logger.warning(
+                "SEED sibling teacher needs per-row uid and episode_success/episode_rewards; no teacher this step."
+            )
+            self._record_seed_analyzed_counts(metrics, analyzed=0, total=len(episodes))
+            return
+        cfg = OmegaConf.select(self.config, "algorithm.seed.sibling_teacher") or {}
+        traj_rewards: Dict[object, float] = {}
+        if "episode_rewards" in batch.non_tensor_batch:
+            for traj_uid, reward in zip(batch.non_tensor_batch["traj_uid"], batch.non_tensor_batch["episode_rewards"]):
+                traj_rewards.setdefault(traj_uid, float(reward))
+        references, sibling_metrics = select_sibling_references(
+            episodes=episodes,
+            uids=batch.non_tensor_batch["uid"],
+            traj_uids=batch.non_tensor_batch["traj_uid"],
+            traj_success=traj_success,
+            traj_rewards=traj_rewards,
+            obs_chars=int(cfg.get("obs_chars", 160)),
+            action_chars=int(cfg.get("action_chars", 300)),
+            max_chars=int(cfg.get("max_chars", 6000)),
+        )
+        metrics.update(sibling_metrics)
+        skill_mode = self._get_seed_skill_mode()
+        prompt_version = self._get_seed_analysis_prompt_version()
+        for failed_uid, reference in references.items():
+            steps = episodes.get(failed_uid, [])
+            analysis_tasks[failed_uid] = {
+                "steps": steps,
+                "candidate_step_indices": [int(step["step_index"]) for step in steps],
+                "analysis_mode": SIBLING_ANALYSIS_MODE,
+                "episode_success": traj_success.get(failed_uid),
+                "reference_traj_uid": str(reference.traj_uid),
+            }
+            episode_analysis[failed_uid] = {
+                "episode_summary": "",
+                "episode_skill": reference.text,
+                "step_skills": {},
+                "analysis_mode": SIBLING_ANALYSIS_MODE,
+                "analysis_backend_requested": SIBLING_ANALYSIS_MODE,
+                "analysis_backend_used": SIBLING_ANALYSIS_MODE,
+                "analysis_error": None,
+                "analysis_prompt_version": prompt_version,
+                "skill_mode": skill_mode,
+                "task_description": "",
+                "llm_prompt": None,
+                "llm_raw_output": None,
+                "reference_traj_uid": str(reference.traj_uid),
+            }
+        self._record_seed_analyzed_counts(metrics, analyzed=len(analysis_tasks), total=len(episodes))
+        module_logger.info(
+            "SEED sibling teacher: %s failed trajectories get a reference solution (groups=%s, mixed=%.2f, all-fail=%.2f).",
+            len(analysis_tasks),
+            int(sibling_metrics["seed/sibling/groups_total"]),
+            sibling_metrics["seed/sibling/mixed_group_ratio"],
+            sibling_metrics["seed/sibling/allfail_group_ratio"],
+        )
+
     def _seed_prompt_dict_to_text(self, prompt: Dict[str, Any]) -> str:
         messages = prompt.get("messages", []) if isinstance(prompt, dict) else []
         if len(messages) == 1 and messages[0].get("role") == "user":
@@ -3010,6 +3181,9 @@ class RayPPOTrainer:
         failed_only_after_steps = self._get_seed_failed_only_after_steps()
         failed_only = self._should_seed_analyze_failed_only()
         analysis_mode = "failed_episode_opd" if failed_only else "teacher_bootstrap"
+        sibling_mode = self._is_seed_sibling_teacher()
+        if sibling_mode:
+            analysis_mode = SIBLING_ANALYSIS_MODE
 
         module_logger.info(
             "Preparing SEED analysis for batch_size=%s, num_trajectories=%s, selector=%s, analysis_backend=%s, analysis_mode=%s, failed_only_after_steps=%s",
@@ -3020,8 +3194,10 @@ class RayPPOTrainer:
             analysis_mode,
             failed_only_after_steps,
         )
-        metrics["seed/analysis_mode_teacher_bootstrap"] = 1.0 if not failed_only else 0.0
-        metrics["seed/analysis_mode_failed_episode_opd"] = 1.0 if failed_only else 0.0
+        metrics["seed/analysis_mode_teacher_bootstrap"] = 1.0 if (not failed_only and not sibling_mode) else 0.0
+        metrics["seed/analysis_mode_failed_episode_opd"] = 1.0 if (failed_only and not sibling_mode) else 0.0
+        if sibling_mode:
+            metrics["seed/analysis_mode_sibling_success"] = 1.0
 
         if "obs_text" not in batch.non_tensor_batch:
             module_logger.warning("SEED teacher signal skipped because obs_text is missing from the rollout batch.")
@@ -3103,38 +3279,40 @@ class RayPPOTrainer:
                 return True
             return success_value < 1.0
 
-        analyzed_traj_count = float(
-            sum(
-                1
-                for traj_uid in episodes
-                if _should_analyze_traj(traj_uid)
-            )
-        )
-        metrics["seed/analyzed_traj_count"] = analyzed_traj_count
-        metrics["seed/failed_traj_count"] = analyzed_traj_count
-        metrics["seed/skipped_success_traj_count"] = float(
-            sum(1 for traj_uid in episodes if not _should_analyze_traj(traj_uid))
-        )
+        analyzed_traj_count = sum(1 for traj_uid in episodes if _should_analyze_traj(traj_uid))
+        self._record_seed_analyzed_counts(metrics, analyzed=analyzed_traj_count, total=len(episodes))
         if selector != "llm":
             raise ValueError("Episode-level SEED OPD requires algorithm.seed.selector=llm.")
 
-        module_logger.info(
-            "SEED LLM analyzer will build episode-level teacher skills for %s/%s trajectories.",
-            int(analyzed_traj_count),
-            len(episodes),
-        )
-        for traj_uid, steps in episodes.items():
-            if not _should_analyze_traj(traj_uid):
-                continue
-            candidate_step_indices = [int(step["step_index"]) for step in steps]
-            analysis_tasks[traj_uid] = {
-                "steps": steps,
-                "candidate_step_indices": candidate_step_indices,
-                "analysis_mode": analysis_mode,
-                "episode_success": traj_success.get(traj_uid),
-            }
-        analyzed, analysis_workers = self._analyze_seed_episodes(analyzer=analyzer, analysis_tasks=analysis_tasks)
-        episode_analysis.update(analyzed)
+        if sibling_mode:
+            # Reference solutions come from successful sibling rollouts; the analyzer is not called.
+            analysis_workers = 0
+            self._build_seed_sibling_analysis(
+                batch=batch,
+                episodes=episodes,
+                traj_success=traj_success,
+                analysis_tasks=analysis_tasks,
+                episode_analysis=episode_analysis,
+                metrics=metrics,
+            )
+        else:
+            module_logger.info(
+                "SEED LLM analyzer will build episode-level teacher skills for %s/%s trajectories.",
+                int(analyzed_traj_count),
+                len(episodes),
+            )
+            for traj_uid, steps in episodes.items():
+                if not _should_analyze_traj(traj_uid):
+                    continue
+                candidate_step_indices = [int(step["step_index"]) for step in steps]
+                analysis_tasks[traj_uid] = {
+                    "steps": steps,
+                    "candidate_step_indices": candidate_step_indices,
+                    "analysis_mode": analysis_mode,
+                    "episode_success": traj_success.get(traj_uid),
+                }
+            analyzed, analysis_workers = self._analyze_seed_episodes(analyzer=analyzer, analysis_tasks=analysis_tasks)
+            episode_analysis.update(analyzed)
         skill_gen_samples = self._collect_seed_skill_gen_samples(
             episode_analysis=episode_analysis,
             analysis_tasks=analysis_tasks,
@@ -3164,6 +3342,8 @@ class RayPPOTrainer:
         for sample_idx, sample_traj_uid in enumerate(batch.non_tensor_batch["traj_uid"]):
             if sample_traj_uid in analyzed_traj_uids:
                 critical_mask_np[sample_idx] = True
+        if sibling_mode:
+            metrics["seed/sibling/rows_masked"] = float(critical_mask_np.sum())
         module_logger.info(
             "SEED episode-level OPD selected %s steps from %s successful analyzed trajectories (%s failed/skipped).",
             int(critical_mask_np.sum()),
@@ -3335,10 +3515,17 @@ class RayPPOTrainer:
                 skill_mode=skill_mode,
             )
             if use_episode_skill:
-                episode_enhanced_obs = build_augmented_observation_text(
-                    observation=observation_text,
-                    episode_skill=episode_skill,
-                )
+                if str(analysis.get("analysis_mode")) == SIBLING_ANALYSIS_MODE:
+                    # Sibling mode stores the reference action skeleton in `episode_skill`.
+                    episode_enhanced_obs = build_augmented_observation_text(
+                        observation=observation_text,
+                        reference_solution=episode_skill,
+                    )
+                else:
+                    episode_enhanced_obs = build_augmented_observation_text(
+                        observation=observation_text,
+                        episode_skill=episode_skill,
+                    )
                 episode_obs_texts.append(episode_enhanced_obs)
                 episode_data_sources.append(data_source)
                 episode_prompt_images.append(
@@ -4150,6 +4337,8 @@ class RayPPOTrainer:
                         )
                         if self.config.algorithm.adv_estimator == AdvantageEstimator.SEED:
                             metrics.update(batch.meta_info.pop("seed_adv_metrics", {}))
+                            if self._get_seed_route_mode() == "sample":
+                                batch = self._apply_seed_sample_routing(batch=batch, metrics=metrics)
                         elif self.config.algorithm.adv_estimator == AdvantageEstimator.GiGPO:
                             metrics.update(batch.meta_info.pop("gigpo_adv_metrics", {}))
 

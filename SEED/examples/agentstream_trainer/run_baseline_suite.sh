@@ -48,11 +48,14 @@ COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass
     "AGENTSTREAM_RL_TRAIN_DATA_SIZE=$BATCH_SIZE"
+    # No checkpoints by default (as run_ours_debug.sh). Set AGENTSTREAM_RL_SAVE_FREQ>0 to bring
+    # back checkpointing plus the suite's skip-if-complete / resume-from-last behaviour.
+    "AGENTSTREAM_RL_SAVE_FREQ=${AGENTSTREAM_RL_SAVE_FREQ:-0}"
 )
 export "${COMMON_ENV[@]}"
 # Hydra override shared by every baseline (appended last, so it wins over the launcher):
-# full.env pins single_pass runs to resume_mode=disable; the suite needs auto so a
-# re-submitted job continues from the last checkpoint (SAVE_FREQ / kept checkpoints: full.env).
+# full.env pins single_pass runs to resume_mode=disable; the suite needs auto so a re-submitted
+# job continues from the last checkpoint (only effective when SAVE_FREQ>0, see COMMON_ENV).
 COMMON_OVERRIDES=(trainer.resume_mode=auto)
 # Per-baseline extra overrides (hydra key=value, space separated).
 declare -A EXTRA_OVERRIDES=(

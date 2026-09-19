@@ -830,6 +830,10 @@ class DataParallelPPOActor(BasePPOActor):
         )
         if use_opd_gen_loss:
             select_keys.extend(["gen_teacher_log_prob", "gen_skill_mask"])
+        # SEED sample routing (seed/sibling.py): per-row policy-gradient weight; KL / entropy / OPD keep the plain mask.
+        use_pg_row_weight = "pg_row_weight" in data.batch.keys()
+        if use_pg_row_weight:
+            select_keys.append("pg_row_weight")
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
@@ -896,6 +900,13 @@ class DataParallelPPOActor(BasePPOActor):
                     else:
                         response_mask = attention_mask[:, -response_length:]
 
+                    pg_response_mask = response_mask
+                    pg_row_weight_mean = None
+                    if use_pg_row_weight and "pg_row_weight" in data:
+                        pg_row_weight = data["pg_row_weight"].to(device=response_mask.device, dtype=torch.float32)
+                        pg_response_mask = response_mask.to(dtype=torch.float32) * pg_row_weight.unsqueeze(-1)
+                        pg_row_weight_mean = pg_row_weight.mean().item()
+
                     old_log_prob = data["old_log_probs"]
                     advantages = data["advantages"]
 
@@ -924,7 +935,7 @@ class DataParallelPPOActor(BasePPOActor):
                         old_log_prob=old_log_prob,
                         log_prob=log_prob,
                         advantages=advantages,
-                        response_mask=response_mask,
+                        response_mask=pg_response_mask,
                         cliprange=clip_ratio,
                         cliprange_low=clip_ratio_low,
                         cliprange_high=clip_ratio_high,
@@ -1065,6 +1076,8 @@ class DataParallelPPOActor(BasePPOActor):
                         "actor/sp_coef": self.sp_coef,
                         "actor/id_coef": self.id_coef,
                     }
+                    if pg_row_weight_mean is not None:
+                        data["actor/pg_row_weight_mean"] = pg_row_weight_mean
                     data.update(env_aux_metrics)
                     append_to_dict(metrics, data)
 

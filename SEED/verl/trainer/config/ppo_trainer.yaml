@@ -319,6 +319,13 @@ algorithm:
     failed_only_after_steps: null # null -> use failed_only; otherwise analyze all episodes through this step, then failed episodes only
     failure_success_threshold: 1.0 # when episode_success is unavailable, episode_rewards >= this value counts as success
     failed_skill_positive: False # failed episodes: write the episode_skill as the rule to follow instead of avoidance rules (learnable by the one-sided OPD loss); pool admission then skips the spec-gap gate for them
+    local_teacher_source: skill # skill = analyzer hindsight episode skill (original); sibling_success = action skeleton of the shortest successful sibling rollout as the teacher context, applied only to failed rows of mixed-outcome groups, no analyzer call (seed/sibling.py)
+    sibling_teacher:
+      obs_chars: 160 # per-step observation excerpt in the reference skeleton
+      action_chars: 300 # per-step compact action JSON cap
+      max_chars: 6000 # whole skeleton cap; the final step is always kept
+    route_mode: none # none = original; sample = per-row policy-gradient weight: successes 1.0, failed rows of mixed-outcome groups route_pg_failed_weight, all-fail/all-success groups 1.0 (KL / entropy / OPD unchanged)
+    route_pg_failed_weight: 0.0 # route_mode=sample only, in [0, 1]; 0 = hard routing (those rows learn from the OPD teacher only)
     analysis_backend: "openai"
     analysis_prompt_version: "seed" # "seed" uses original SEED; "seed_visual" uses the SEED prompt format with image observations
     analysis_num_workers: 8

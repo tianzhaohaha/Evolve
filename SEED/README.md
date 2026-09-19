@@ -253,17 +253,21 @@ bash examples/seed_trainer/run_sokoban_sft_gemini_self.sh
 
 ## 可选改进开关（AgentStream / global pool，默认全部关闭）
 
-三个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
+五个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
 `run_agentstream_sft_glm_self.sh` → `_common/agentstream.sh` → hydra 传入；关闭时训练逻辑与
-原始实现逐 bit 一致。共同背景：OPD 损失 `loss = gate·(teacher_lp − student_lp)`，
-`gate = sigmoid(β·(teacher_lp − student_lp))`，其梯度对每个 token 都是 `−gate`，只会推高学生
-已采样的 token，从不推低。三个开关分别处理由此产生的三个问题。
+原始实现逐 bit 一致（`run_agentstream_baseline.sh` 另把它们显式钉在默认值上）。共同背景：OPD 损失
+`loss = gate·(teacher_lp − student_lp)`，`gate = sigmoid(β·(teacher_lp − student_lp))`，其梯度对每个
+token 都是 `−gate`，只会推高学生已采样的 token，从不推低。前三个开关分别处理由此产生的三个问题，
+后两个处理 2026-09-19 wandb 实测出的两个问题：teacher 只比学生多看一句自写的 hindsight skill 时
+gap 平均为负，以及失败轨迹上 PG 与 OPD 方向相反。
 
 | 开关（env 变量 → hydra 键） | 默认 | 开启后的行为 |
 |---|---|---|
 | `AGENTSTREAM_SEED_FAILED_SKILL_POSITIVE` → `algorithm.seed.failed_skill_positive` | False | 失败轨迹的 episode_skill 从 avoidance 规则改为"本应遵循的规则"（正向 workflow），spec 与 gen 两通道同时可用；global pool 准入对失败候选不再做 spec_gap 门控，固定排在所有成功候选之后，judge 是唯一过滤器，per-step 上限先截失败候选。池侧效果依赖 `AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED=True`（full env 默认 True，`agentstream.sh` 单独默认 False）：为 False 时失败候选在收集阶段即被丢弃，开关只改 prompt，启动时会打 warning |
 | `AGENTSTREAM_SEED_GLOBAL_POOL_EVICT_POLICY` → `algorithm.seed.global_pool.evict_policy`（配 `..._WINDOW_STEPS` → `window_steps`） | gate_ema / 48 | 满员淘汰策略。`gate_ema`（原始）按 gate EMA 最低淘汰；`lru` 淘汰最久未被检索者；`window` 每步删除入池早于 `当前步 − window_steps` 的条目（检索不续命），满员时按入池步 FIFO |
 | `AGENTSTREAM_SEED_OPD_POSITIVE_ONLY` → `actor_rollout_ref.actor.opd_positive_only` | False | spec 与 gen 两通道只在 `teacher_lp − student_lp > 0` 的 token 上施加损失；token-mean 分母与全部 `actor/opd_*` 指标仍按原 mask 统计，系数语义和曲线口径不变，`opd_loss` 变为非负；可与 `opd_gate_eps` 叠加 |
+| `AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE` → `algorithm.seed.local_teacher_source` | skill | `sibling_success`：不调用分析器；每个任务组里若同时有成功与失败轨迹，取步数最少的成功轨迹，程序化抽成"观测摘录 → 动作 JSON"的骨架，作为 "Reference Solution" 段放进 teacher prompt，只给同组失败轨迹的 token 打分；全败 / 全成组本步无 teacher。骨架上限 `algorithm.seed.sibling_teacher.{obs_chars,action_chars,max_chars}`。要求 `opd_gen_loss_coef=0`、`skill_mode != step_only`；teacher-advantage 模式同样可用 |
+| `AGENTSTREAM_SEED_ROUTE_MODE` → `algorithm.seed.route_mode`（配 `..._ROUTE_PG_FAILED_WEIGHT` → `route_pg_failed_weight`） | none / 0.0 | `sample`：每行一个 PG 权重，成功轨迹 1、有成有败组里的失败轨迹 = `route_pg_failed_weight`（0 = 硬路由，这些行只由 OPD teacher 更新）、全败 / 全成组 1；KL / 熵 / OPD 的掩码不变。要求 `loss_agg_mode=token-mean`、`policy_loss.loss_mode=vanilla`；无 OPD / teacher 信号时只是丢弃负样本 |
 
 为什么需要它们：
 
@@ -279,14 +283,27 @@ bash examples/seed_trainer/run_sokoban_sft_gemini_self.sh
 - **正 gap 限定**。gap<0 的 token 仍以 gate∈(0,0.5) 的权重被推高，方向与 teacher 相反，等价于对
   自己 rollout 的半权重 BC（失败轨迹的错误动作也在内）。置零后 `opd_loss` 的下降只剩"正 gap token
   被学会"一种解释，无关的 pool 命中梯度趋近零，使放宽准入没有下行风险。
+- **成功兄弟 teacher**。teacher 与学生共享权重，唯一的杠杆是特权上下文的信息量；一句 4B 模型自写的
+  hindsight 规则不构成特权信息（实测 gap 为负），而同任务组里已验证成功的兄弟轨迹是免费且真正的
+  特权信息（SDPO 同族做法）。只给失败轨迹打分，得到的是 GRPO 给不出的 token 级信用分配：与成功
+  路径一致的步 gap 为正、分岔的步为负；成功轨迹交给 GRPO，不再叠一层同向锐化。
+- **按样本路由**。失败轨迹上 PG 推低、OPD 推高，净方向由系数比和 Adam 归一化决定，与 token 好坏无关。
+  每条轨迹只归一个目标（SRPO / I-SDPO 的路由）；硬路由下 GRPO 只剩正样本，需盯响应长度与 clipfrac，
+  收窄过快就改软路由（权重 0.3 到 0.5）。
 
 观测指标：`seed/global_pool/never_injected_ratio`（从未被检索条目占比）、`evicted_total`（累计满员
 淘汰数）、`expired`（window 每步过期条数）；`actor/opd_loss`、`actor/opd_teacher_gap_mean`、
-`actor/opd_gate_active_ratio` 及 gen 通道对应项口径不变。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
-再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`。代码落点：`verl/trainer/ppo/core_algos.py`
+`actor/opd_gate_active_ratio` 及 gen 通道对应项口径不变；`seed/sibling/{mixed_group_ratio,
+allfail_group_ratio, rows_masked, ref_chars_mean, ref_steps_mean}`、`seed/route/{rows_pg_weighted_ratio,
+rows_pg_full_ratio, teacher_rows}`、`actor/pg_row_weight_mean`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
+再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[4][5] 的验证套件见
+`examples/agentstream_trainer/run_ours_debug.sh`。代码落点：`verl/trainer/ppo/core_algos.py`
 （`compute_opd_loss(positive_only)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
-（`select_admission_candidates` / `_evict_locked` / `expire`）、`verl/trainer/ppo/ray_trainer.py`
-（开关装配与 `expire` 调用）；测试见 `tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer}.py`。
+（`select_admission_candidates` / `_evict_locked` / `expire`）、`seed/sibling.py`（骨架、参照选择、
+行权重）、`seed/prompting.py`（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`
+（开关装配与 `expire` 调用、`_build_seed_sibling_analysis` / `_apply_seed_sample_routing`）、
+`verl/workers/actor/dp_actor.py`（PG 项的行权重掩码）；测试见
+`tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer,sibling_teacher,episode_skill_guidance}.py`。
 更多池机制见 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。
 
 ## AgentStream 基线复现（`run_agentstream_baseline.sh`）
