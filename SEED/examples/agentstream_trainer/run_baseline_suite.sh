@@ -4,7 +4,7 @@
 # signal for a 4B policy) from the shared SFT checkpoint. Activate Conda in the caller (the PBS
 # wrapper does).
 #
-# Usage: [STREAM_MODE=interleaved|isolated|sequential] bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]
+# Usage: [STREAM_MODE=interleaved|isolated|sequential] [BASELINES=opsd,rlsd] bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]
 #
 # isolated runs one independent training run per benchmark (weights never shared); the
 # launcher names them <experiment>_<benchmark> and a baseline counts as complete only when
@@ -43,7 +43,8 @@ export PYTHONUNBUFFERED=1
 # ===== Shared experiment settings: edit here (must match the runs of our own method) =====
 BATCH_SIZE=10          # tasks per RL step (x GROUP_SIZE rollouts); 3 x 64 tasks / 10 -> 20 steps (last one padded from the tail)
 STREAM_MODE="${STREAM_MODE:-interleaved}"
-BASELINES=(vanilla grpo seed opsd rlsd)
+# Comma-separated env override, e.g. BASELINES=opsd,rlsd to redo an interrupted tail of the suite.
+IFS=',' read -ra BASELINES <<< "${BASELINES:-vanilla,grpo,seed,opsd,rlsd}"
 COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass
