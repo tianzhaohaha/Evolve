@@ -20,7 +20,7 @@ def run_update(monkeypatch):
 
     def run(mask_dtype=torch.int64, dominance="spec_first", gate_eps=0.0, positive_only=False,
             spec_coef=0.5, gen_coef=0.3, token_spec_mask=False, has_spec=True, gen_active=True,
-            extra_tensors=None):
+            extra_tensors=None, norm_mode="mask"):
         config = OmegaConf.create({
             "use_remove_padding": False, "use_torch_compile": False,
             "ulysses_sequence_parallel_size": 1, "use_dynamic_bsz": False,
@@ -31,6 +31,7 @@ def run_update(monkeypatch):
             "opd_loss_coef": spec_coef, "opd_gen_loss_coef": gen_coef,
             "opd_gate_beta": 2.0, "opd_gen_gate_beta": 0.75,
             "opd_gate_eps": gate_eps, "opd_positive_only": positive_only, "opd_gen_dominance": dominance,
+            "opd_norm_mode": norm_mode,
         })
         model = torch.nn.Module()
         model.register_parameter("log_probs", torch.nn.Parameter(torch.full((2, 4), -2.0)))
@@ -88,7 +89,8 @@ def expected_update(result, route):
     config, data, mask = result.config, result.batch.batch, result.mask
     lp = torch.full((2, 4), -2.0, requires_grad=True)
     loss = compute_policy_loss(data["old_log_probs"], lp, data["advantages"], mask, cliprange=0.2)[0]
-    kwargs = {"gate_eps": config.opd_gate_eps, "positive_only": config.opd_positive_only}
+    kwargs = {"gate_eps": config.opd_gate_eps, "positive_only": config.opd_positive_only,
+              "norm_mode": config.opd_norm_mode}
     spec_outputs = gen_outputs = tuple(torch.tensor(0.) for _ in range(5))
     if config.opd_loss_coef > 0 and "teacher_log_prob" in data:
         spec_outputs = compute_opd_loss(lp, data["teacher_log_prob"], mask, data["teacher_signal_mask"],

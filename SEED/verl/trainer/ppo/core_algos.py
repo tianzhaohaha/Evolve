@@ -501,6 +501,7 @@ def compute_opd_loss(
     gate_eps: float = 0.0,
     loss_agg_mode: str = "token-mean",
     positive_only: bool = False,
+    norm_mode: str = "mask",
 ):
     """
     Compute OPD-style confidence-gated teacher distillation loss.
@@ -525,11 +526,19 @@ def compute_opd_loss(
             student) is still pushed up with weight < 0.5, i.e. against the teacher. The token-mean
             denominator and all returned metrics keep the full ``opd_mask`` so the loss coefficient
             and the logged curves stay comparable with the default.
+        norm_mode: ``mask`` (default) aggregates with ``loss_agg_mode`` over ``opd_mask``, so a smaller
+            mask means more pressure per masked token. ``response`` keeps the same numerator but divides
+            by all response tokens (the policy-gradient denominator), making the coefficient a fixed
+            per-token ratio to PG; token-mean only. Metrics are unaffected.
 
     Returns:
         opd_loss, opd_active_token_ratio, opd_gate_mean,
         opd_gate_active_ratio, opd_teacher_gap_mean
     """
+    if norm_mode not in ("mask", "response"):
+        raise ValueError(f"norm_mode must be 'mask' or 'response', got {norm_mode!r}")
+    if norm_mode == "response" and loss_agg_mode != "token-mean":
+        raise ValueError("norm_mode='response' requires loss_agg_mode='token-mean'")
     if log_prob.shape != teacher_log_prob.shape:
         raise ValueError(f"log_prob shape {tuple(log_prob.shape)} does not match teacher_log_prob shape {tuple(teacher_log_prob.shape)}")
     if log_prob.shape != response_mask.shape:
@@ -574,11 +583,14 @@ def compute_opd_loss(
     if positive_only:
         opd_loss_mat = opd_loss_mat * (teacher_gap > 0).to(dtype=opd_loss_mat.dtype)
 
-    opd_loss = agg_loss(
-        loss_mat=opd_loss_mat,
-        loss_mask=opd_mask,
-        loss_agg_mode=loss_agg_mode,
-    )
+    if norm_mode == "response":
+        opd_loss = verl_F.masked_mean(opd_loss_mat * opd_mask, response_mask)
+    else:
+        opd_loss = agg_loss(
+            loss_mat=opd_loss_mat,
+            loss_mask=opd_mask,
+            loss_agg_mode=loss_agg_mode,
+        )
     opd_active_token_ratio = (opd_mask > 0).float().mean()
     opd_gate_mean = verl_F.masked_mean(opd_gate, opd_mask)
     opd_gate_active_ratio = verl_F.masked_mean((opd_gate > 0.5).float(), opd_mask)

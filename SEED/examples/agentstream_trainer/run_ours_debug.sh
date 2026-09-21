@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Experiment suite for OUR method on top of the SEED baseline: sibling-success local teacher
-# (AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=sibling_success) and sample routing
-# (AGENTSTREAM_SEED_ROUTE_MODE=sample), see SEED/README.md "可选改进开关" [4][5]. Same layout as
+# Experiment suite for the three "GRPO floor" guards on top of the SEED baseline
+# (SEED/README.md "可选改进开关" [6]-[8], seed/gating.py):
+#   [6] AGENTSTREAM_SEED_SUCCESS_ONLY   only verified successes are analyzed / distilled
+#   [7] AGENTSTREAM_SEED_OPD_NORM_MODE  OPD divided by all response tokens (the PG denominator)
+#   [8] AGENTSTREAM_SEED_TRAJ_GAP_GATE  a trajectory keeps its teacher signal only if the context
+#                                       raises its mean log-prob by more than the margin
+# The groups form a ladder (F1 -> F2 -> F3): each adds one switch, so the paired per-step difference
+# between neighbours is that switch's marginal effect, and every group pairs with the seed / grpo
+# baselines of run_baseline_suite.sh (same stream, same tasks per step). Same layout as
 # run_global_ablation.sh: COMMON_ENV holds the stream settings shared with run_baseline_suite.sh,
 # SEED_BASE_ENV pins every other extension off (= `run_agentstream_baseline.sh seed`), and each
 # run_exp call spells out only the switches under test. Activate Conda in the caller.
@@ -10,9 +16,10 @@
 #   --dry-run prints each group's resolved setup without training.
 #   TOTAL_STEPS=4 bash examples/agentstream_trainer/run_ours_debug.sh    # short smoke run
 # Stream / hyper-parameters = the baseline suite (3 domains x 64 tasks, 10 per step, no checkpoints).
-# TOTAL_STEPS (default 15, below) caps the stream: the full single pass is 20 steps; a shorter run
-# stops early, validates holdout once at its last step, and compares to the baselines' online curves
-# at the same step (their holdout is measured at step 20, so use the online metrics for comparison).
+# TOTAL_STEPS (default 20 = the full single pass, as the suite) caps the stream: a shorter run stops
+# early, validates holdout once at its last step, and compares to the baselines' online curves at
+# the same step (their holdout is measured at step 20, so use the online metrics for comparison).
+# Floor claims are power-limited (paired noise floor ~1.7 pts over 15-20 steps), so prefer 20.
 #
 # =============================================================================
 # 全流程命令（在 SEED 根目录执行；PBS 作业只需在激活 Conda 后调用对应的一行）
@@ -27,34 +34,32 @@
 #   bash examples/agentstream_trainer/run_stage12.sh prepare            # Stage 1：rollout -> GLM 标注 -> parquet
 #   bash examples/agentstream_trainer/run_stage12.sh sft                # Stage 2：SFT 3 epoch -> 导出 HF 模型
 #   # 建议 prepare / sft 分两个 PBS 作业提交；Stage 1 中断可原样重提（RESUME）
-#   # 换 skill 模式而复用 rollout（可选，非正式基线）：
-#   AGENTSTREAM_SEED_SKILL_MODE=episode_step bash examples/agentstream_trainer/run_stage12.sh \
-#       --reuse-rollouts outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v5 all
 #
 # Stage 3 基线套件（PBS: select=1:ncpus=48:ngpus=2，walltime 168h）
 #   bash examples/agentstream_trainer/run_baseline_suite.sh --dry-run    # 预览命令
 #   bash examples/agentstream_trainer/run_baseline_suite.sh              # vanilla grpo seed opsd rlsd
-#   # 幂等：已到 20 步的基线自动跳过，未完成的从最近 checkpoint 续跑，原样重提即可
 #   # 单跑一个基线：bash examples/agentstream_trainer/run_agentstream_baseline.sh grpo interleaved
 #
-# Stage 3 我们的方法（本脚本：当前启用 G1-G3 三组，步数由 TOTAL_STEPS 控制，默认 15，20 = 完整单遍；G4/G5 已注释）
+# Stage 3 下限守卫的阶梯实验（本脚本：F1-F3 三组 + S0 系数对照，步数由 TOTAL_STEPS 控制，默认 20；两组可选对照已注释）
 #   bash examples/agentstream_trainer/run_ours_debug.sh --dry-run
 #   bash examples/agentstream_trainer/run_ours_debug.sh
+#   TOTAL_STEPS=15 bash examples/agentstream_trainer/run_ours_debug.sh   # 时间不够时
 #   bash examples/agentstream_trainer/run_global_ablation.sh             # 旧的 global-pool 消融
 #
-# Stage 3 使用 episode_step（episode skill + 关键步 skill；正式基线不用，作为我们方法的消融）
-#   前提：已用上面的 --reuse-rollouts 命令生成 ..._v5-episode_step 数据并导出 ...-sft-v5-episode_step 模型。
-#   只需在调用任何 Stage-3 脚本前导出同一个变量（PBS 里放在 conda activate 之后）：
-#     export AGENTSTREAM_SEED_SKILL_MODE=episode_step
-#   注意：sibling_success 只依赖成功兄弟轨迹，与 skill 模式无关（step_only 除外）；该变量同时换了
-#   SFT 起点，与 episode_only 的基线不再同起点，要做同起点对比须把基线套件也在 export 之后重跑。
+# 读数（与 seed / grpo 逐步配对，总体与分域）
+#   方向 [6]：seed/analyzed_traj_count（≈ 每步成功轨迹数）、seed/analysis_mode_success_only
+#   力度 [7]：actor/opd_mask_token_fraction、actor/opd_loss、第一步的 actor/kl_loss（grpo 约 0.020，seed 0.043）
+#   信息 [8]：seed/traj_gate/{pass_ratio, gap_mean_pass, gap_mean_fail, rows_before, rows_after}
+#   行为：response_length/mean 曲线是否与 grpo 重合、browsecomp 逐步成功率是否不再归零
+#   判据：与 grpo 的配对差不低于 -1 SE 且 browsecomp 不归零 = 下限守住
+#   S0：原始 SEED 只把 OPD 系数从 0.01 降到 0.005，与 seed 基线配对 = 单纯减力度能挽回多少
 #
 # 结果
 #   wandb: online/*（在线累计分，主指标）、val/<slug>_score|success_rate（holdout）、actor/opd_*、
-#          seed/sibling/*、seed/route/*、actor/pg_row_weight_mean、timing_s/*
+#          seed/traj_gate/*、timing_s/*
 #   磁盘: ../ckpt/<experiment>/（CHECKPOINTS_ROOT，在仓库根 Evolve/ 下，不在 SEED 内）
 #         agentstream_online_metrics.jsonl（每个 episode 一行）、<step>.jsonl（rollout 原文）、
-#         seed_analysis/step_*.jsonl（sibling 模式下 episode_skill 字段 = 参照骨架，带 reference_traj_uid）
+#         seed_analysis/step_*.jsonl（success_only 下只含成功轨迹）
 #   python examples/agentstream_trainer/analyze_results.py ../ckpt/*/agentstream_online_metrics.jsonl --csv all.csv
 
 set -eo pipefail
@@ -81,22 +86,23 @@ export ENV_FILE=/dev/null PYTHONUNBUFFERED=1
 # stream (20 = full pass, as the suite) and no checkpoints. TEST_FREQ follows the step count, so the
 # holdout is validated once at step TOTAL_STEPS. =====
 STREAM_MODE="${STREAM_MODE:-interleaved}"
-TOTAL_STEPS="${TOTAL_STEPS:-15}"
+TOTAL_STEPS="${TOTAL_STEPS:-12}"
 COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass
     AGENTSTREAM_RL_TRAIN_DATA_SIZE=10                                     # tasks per step, as the suite
     "AGENTSTREAM_RL_EPOCHS=$TOTAL_STEPS"                                  # 20 = full single pass
     AGENTSTREAM_RL_SAVE_FREQ=0                                            # never checkpoint
-    "AGENTSTREAM_SEED_SKILL_MODE=${AGENTSTREAM_SEED_SKILL_MODE:-episode_only}"   # episode_step: see header
+    "AGENTSTREAM_SEED_SKILL_MODE=${AGENTSTREAM_SEED_SKILL_MODE:-episode_only}"
     AGENTSTREAM_SEED_OPD_GEN_DOMINANCE=none                               # inert while gen is off
     AGENTSTREAM_SEED_GLOBAL_POOL_EVICT_POLICY=gate_ema                    # inert while pool=copy
     AGENTSTREAM_SEED_EMA_TAU=0.9                                          # inert while EMA is off
     AGENTSTREAM_SEED_REPLAY_CAPACITY=32                                   # inert while replay is off
 )
-# ===== SEED baseline switches shared by every group: the seed arm of run_agentstream_baseline.sh
-# (single-track OPD, policy_vllm analyzer; gen / pool / eps / positive-only / EMA / replay off). =====
+# ===== SEED baseline switches shared by every group: the full forced-off set of the seed arm of
+# run_agentstream_baseline.sh (single-track OPD 0.01, policy_vllm analyzer; every extension off). =====
 SEED_BASE_ENV=(
+    AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01
     AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF=0
     AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=copy
     AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED=False
@@ -105,6 +111,12 @@ SEED_BASE_ENV=(
     AGENTSTREAM_SEED_OPD_POSITIVE_ONLY=False
     AGENTSTREAM_SEED_EMA_MODE=off
     AGENTSTREAM_SEED_REPLAY_ENABLE=False
+    AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=skill
+    AGENTSTREAM_SEED_ROUTE_MODE=none
+    AGENTSTREAM_SEED_SUCCESS_ONLY=False
+    AGENTSTREAM_SEED_OPD_NORM_MODE=mask
+    AGENTSTREAM_SEED_TRAJ_GAP_GATE=False
+    AGENTSTREAM_SEED_TRAJ_GAP_GATE_MARGIN=0.0
 )
 
 RUN_ID="${PBS_JOBID:-$(date +%Y%m%d_%H%M%S)}"
@@ -136,46 +148,45 @@ run_exp() {
     echo "[$([[ ${STATUS[$name]} -eq 0 ]] && echo SUCCESS || echo FAILED)] $name   end $(date)"
 }
 
-# ===== Groups: sibling-success teacher and sample routing on top of SEED (OPD 0.01 unless noted) =====
-# Time budget: G1-G3 run now; G4 (soft routing) and G5 (control) are commented out below and can be
-# re-enabled or moved to a separate PBS job later.
-# G1: does a verified sibling solution give the failed rollouts a real teacher? (spec gap should turn positive)
-run_exp "G1 SEED + sibling teacher (OPD 0.01)" "sibling_opd001" \
-    AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01 \
-    AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=sibling_success \
-    AGENTSTREAM_SEED_ROUTE_MODE=none \
-    AGENTSTREAM_SEED_ROUTE_PG_FAILED_WEIGHT=0
+# ===== Ladder: SEED baseline + one more floor guard per group (OPD 0.01 everywhere) =====
+# F1: direction only. Removing the push on failed rollouts (87% of rows) -- enough on its own?
+#     Expect analyzed_traj_count ~ successes (~8/60) and opd_mask_token_fraction ~ 0.1; the mask
+#     shrink raises the per-token pressure, so step-1 KL may exceed the baseline's 0.043 -- if the
+#     responses shorten like G1 did, that is the evidence that [6] and [7] must be enabled together.
+run_exp "F1 SEED + success_only" "floor_success_only" \
+    AGENTSTREAM_SEED_SUCCESS_ONLY=True
 
-# G2: coefficient scale once the teacher carries information
-run_exp "G2 SEED + sibling teacher (OPD 0.05)" "sibling_opd005" \
-    AGENTSTREAM_SEED_OPD_LOSS_COEF=0.05 \
-    AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=sibling_success \
-    AGENTSTREAM_SEED_ROUTE_MODE=none \
-    AGENTSTREAM_SEED_ROUTE_PG_FAILED_WEIGHT=0
+# F2: direction + magnitude. Same numerator, PG denominator: the coefficient no longer scales with
+#     the mask. Expect step-1 KL near grpo's 0.020, a small and stable opd_loss, response length
+#     tracking grpo, and the paired difference to grpo within noise.
+run_exp "F2 SEED + success_only + response norm" "floor_success_only_respnorm" \
+    AGENTSTREAM_SEED_SUCCESS_ONLY=True \
+    AGENTSTREAM_SEED_OPD_NORM_MODE=response
 
-# G3: hard routing: successes -> GRPO only, failed rows of mixed groups -> sibling OPD only
-run_exp "G3 sibling teacher + hard routing" "sibling_route_hard" \
-    AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01 \
-    AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=sibling_success \
-    AGENTSTREAM_SEED_ROUTE_MODE=sample \
-    AGENTSTREAM_SEED_ROUTE_PG_FAILED_WEIGHT=0
+# F3: direction + magnitude + information. Can the self-written skill pass the trajectory gate?
+#     Expect a low pass_ratio (baseline gap mean is -0.02..-0.04 nats/token), i.e. OPD ~ off and
+#     F3 ~ grpo; F3 - F2 measures the residual same-direction term on successes.
+run_exp "F3 SEED + success_only + response norm + traj gate" "floor_full" \
+    AGENTSTREAM_SEED_SUCCESS_ONLY=True \
+    AGENTSTREAM_SEED_OPD_NORM_MODE=response \
+    AGENTSTREAM_SEED_TRAJ_GAP_GATE=True \
+    AGENTSTREAM_SEED_TRAJ_GAP_GATE_MARGIN=0.0
 
-# # G4: soft routing: failed rows keep half of their policy gradient (entropy guard)
-# run_exp "G4 sibling teacher + soft routing (0.5)" "sibling_route_soft" \
-#     AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01 \
-#     AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=sibling_success \
-#     AGENTSTREAM_SEED_ROUTE_MODE=sample \
-#     AGENTSTREAM_SEED_ROUTE_PG_FAILED_WEIGHT=0.5
+# S0: the unmodified SEED objective with half the OPD coefficient (no floor guard). Pairs with the
+#     suite's seed arm (0.01): how much of the gap to grpo is recovered by pressure alone, versus
+#     by fixing direction / magnitude / information in F1-F3.
+run_exp "S0 SEED (OPD 0.005)" "seed_opd0005" \
+    AGENTSTREAM_SEED_OPD_LOSS_COEF=0.005
 
-# # G5 control: same routing but the original hindsight-skill teacher restricted to failed
-# # trajectories (SEED_FAILED_ONLY is the upstream knob read by _common/agentstream.sh). If G3 beats
-# # G5, the teacher is what matters, not the routing. Note: G5 also teaches all-fail groups.
-# run_exp "G5 control: hindsight teacher + failed_only + hard routing" "skill_failedonly_route_hard" \
-#     AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01 \
-#     AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=skill \
-#     SEED_FAILED_ONLY=True \
-#     AGENTSTREAM_SEED_ROUTE_MODE=sample \
-#     AGENTSTREAM_SEED_ROUTE_PG_FAILED_WEIGHT=0
+# # Optional controls on the unmodified SEED baseline (all trajectories distilled):
+# # norm_only isolates the per-step magnitude jitter of mask normalisation (mask fraction 0.13-0.75);
+# # gate_only shows the gate's pass ratio under the original teacher = "the self-written skill
+# # carries no information" in one number.
+# run_exp "C1 SEED + response norm" "norm_only" \
+#     AGENTSTREAM_SEED_OPD_NORM_MODE=response
+# run_exp "C2 SEED + traj gate" "gate_only" \
+#     AGENTSTREAM_SEED_TRAJ_GAP_GATE=True \
+#     AGENTSTREAM_SEED_TRAJ_GAP_GATE_MARGIN=0.0
 
 echo ""
 echo "======================================================================"

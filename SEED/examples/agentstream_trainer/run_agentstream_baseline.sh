@@ -46,6 +46,9 @@ overrides=(
     algorithm.seed.replay.enable=False
     algorithm.seed.local_teacher_source=skill
     algorithm.seed.route_mode=none
+    algorithm.seed.success_only=False
+    actor_rollout_ref.actor.opd_norm_mode=mask
+    algorithm.seed.traj_gap_gate.enable=False
 )
 case "$baseline" in
     vanilla)   overrides+=(actor_rollout_ref.actor.optim.lr=0 algorithm.seed.enable_analysis=False

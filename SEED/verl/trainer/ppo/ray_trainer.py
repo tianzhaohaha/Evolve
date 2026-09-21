@@ -77,6 +77,7 @@ from seed.prompting import (
 )
 from seed.replay import ReplayBuffer, merge_for_update
 from seed.sibling import SIBLING_ANALYSIS_MODE, compute_pg_row_weights, select_sibling_references
+from seed.gating import compute_traj_gap_gate, should_analyze_trajectory
 from verl.utils.ema import ema_applies_to, normalize_ema_mode
 from seed.global_pool import (
     GlobalPoolConfig,
@@ -753,6 +754,18 @@ class RayPPOTrainer:
         value = OmegaConf.select(self.config, "algorithm.seed.route_pg_failed_weight")
         return 0.0 if value is None else float(value)
 
+    # GRPO-floor guards (seed/gating.py); every default keeps the original logic.
+    def _is_seed_success_only(self) -> bool:
+        """Analyze / distill verified successes only (mirror of failed_only)."""
+        return bool(OmegaConf.select(self.config, "algorithm.seed.success_only") or False)
+
+    def _is_seed_traj_gap_gate_enabled(self) -> bool:
+        return bool(OmegaConf.select(self.config, "algorithm.seed.traj_gap_gate.enable") or False)
+
+    def _get_seed_traj_gap_gate_margin(self) -> float:
+        value = OmegaConf.select(self.config, "algorithm.seed.traj_gap_gate.margin")
+        return 0.0 if value is None else float(value)
+
     def _seed_ema_uses(self, target: str) -> bool:
         """Whether the EMA shadow replaces the KL reference ('ref') or the OPD teacher base ('teacher')."""
         return ema_applies_to(self._seed_ema_mode, target)
@@ -822,6 +835,34 @@ class RayPPOTrainer:
         metrics.update(route_metrics)
         if "teacher_signal_mask" in batch.batch.keys():
             metrics["seed/route/teacher_rows"] = float(batch.batch["teacher_signal_mask"].sum().item())
+        return batch
+
+    def _apply_seed_traj_gap_gate(self, batch: DataProto, metrics: Dict[str, float]) -> DataProto:
+        """traj_gap_gate: keep the teacher signal only on trajectories whose context makes them more
+        likely (mean teacher gap over their signalled rows above ``margin``; seed/gating.py).
+
+        The rows of rejected trajectories are cleared from every teacher mask, so the OPD loss and
+        the teacher-advantage path both skip them; teacher log-probs are left untouched. Runs once
+        the teacher signals are merged (sync and async paths) and before compute_advantage / replay.
+        """
+        required = ("teacher_log_prob", "old_log_probs", "teacher_signal_mask")
+        if any(key not in batch.batch.keys() for key in required):
+            module_logger.warning("SEED trajectory gap gate skipped: the batch lacks one of %s.", required)
+            return batch
+        keep_rows, gate_metrics = compute_traj_gap_gate(
+            traj_uids=batch.non_tensor_batch["traj_uid"],
+            teacher_log_prob=batch.batch["teacher_log_prob"],
+            old_log_probs=batch.batch["old_log_probs"],
+            response_mask=compute_response_mask(batch),
+            signal_mask=batch.batch["teacher_signal_mask"],
+            margin=self._get_seed_traj_gap_gate_margin(),
+        )
+        for key in ("teacher_signal_mask", "critical_step_mask", "step_skill_mask"):
+            if key in batch.batch.keys():
+                mask = batch.batch[key]
+                keep = keep_rows.view(-1, *([1] * (mask.dim() - 1))).to(device=mask.device, dtype=mask.dtype)
+                batch.batch[key] = mask & keep
+        metrics.update(gate_metrics)
         return batch
 
     @staticmethod
@@ -1413,6 +1454,43 @@ class RayPPOTrainer:
                 module_logger.warning(
                     "algorithm.seed.route_mode=sample without an OPD/teacher signal only down-weights the "
                     "failed rows of mixed-outcome groups (no distillation replaces their policy gradient)."
+                )
+        # GRPO-floor guards (seed/gating.py); defaults keep the original logic.
+        if bool(OmegaConf.select(config, "algorithm.seed.success_only") or False):
+            if (
+                bool(OmegaConf.select(config, "algorithm.seed.failed_only") or False)
+                or OmegaConf.select(config, "algorithm.seed.failed_only_after_steps") is not None
+            ):
+                raise ValueError("algorithm.seed.success_only cannot be combined with failed_only / failed_only_after_steps.")
+            if local_teacher_source == SIBLING_ANALYSIS_MODE:
+                raise ValueError(
+                    "algorithm.seed.success_only cannot be combined with local_teacher_source=sibling_success "
+                    "(the sibling teacher targets failed rows)."
+                )
+            if not distill_active:
+                module_logger.warning(
+                    "algorithm.seed.success_only has no consumer: enable an OPD loss coefficient or a teacher-advantage weight."
+                )
+        opd_norm_mode = str(OmegaConf.select(config, "actor_rollout_ref.actor.opd_norm_mode") or "mask")
+        if opd_norm_mode not in ("mask", "response"):
+            raise ValueError("actor_rollout_ref.actor.opd_norm_mode must be 'mask' or 'response'.")
+        if opd_norm_mode == "response" and str(OmegaConf.select(config, "actor_rollout_ref.actor.loss_agg_mode") or "token-mean") != "token-mean":
+            raise ValueError("actor_rollout_ref.actor.opd_norm_mode=response requires loss_agg_mode=token-mean.")
+        if bool(OmegaConf.select(config, "algorithm.seed.traj_gap_gate.enable") or False):
+            if ema_applies_to(ema_mode, "teacher"):
+                raise ValueError(
+                    "algorithm.seed.traj_gap_gate compares teacher and student log-probs under the same weights; "
+                    "it cannot be combined with ema_mode=teacher/both."
+                )
+            if local_teacher_source == SIBLING_ANALYSIS_MODE:
+                raise ValueError(
+                    "algorithm.seed.traj_gap_gate reads 'context makes the trajectory more likely' on successful "
+                    "trajectories; with local_teacher_source=sibling_success the mask sits on failed rows, where a "
+                    "positive gap means the opposite."
+                )
+            if not distill_active:
+                module_logger.warning(
+                    "algorithm.seed.traj_gap_gate.enable has no consumer: enable an OPD loss coefficient or a teacher-advantage weight."
                 )
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
@@ -2745,9 +2823,12 @@ class RayPPOTrainer:
         return traj_success
 
     @staticmethod
-    def _record_seed_analyzed_counts(metrics: Dict[str, float], *, analyzed: int, total: int) -> None:
+    def _record_seed_analyzed_counts(
+        metrics: Dict[str, float], *, analyzed: int, total: int, failed: Optional[int] = None
+    ) -> None:
+        """``failed`` defaults to ``analyzed`` (the original bookkeeping); success_only passes 0."""
         metrics["seed/analyzed_traj_count"] = float(analyzed)
-        metrics["seed/failed_traj_count"] = float(analyzed)
+        metrics["seed/failed_traj_count"] = float(analyzed if failed is None else failed)
         metrics["seed/skipped_success_traj_count"] = float(max(total - analyzed, 0))
 
     def _build_seed_sibling_analysis(
@@ -3184,6 +3265,7 @@ class RayPPOTrainer:
         sibling_mode = self._is_seed_sibling_teacher()
         if sibling_mode:
             analysis_mode = SIBLING_ANALYSIS_MODE
+        success_only = self._is_seed_success_only()  # successes keep the teacher_bootstrap prompt
 
         module_logger.info(
             "Preparing SEED analysis for batch_size=%s, num_trajectories=%s, selector=%s, analysis_backend=%s, analysis_mode=%s, failed_only_after_steps=%s",
@@ -3198,6 +3280,8 @@ class RayPPOTrainer:
         metrics["seed/analysis_mode_failed_episode_opd"] = 1.0 if (failed_only and not sibling_mode) else 0.0
         if sibling_mode:
             metrics["seed/analysis_mode_sibling_success"] = 1.0
+        if success_only:
+            metrics["seed/analysis_mode_success_only"] = 1.0
 
         if "obs_text" not in batch.non_tensor_batch:
             module_logger.warning("SEED teacher signal skipped because obs_text is missing from the rollout batch.")
@@ -3270,17 +3354,20 @@ class RayPPOTrainer:
             module_logger.warning(
                 "SEED failed_only is enabled, but episode_success/episode_rewards are missing; analyzing all trajectories."
             )
+        if success_only and not traj_success:
+            module_logger.warning(
+                "SEED success_only is enabled, but episode_success/episode_rewards are missing; no trajectory is analyzed this step."
+            )
 
         def _should_analyze_traj(traj_uid: object) -> bool:
-            if not failed_only:
-                return True
-            success_value = traj_success.get(traj_uid)
-            if success_value is None:
-                return True
-            return success_value < 1.0
+            return should_analyze_trajectory(
+                traj_success.get(traj_uid), failed_only=failed_only, success_only=success_only
+            )
 
         analyzed_traj_count = sum(1 for traj_uid in episodes if _should_analyze_traj(traj_uid))
-        self._record_seed_analyzed_counts(metrics, analyzed=analyzed_traj_count, total=len(episodes))
+        self._record_seed_analyzed_counts(
+            metrics, analyzed=analyzed_traj_count, total=len(episodes), failed=0 if success_only else None
+        )
         if selector != "llm":
             raise ValueError("Episode-level SEED OPD requires algorithm.seed.selector=llm.")
 
@@ -4259,6 +4346,8 @@ class RayPPOTrainer:
                                     batch.non_tensor_batch.pop("_batch_source_idx", None)
                                     batch = self._set_zero_seed_teacher_signals(batch=batch, metrics=metrics)
                         self._update_seed_global_pool(batch=batch, metrics=metrics)
+                        if self._is_seed_traj_gap_gate_enabled():
+                            batch = self._apply_seed_traj_gap_gate(batch=batch, metrics=metrics)
 
                     with _timer("adv", timing_raw):
                         # we combine with rule-based rm

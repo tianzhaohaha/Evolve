@@ -253,13 +253,15 @@ bash examples/seed_trainer/run_sokoban_sft_gemini_self.sh
 
 ## 可选改进开关（AgentStream / global pool，默认全部关闭）
 
-五个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
+八个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
 `run_agentstream_sft_glm_self.sh` → `_common/agentstream.sh` → hydra 传入；关闭时训练逻辑与
 原始实现逐 bit 一致（`run_agentstream_baseline.sh` 另把它们显式钉在默认值上）。共同背景：OPD 损失
 `loss = gate·(teacher_lp − student_lp)`，`gate = sigmoid(β·(teacher_lp − student_lp))`，其梯度对每个
 token 都是 `−gate`，只会推高学生已采样的 token，从不推低。前三个开关分别处理由此产生的三个问题，
-后两个处理 2026-09-19 wandb 实测出的两个问题：teacher 只比学生多看一句自写的 hindsight skill 时
-gap 平均为负，以及失败轨迹上 PG 与 OPD 方向相反。
+[4][5] 处理 2026-09-19 wandb 实测出的两个问题：teacher 只比学生多看一句自写的 hindsight skill 时
+gap 平均为负，以及失败轨迹上 PG 与 OPD 方向相反。[6]-[8] 是 "GRPO 下限" 守卫（`seed/gating.py`）：
+v5 单遍流上 SEED 落后 GRPO 的差距几乎全在 browsecomp，机制是 OPD 退化为对自己 rollout 的模仿锚；
+三个开关分别在方向、力度、信息三处让无信息的 teacher 不再产生更新，SEED 的下限回到 GRPO。
 
 | 开关（env 变量 → hydra 键） | 默认 | 开启后的行为 |
 |---|---|---|
@@ -268,6 +270,9 @@ gap 平均为负，以及失败轨迹上 PG 与 OPD 方向相反。
 | `AGENTSTREAM_SEED_OPD_POSITIVE_ONLY` → `actor_rollout_ref.actor.opd_positive_only` | False | spec 与 gen 两通道只在 `teacher_lp − student_lp > 0` 的 token 上施加损失；token-mean 分母与全部 `actor/opd_*` 指标仍按原 mask 统计，系数语义和曲线口径不变，`opd_loss` 变为非负；可与 `opd_gate_eps` 叠加 |
 | `AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE` → `algorithm.seed.local_teacher_source` | skill | `sibling_success`：不调用分析器；每个任务组里若同时有成功与失败轨迹，取步数最少的成功轨迹，程序化抽成"观测摘录 → 动作 JSON"的骨架，作为 "Reference Solution" 段放进 teacher prompt，只给同组失败轨迹的 token 打分；全败 / 全成组本步无 teacher。骨架上限 `algorithm.seed.sibling_teacher.{obs_chars,action_chars,max_chars}`。要求 `opd_gen_loss_coef=0`、`skill_mode != step_only`；teacher-advantage 模式同样可用 |
 | `AGENTSTREAM_SEED_ROUTE_MODE` → `algorithm.seed.route_mode`（配 `..._ROUTE_PG_FAILED_WEIGHT` → `route_pg_failed_weight`） | none / 0.0 | `sample`：每行一个 PG 权重，成功轨迹 1、有成有败组里的失败轨迹 = `route_pg_failed_weight`（0 = 硬路由，这些行只由 OPD teacher 更新）、全败 / 全成组 1；KL / 熵 / OPD 的掩码不变。要求 `loss_agg_mode=token-mean`、`policy_loss.loss_mode=vanilla`；无 OPD / teacher 信号时只是丢弃负样本 |
+| `AGENTSTREAM_SEED_SUCCESS_ONLY` → `algorithm.seed.success_only` | False | 只分析、只蒸馏被验证成功的轨迹（无标签轨迹跳过），`failed_only` 的镜像，两者互斥；掩码由"已分析轨迹"推出，OPD 与 teacher-advantage 两条路径自动只覆盖成功轨迹，失败轨迹只剩 GRPO 一个目标。与 `local_teacher_source=sibling_success` 互斥；须与下一项同开 |
+| `AGENTSTREAM_SEED_OPD_NORM_MODE` → `actor_rollout_ref.actor.opd_norm_mode` | mask | `response`：spec 与 gen 两通道的 OPD 分子不变，分母从掩码 token 数改为全部 response token 数（与 PG 同分母），系数变成固定的"OPD 每 token 力度 / PG 每 token 力度"，不再随掩码占比放大（mask 模式的隐式放大倍数 = 1/掩码占比，基线里在 0.13–0.75 之间跳动）。`actor/opd_*` 指标口径不变；要求 `loss_agg_mode=token-mean` |
+| `AGENTSTREAM_SEED_TRAJ_GAP_GATE` → `algorithm.seed.traj_gap_gate.enable`（配 `..._MARGIN` → `margin`，nats/token） | False / 0.0 | 每条有 teacher 信号的轨迹，把 `teacher_lp − old_lp` 在其信号行的 response token 上取平均，均值 ≤ margin 的轨迹整条移出全部 teacher 掩码（OPD 与 teacher-advantage 都跳过），teacher 对数概率不改。在 teacher 信号汇合后、`compute_advantage` 与 replay 之前执行。与 `ema_mode=teacher/both`、`local_teacher_source=sibling_success` 互斥 |
 
 为什么需要它们：
 
@@ -290,27 +295,40 @@ gap 平均为负，以及失败轨迹上 PG 与 OPD 方向相反。
 - **按样本路由**。失败轨迹上 PG 推低、OPD 推高，净方向由系数比和 Adam 归一化决定，与 token 好坏无关。
   每条轨迹只归一个目标（SRPO / I-SDPO 的路由）；硬路由下 GRPO 只剩正样本，需盯响应长度与 clipfrac，
   收窄过快就改软路由（权重 0.3 到 0.5）。
+- **只蒸馏成功轨迹**。单边损失的梯度永远是"推高已采样 token"，落在失败轨迹上就是和 GRPO 的负
+  advantage 对拉，而流上八成七的轨迹是失败的。只保留成功轨迹后，OPD 从"和奖励打架"变成"给奖励加
+  一点同向的力"（相当于对成功样本的小权重加权 SFT），样本级冲突随之消失，不需要路由。
+- **按全部 token 归一化**。token-mean 只除以掩码 token 数，掩码越小每个 token 分到的力越大；
+  `success_only` 把掩码压到约一成，不配本开关会把系数悄悄放大数倍（G1 崩塌的机制之一），所以两者
+  绑定使用。
+- **轨迹级信息门控**。token 级 gap 噪声主导且有按类型的结构偏差（动作 token 偏正、推理 token 偏负），
+  `positive_only` 挡不住；整条轨迹的平均 gap 把几百个 token 的噪声抵消，只问"上下文有没有让这次成功
+  整体更顺理成章"。自写 skill 的 teacher 下（gap 均值每 token −0.02 到 −0.04）几乎没有轨迹能过门，
+  OPD 自动关闭，训练退回 GRPO；带真实信息的 teacher 才会开门。
 
 观测指标：`seed/global_pool/never_injected_ratio`（从未被检索条目占比）、`evicted_total`（累计满员
 淘汰数）、`expired`（window 每步过期条数）；`actor/opd_loss`、`actor/opd_teacher_gap_mean`、
 `actor/opd_gate_active_ratio` 及 gen 通道对应项口径不变；`seed/sibling/{mixed_group_ratio,
 allfail_group_ratio, rows_masked, ref_chars_mean, ref_steps_mean}`、`seed/route/{rows_pg_weighted_ratio,
-rows_pg_full_ratio, teacher_rows}`、`actor/pg_row_weight_mean`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
-再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[4][5] 的验证套件见
+rows_pg_full_ratio, teacher_rows}`、`actor/pg_row_weight_mean`；`seed/analysis_mode_success_only`、
+`actor/opd_mask_token_fraction`（掩码 token / response token）、`seed/traj_gate/{trajs_scored, pass_ratio,
+rows_before, rows_after, gap_mean_pass, gap_mean_fail}`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
+再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[6]-[8] 的阶梯验证套件（F1–F3）见
 `examples/agentstream_trainer/run_ours_debug.sh`。代码落点：`verl/trainer/ppo/core_algos.py`
-（`compute_opd_loss(positive_only)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
+（`compute_opd_loss(positive_only, norm_mode)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
 （`select_admission_candidates` / `_evict_locked` / `expire`）、`seed/sibling.py`（骨架、参照选择、
-行权重）、`seed/prompting.py`（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`
-（开关装配与 `expire` 调用、`_build_seed_sibling_analysis` / `_apply_seed_sample_routing`）、
-`verl/workers/actor/dp_actor.py`（PG 项的行权重掩码）；测试见
-`tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer,sibling_teacher,episode_skill_guidance}.py`。
+行权重）、`seed/gating.py`（`should_analyze_trajectory` / `compute_traj_gap_gate`）、`seed/prompting.py`
+（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`（开关装配与 `expire` 调用、
+`_build_seed_sibling_analysis` / `_apply_seed_sample_routing` / `_apply_seed_traj_gap_gate`）、
+`verl/workers/actor/dp_actor.py`（PG 项的行权重掩码、`opd_norm_mode` 透传）；测试见
+`tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer,sibling_teacher,floor_gating,episode_skill_guidance}.py`。
 更多池机制见 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。
 
 ## AgentStream 基线复现（`run_agentstream_baseline.sh`）
 
 SEED 论文 Table 1 的基线在 AgentStream 流上统一由一个入口启动，所有基线共用
 `agentstream_full.env` 的 SFT 起点、任务流、seed、group size、lr、KL 与步数，本仓库的扩展
-（gen 通道、global pool、EMA、replay、positive-only、failed-skill-positive）一律强制关闭，只有目标函数不同：
+（gen 通道、global pool、EMA、replay 以及上表的八个开关）一律强制关闭，只有目标函数不同：
 
 ```bash
 bash examples/agentstream_trainer/run_agentstream_baseline.sh <baseline> <mode> [hydra 覆盖...]

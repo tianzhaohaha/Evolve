@@ -180,6 +180,7 @@ SEED_OPD_GEN_GATE_BETA=${SEED_OPD_GEN_GATE_BETA:-null}
 SEED_OPD_GATE_EPS=${SEED_OPD_GATE_EPS:-0.0}
 SEED_OPD_GEN_DOMINANCE=${SEED_OPD_GEN_DOMINANCE:-none}
 SEED_OPD_POSITIVE_ONLY=${SEED_OPD_POSITIVE_ONLY:-False}
+SEED_OPD_NORM_MODE=${SEED_OPD_NORM_MODE:-mask}
 # Stream stabilizers (SEED/EMA_REPLAY_DESIGN.md); defaults keep the original training logic.
 SEED_EMA_MODE=${SEED_EMA_MODE:-off}
 SEED_EMA_TAU=${SEED_EMA_TAU:-0.9}
@@ -210,6 +211,10 @@ SEED_FAILED_SKILL_POSITIVE=${SEED_FAILED_SKILL_POSITIVE:-False}
 SEED_LOCAL_TEACHER_SOURCE=${SEED_LOCAL_TEACHER_SOURCE:-skill}
 SEED_ROUTE_MODE=${SEED_ROUTE_MODE:-none}
 SEED_ROUTE_PG_FAILED_WEIGHT=${SEED_ROUTE_PG_FAILED_WEIGHT:-0.0}
+# GRPO-floor guards (README "可选改进开关" [6]-[8], seed/gating.py); defaults = original logic.
+SEED_SUCCESS_ONLY=${SEED_SUCCESS_ONLY:-False}
+SEED_TRAJ_GAP_GATE=${SEED_TRAJ_GAP_GATE:-False}
+SEED_TRAJ_GAP_GATE_MARGIN=${SEED_TRAJ_GAP_GATE_MARGIN:-0.0}
 
 SEED_ENABLE_ANALYSIS=${SEED_ENABLE_ANALYSIS:-True}
 SEED_SELECTOR=${SEED_SELECTOR:-llm}
@@ -283,6 +288,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.opd_gate_eps=$SEED_OPD_GATE_EPS \
     actor_rollout_ref.actor.opd_gen_dominance=$SEED_OPD_GEN_DOMINANCE \
     actor_rollout_ref.actor.opd_positive_only=$SEED_OPD_POSITIVE_ONLY \
+    actor_rollout_ref.actor.opd_norm_mode=$SEED_OPD_NORM_MODE \
     actor_rollout_ref.actor.ema_mode=$SEED_EMA_MODE \
     actor_rollout_ref.actor.ema_tau=$SEED_EMA_TAU \
     algorithm.seed.global_pool.source=$SEED_GLOBAL_POOL_SOURCE \
@@ -332,6 +338,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.local_teacher_source=$SEED_LOCAL_TEACHER_SOURCE \
     algorithm.seed.route_mode=$SEED_ROUTE_MODE \
     algorithm.seed.route_pg_failed_weight=$SEED_ROUTE_PG_FAILED_WEIGHT \
+    algorithm.seed.success_only=$SEED_SUCCESS_ONLY \
+    algorithm.seed.traj_gap_gate.enable=$SEED_TRAJ_GAP_GATE \
+    algorithm.seed.traj_gap_gate.margin=$SEED_TRAJ_GAP_GATE_MARGIN \
     algorithm.seed.mode=$SEED_MODE \
     algorithm.seed.enable_analysis=$SEED_ENABLE_ANALYSIS \
     algorithm.seed.selector=$SEED_SELECTOR \

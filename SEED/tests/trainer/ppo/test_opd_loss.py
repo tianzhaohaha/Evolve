@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from verl.trainer.ppo.core_algos import compute_opd_loss
@@ -116,3 +117,31 @@ def test_opd_loss_positive_only_drops_negative_gap_tokens_only_from_the_loss():
 
     positive[0].backward()
     torch.testing.assert_close(log_prob.grad, torch.tensor([[-gate[0, 0] / 2, 0.0]]))
+
+
+def test_opd_loss_response_norm_divides_by_all_response_tokens():
+    log_prob = torch.tensor([[-2.0, -1.0, -1.5], [-0.5, -0.25, -0.75]], requires_grad=True)
+    teacher_log_prob = torch.tensor([[-1.0, -2.0, -1.0], [0.0, 0.0, -1.0]])
+    response_mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])  # 5 response tokens
+    step_mask = torch.tensor([1.0, 0.0])  # 2 masked tokens
+    kwargs = dict(log_prob=log_prob, teacher_log_prob=teacher_log_prob, response_mask=response_mask,
+                  opd_step_mask=step_mask, gate_beta=1.0)
+
+    mask_mode = compute_opd_loss(**kwargs)
+    response_mode = compute_opd_loss(**kwargs, norm_mode="response")
+
+    gap = teacher_log_prob - log_prob.detach()
+    masked_sum = (torch.sigmoid(gap) * (teacher_log_prob - log_prob) * response_mask * step_mask[:, None]).sum()
+    torch.testing.assert_close(mask_mode[0], masked_sum / 2)
+    torch.testing.assert_close(response_mode[0], masked_sum / 5)
+    for metric_mask, metric_response in zip(mask_mode[1:], response_mode[1:]):
+        torch.testing.assert_close(metric_mask, metric_response)  # metrics keep the OPD mask
+
+    # A mask covering every response token makes the two modes coincide.
+    full = {**kwargs, "opd_step_mask": torch.tensor([1.0, 1.0])}
+    torch.testing.assert_close(compute_opd_loss(**full)[0], compute_opd_loss(**full, norm_mode="response")[0])
+
+    with pytest.raises(ValueError):
+        compute_opd_loss(**kwargs, norm_mode="bogus")
+    with pytest.raises(ValueError):
+        compute_opd_loss(**kwargs, norm_mode="response", loss_agg_mode="seq-mean-token-sum")

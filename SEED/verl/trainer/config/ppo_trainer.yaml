@@ -60,6 +60,7 @@ actor_rollout_ref:
     opd_gen_gate_beta: null # sigmoid sharpness for the general-skill gate; null inherits opd_gate_beta
     opd_gate_eps: 0.0 # confidence floor shared by both OPD channels; tokens with |teacher gap| below it are ignored
     opd_positive_only: False # both OPD channels: drop the loss on tokens with teacher gap <= 0 (never push against the teacher); denominator/metrics unchanged
+    opd_norm_mode: mask # both OPD channels: mask = token-mean over the OPD mask (original, a smaller mask means more pressure per token); response = same numerator divided by all response tokens (the PG denominator), so the coefficient is a fixed per-token ratio to PG; token-mean only, metrics unchanged (seed/gating.py)
     opd_gen_dominance: none # none | spec_first (down-weight general-skill tokens already covered by the specific-skill gate)
     ema_mode: "off" # "off" | ref | teacher | both: keep an fp32 EMA shadow of the actor (SEED/EMA_REPLAY_DESIGN.md); ref = KL reference from the shadow, teacher = OPD teacher scoring from the shadow
     ema_tau: 0.9 # shadow <- tau * shadow + (1 - tau) * actor once per training step; horizon ~ 1 / (1 - tau) steps
@@ -317,6 +318,7 @@ algorithm:
     selector: "llm"
     failed_only: False # if True, analyze and apply teacher OPD only on failed episodes
     failed_only_after_steps: null # null -> use failed_only; otherwise analyze all episodes through this step, then failed episodes only
+    success_only: False # if True, analyze and apply teacher OPD only on verified successful episodes (unlabelled episodes are skipped); mirror of failed_only and mutually exclusive with it (seed/gating.py)
     failure_success_threshold: 1.0 # when episode_success is unavailable, episode_rewards >= this value counts as success
     failed_skill_positive: False # failed episodes: write the episode_skill as the rule to follow instead of avoidance rules (learnable by the one-sided OPD loss); pool admission then skips the spec-gap gate for them
     local_teacher_source: skill # skill = analyzer hindsight episode skill (original); sibling_success = action skeleton of the shortest successful sibling rollout as the teacher context, applied only to failed rows of mixed-outcome groups, no analyzer call (seed/sibling.py)
@@ -326,6 +328,9 @@ algorithm:
       max_chars: 6000 # whole skeleton cap; the final step is always kept
     route_mode: none # none = original; sample = per-row policy-gradient weight: successes 1.0, failed rows of mixed-outcome groups route_pg_failed_weight, all-fail/all-success groups 1.0 (KL / entropy / OPD unchanged)
     route_pg_failed_weight: 0.0 # route_mode=sample only, in [0, 1]; 0 = hard routing (those rows learn from the OPD teacher only)
+    traj_gap_gate:
+      enable: False # keep the teacher signal only on trajectories whose context raises their likelihood: mean (teacher_lp - old_lp) over the signalled rows' response tokens > margin; rejected trajectories drop out of every teacher mask (OPD and teacher-advantage), teacher log-probs untouched (seed/gating.py)
+      margin: 0.0 # nats per token
     analysis_backend: "openai"
     analysis_prompt_version: "seed" # "seed" uses original SEED; "seed_visual" uses the SEED prompt format with image observations
     analysis_num_workers: 8

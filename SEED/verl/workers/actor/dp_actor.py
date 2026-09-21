@@ -807,6 +807,7 @@ class DataParallelPPOActor(BasePPOActor):
         opd_gen_gate_beta = opd_gate_beta if opd_gen_gate_beta is None else float(opd_gen_gate_beta)
         opd_gate_eps = float(self.config.get("opd_gate_eps", 0.0) or 0.0)
         opd_positive_only = bool(self.config.get("opd_positive_only", False))
+        opd_norm_mode = str(self.config.get("opd_norm_mode", "mask") or "mask")
         opd_gen_dominance = str(self.config.get("opd_gen_dominance", "none") or "none")
         skill_gen_loss_coef = float(self.config.get("skill_gen_loss_coef", 0.0) or 0.0)
         seed_skill_gen_payload = data.meta_info.get("seed_skill_gen")
@@ -956,6 +957,7 @@ class DataParallelPPOActor(BasePPOActor):
                     opd_gate_mean = log_prob.new_tensor(0.0)
                     opd_gate_active_ratio = log_prob.new_tensor(0.0)
                     opd_teacher_gap_mean = log_prob.new_tensor(0.0)
+                    opd_mask_token_fraction = log_prob.new_tensor(0.0)
                     if use_opd_loss and "teacher_log_prob" in data and teacher_mask_key in data:
                         (
                             opd_loss,
@@ -972,8 +974,12 @@ class DataParallelPPOActor(BasePPOActor):
                             gate_eps=opd_gate_eps,
                             positive_only=opd_positive_only,
                             loss_agg_mode=loss_agg_mode,
+                            norm_mode=opd_norm_mode,
                         )
                         policy_loss = policy_loss + opd_loss_coef * opd_loss
+                        # Masked tokens / response tokens: the inverse of the implicit per-token
+                        # amplification of norm_mode=mask (seed/gating.py).
+                        opd_mask_token_fraction = opd_active_token_ratio / response_mask.float().mean().clamp_min(1e-8)
 
                     opd_gen_loss = log_prob.new_tensor(0.0)
                     opd_gen_active_token_ratio = log_prob.new_tensor(0.0)
@@ -1021,6 +1027,7 @@ class DataParallelPPOActor(BasePPOActor):
                             gate_eps=opd_gate_eps,
                             positive_only=opd_positive_only,
                             loss_agg_mode=loss_agg_mode,
+                            norm_mode=opd_norm_mode,
                         )
                         policy_loss = policy_loss + opd_gen_loss_coef * opd_gen_loss
 
@@ -1066,6 +1073,7 @@ class DataParallelPPOActor(BasePPOActor):
                         "actor/opd_gate_mean": opd_gate_mean.detach().item(),
                         "actor/opd_gate_active_ratio": opd_gate_active_ratio.detach().item(),
                         "actor/opd_teacher_gap_mean": opd_teacher_gap_mean.detach().item(),
+                        "actor/opd_mask_token_fraction": opd_mask_token_fraction.detach().item(),
                         "actor/opd_gen_loss": opd_gen_loss.detach().item(),
                         "actor/opd_gen_loss_coef": opd_gen_loss_coef,
                         "actor/opd_gen_active_token_ratio": opd_gen_active_token_ratio.detach().item(),
