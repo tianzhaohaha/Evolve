@@ -17,3 +17,7 @@ export EXGENTIC_LITELLM_CACHING="${EXGENTIC_LITELLM_CACHING:-false}"
 #    this checkout) is disabled through the benchmark kwargs instead (as_config.py
 #    DEFAULT_BENCHMARK_KWARGS -> use_cache=False): a shared file, or a shared symlink to
 #    node-local storage, broke every concurrent job's searches.
+#
+# 3. Retriever RPC timeout (exgentic RetrieverClient). A timed-out search scores 0 silently
+#    ("Action 'search' failed" observation); raise this if a run logs such observations.
+export EXGENTIC_RETRIEVER_TIMEOUT="${EXGENTIC_RETRIEVER_TIMEOUT:-300}"

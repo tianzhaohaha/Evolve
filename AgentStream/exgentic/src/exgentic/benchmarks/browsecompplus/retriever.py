@@ -10,6 +10,7 @@ a single index copy to be shared across all sessions.
 
 import argparse
 import json
+import os
 import threading
 import time
 from concurrent.futures import Future
@@ -139,11 +140,17 @@ class Retriever:
         return self._searcher.get_document(docid)
 
 
+# RPC timeout in seconds; a batched CPU encoder forward under load exceeds the generic 30 s.
+_CLIENT_TIMEOUT = float(os.environ.get("EXGENTIC_RETRIEVER_TIMEOUT", "300"))
+
+
 class RetrieverClient:
     """Lazy HTTP client to a remote Retriever service.
 
     Picklable — stores only the URL. Connects on first use.
     This allows it to survive serialization into Docker containers.
+    A call that fails at the transport level (connection reset / refused,
+    not a timeout) is retried once on a fresh connection.
     """
 
     def __init__(self, url: str) -> None:
@@ -155,15 +162,26 @@ class RetrieverClient:
             from ...adapters.runners.service import HTTPTransport
             from ...adapters.runners.transport import ObjectProxy
 
-            self._proxy = ObjectProxy(HTTPTransport(self._url))
+            self._proxy = ObjectProxy(HTTPTransport(self._url, timeout=_CLIENT_TIMEOUT))
+
+    def _call(self, method: str, *args: Any) -> Any:
+        import httpx
+
+        self._connect()
+        try:
+            return getattr(self._proxy, method)(*args)
+        except httpx.TimeoutException:
+            raise  # the server is saturated; a retry only adds load
+        except httpx.TransportError:
+            self._proxy = None  # drop the local client without a close() round trip
+            self._connect()
+            return getattr(self._proxy, method)(*args)
 
     def search(self, query: str, k: int) -> list:
-        self._connect()
-        return self._proxy.search(query, k)
+        return self._call("search", query, k)
 
     def get_document(self, docid: str) -> dict | None:
-        self._connect()
-        return self._proxy.get_document(docid)
+        return self._call("get_document", docid)
 
     def close(self) -> None:
         if self._proxy is not None:

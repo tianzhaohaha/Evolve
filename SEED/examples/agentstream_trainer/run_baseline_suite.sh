@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # PBS/local Stage-3 baseline suite: runs the SEED-paper baselines one after another on the
 # three-benchmark AgentStream stream (bfcl, tau2, browsecompplus; appworld and hle carry no
-# signal for a 4B policy) from the shared SFT checkpoint. Activate Conda in the caller (the PBS
-# wrapper does).
+# signal for a 4B policy). SEED starts from the shared SFT checkpoint; every other baseline
+# starts from the raw backbone ("_base" suffix, see run_agentstream_baseline.sh). Activate
+# Conda in the caller (the PBS wrapper does).
 #
 # Usage: [STREAM_MODE=interleaved|isolated|sequential] [BASELINES=opsd,rlsd] bash examples/agentstream_trainer/run_baseline_suite.sh [--dry-run]
 #
@@ -44,7 +45,7 @@ export PYTHONUNBUFFERED=1
 BATCH_SIZE=10          # tasks per RL step (x GROUP_SIZE rollouts); 3 x 64 tasks / 10 -> 20 steps (last one padded from the tail)
 STREAM_MODE="${STREAM_MODE:-interleaved}"
 # Comma-separated env override, e.g. BASELINES=opsd,rlsd to redo an interrupted tail of the suite.
-IFS=',' read -ra BASELINES <<< "${BASELINES:-vanilla,grpo,seed,opsd,rlsd}"
+IFS=',' read -ra BASELINES <<< "${BASELINES:-vanilla_base,grpo_base,seed,opsd_base,rlsd_base}"
 COMMON_ENV=(
     AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass

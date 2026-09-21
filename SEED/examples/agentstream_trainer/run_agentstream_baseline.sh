@@ -50,12 +50,14 @@ overrides=(
     actor_rollout_ref.actor.opd_norm_mode=mask
     algorithm.seed.traj_gap_gate.enable=False
 )
-case "$baseline" in
+# "<baseline>_base" = the same objective started from the raw backbone instead of the SFT
+# checkpoint (the paper's setting for every non-SEED row); the KL reference follows the init.
+method="${baseline%_base}"
+[[ "$method" != "$baseline" ]] && export AGENTSTREAM_RL_INIT_FROM_BASE=true
+case "$method" in
     vanilla)   overrides+=(actor_rollout_ref.actor.optim.lr=0 algorithm.seed.enable_analysis=False
                            trainer.critic_warmup=1000000 trainer.test_freq=0 trainer.val_before_train=True) ;;
     grpo)      overrides+=(algorithm.seed.enable_analysis=False) ;;
-    grpo_base) export AGENTSTREAM_RL_INIT_FROM_BASE=true
-               overrides+=(algorithm.seed.enable_analysis=False) ;;
     seed)      overrides+=(actor_rollout_ref.actor.opd_loss_coef=0.01) ;;
     sdar)      overrides+=(actor_rollout_ref.actor.opd_loss_coef=0.01 algorithm.seed.analysis_backend=openai) ;;
     opsd)      overrides+=(algorithm.seed.episode_skill_teacher_advantage_w=1.0 algorithm.seed.outcome_advantage_w=0) ;;
@@ -63,7 +65,7 @@ case "$baseline" in
                            algorithm.seed.teacher_adv_mode=multiplicative
                            algorithm.seed.teacher_adv_mult_eps=0.2) ;;
     *)
-        echo "Unknown baseline '$baseline'. Use vanilla, grpo, grpo_base, seed, sdar, opsd, or rlsd." >&2
+        echo "Unknown baseline '$baseline'. Use vanilla, grpo, seed, sdar, opsd, or rlsd, optionally with a _base suffix." >&2
         exit 2
         ;;
 esac
