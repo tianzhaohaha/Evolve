@@ -7,6 +7,11 @@ outcomes. ``algorithm.seed.route_mode=sample`` gives every row a policy-gradient
 trajectory is trained by one objective: successes by PG, failed rows of mixed groups by the OPD
 teacher (PG weight ``failed_weight``), rows of uniform-outcome groups by PG as before.
 
+``build_reference_solution`` renders the same trajectory with the policy's full responses (reasoning
+and action) instead of action-only skeletons; it is the context of the offline delta test
+(examples/agentstream_trainer/delta_test.py) and the candidate format for a reasoning-aware sibling
+teacher.
+
 Everything here is pure (numpy / json / re) so it is unit-testable without Ray or torch.
 """
 
@@ -56,30 +61,23 @@ def extract_action_text(response: object, max_chars: int = 300) -> str:
     return _truncate(text, max_chars)
 
 
-def build_action_skeleton(
-    steps: Sequence[Mapping[str, object]],
-    *,
-    obs_chars: int = 160,
-    action_chars: int = 300,
-    max_chars: int = 6000,
-) -> Tuple[str, int]:
-    """Render a trajectory as ``Step k | obs: ... | action: ...`` lines.
-
-    Step numbers are 1-based, matching the policy prompt's "You are now at step N".
-    Steps without a parsable action or flagged ``action_valid=False`` are skipped. Over
-    ``max_chars`` the leading lines are kept, the rest is replaced by an omission marker and the
-    final step is always kept (it is usually the submit / finish action). Returns
-    ``(text, rendered_steps)``; ``("", 0)`` when no step carries an action.
-    """
+def _step_lines(steps: Sequence[Mapping[str, object]], *, obs_chars: int, render) -> List[str]:
+    """``Step k | obs: ... | <render(step)>`` per step; skips ``action_valid=False`` and steps ``render`` rejects."""
     lines: List[str] = []
     for step in steps:
         if step.get("action_valid") is False:
             continue
-        action = extract_action_text(step.get("response", ""), max_chars=action_chars)
-        if not action:
+        body = render(step)
+        if not body:
             continue
         obs = _truncate(_collapse(step.get("observation", "")), obs_chars)
-        lines.append(f"Step {int(step.get('step_index', len(lines))) + 1} | obs: {obs} | action: {action}")
+        lines.append(f"Step {int(step.get('step_index', len(lines))) + 1} | obs: {obs} | {body}")
+    return lines
+
+
+def _cap_lines(lines: List[str], max_chars: int) -> Tuple[str, int]:
+    """Join step lines. Over ``max_chars`` the leading lines are kept, the rest is replaced by an
+    omission marker and the final line is always kept. Returns ``(text, rendered_steps)``."""
     if not lines:
         return "", 0
     text = "\n".join(lines)
@@ -100,6 +98,49 @@ def build_action_skeleton(
         kept.append(_OMISSION_MARKER.format(n=omitted))
     kept.append(last)
     return _truncate("\n".join(kept), max_chars), len(lines) - omitted
+
+
+def build_action_skeleton(
+    steps: Sequence[Mapping[str, object]],
+    *,
+    obs_chars: int = 160,
+    action_chars: int = 300,
+    max_chars: int = 6000,
+) -> Tuple[str, int]:
+    """Render a trajectory as ``Step k | obs: ... | action: ...`` lines.
+
+    Step numbers are 1-based, matching the policy prompt's "You are now at step N".
+    Steps without a parsable action or flagged ``action_valid=False`` are skipped. Over
+    ``max_chars`` the leading lines are kept, the rest is replaced by an omission marker and the
+    final step is always kept (it is usually the submit / finish action). Returns
+    ``(text, rendered_steps)``; ``("", 0)`` when no step carries an action.
+    """
+
+    def render(step: Mapping[str, object]) -> str:
+        action = extract_action_text(step.get("response", ""), max_chars=action_chars)
+        return f"action: {action}" if action else ""
+
+    return _cap_lines(_step_lines(steps, obs_chars=obs_chars, render=render), max_chars)
+
+
+def build_reference_solution(
+    steps: Sequence[Mapping[str, object]],
+    *,
+    obs_chars: int = 160,
+    response_chars: int = 1200,
+    max_chars: int = 6000,
+) -> Tuple[str, int]:
+    """Render a trajectory as ``Step k | obs: ... | response: ...`` lines with the policy's full
+    response (reasoning and action tags as written, whitespace collapsed, capped at
+    ``response_chars``), so a reference shows how the sibling reasoned, not only what it did.
+    Skip and cap rules are those of :func:`build_action_skeleton`.
+    """
+
+    def render(step: Mapping[str, object]) -> str:
+        response = _truncate(_collapse(step.get("response", "")), response_chars)
+        return f"response: {response}" if response else ""
+
+    return _cap_lines(_step_lines(steps, obs_chars=obs_chars, render=render), max_chars)
 
 
 def group_outcomes(

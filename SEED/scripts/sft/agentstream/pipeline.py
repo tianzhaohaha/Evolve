@@ -324,6 +324,9 @@ def run_one_rollout(
                 history_text=_history_text(history, args.history_length),
                 history_len=min(len(history), args.history_length),
             )
+            prompt_hook = getattr(args, "prompt_hook", None)  # optional per-step prompt edit (examples/agentstream_trainer/delta_test.py)
+            if prompt_hook is not None:
+                prompt = prompt_hook(prompt, spec, step_idx)
             response, api_error = policy_client.complete([{"role": "user", "content": prompt}])
             response = response or ""
             payloads, valids, extras = agentstream_projection_detailed(

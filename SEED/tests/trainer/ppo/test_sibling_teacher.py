@@ -6,6 +6,7 @@ import torch
 
 from seed.sibling import (
     build_action_skeleton,
+    build_reference_solution,
     compute_pg_row_weights,
     extract_action_text,
     group_outcomes,
@@ -72,6 +73,30 @@ def test_build_action_skeleton_cap_keeps_head_and_final_step():
     assert lines[-1].startswith("Step 20 |")
     assert sum("steps omitted" in line for line in lines) == 1
     assert rendered == len(lines) - 1  # rendered lines = kept head + final step
+
+
+def test_build_reference_solution_keeps_full_responses_and_shares_the_cap_rules():
+    steps = [
+        _step(0, "Welcome   to\nthe shop", SEARCH, raw=f"<think>look\n around</think>\n<action>{SEARCH}</action>"),
+        _step(1, "no action here"),
+        _step(2, "results", '{"name":"click","arguments":{"i":2}}', valid=False),
+        _step(3, "cart", FINISH),
+    ]
+    text, rendered = build_reference_solution(steps, obs_chars=12, response_chars=300, max_chars=6000)
+    assert rendered == 3  # the step without an action still carries a response; the invalid step is skipped
+    lines = text.split("\n")
+    assert lines[0] == f"Step 1 | obs: Welcome t... | response: <think>look around</think> <action>{SEARCH}</action>"
+    assert lines[1] == "Step 2 | obs: no action... | response: <think>no action yet</think>"
+    assert lines[2].startswith("Step 4 | obs: cart | response: <think>x</think><action>")
+    assert build_reference_solution(steps, response_chars=10)[0].split("\n")[0].endswith("response: <think>...")
+    assert build_reference_solution([]) == ("", 0)
+
+    long = [_step(i, f"obs{i}", '{"name":"a","arguments":{"k":%d}}' % i) for i in range(20)]
+    line_len = len(build_reference_solution(long)[0].split("\n")[0]) + 1
+    capped, kept = build_reference_solution(long, max_chars=line_len * 6)
+    capped_lines = capped.split("\n")
+    assert capped_lines[0].startswith("Step 1 |") and capped_lines[-1].startswith("Step 20 |")
+    assert sum("steps omitted" in line for line in capped_lines) == 1 and kept == len(capped_lines) - 1
 
 
 # ---------------------------------------------------------------- group outcomes / references
