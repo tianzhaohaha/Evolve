@@ -34,6 +34,8 @@ def test_resolve_benchmark_kwargs_layers_overrides_on_defaults():
     assert merged["text_only"] is True  # default kept
     assert merged["judge_model"] == "m"  # override applied
     assert DEFAULT_BENCHMARK_KWARGS["hle"] == {"text_only": True, "agent_timeout": 3600}
+    # No shared search-result SQLite: concurrent jobs broke it (silent zero reward).
+    assert DEFAULT_BENCHMARK_KWARGS["browsecompplus"]["use_cache"] is False
     assert resolve_benchmark_kwargs("unknown", None) == {}
 
 

@@ -54,7 +54,10 @@ DEFAULT_BENCHMARK_KWARGS: Dict[str, Dict[str, Any]] = {
     # inlined as base64 into a text-only prompt). agent_timeout counts from
     # session start; SEED batches generation over many slots, so allow slack.
     "hle": {"text_only": True, "agent_timeout": 3600},
-    "browsecompplus": {"include_get_document": True},
+    # use_cache=False: no search-result SQLite cache. That file lives at a cwd-relative
+    # path inside the checkout, i.e. shared by every job on every node, and any
+    # concurrent job breaks it (silent "Action 'search' failed" observations, zero reward).
+    "browsecompplus": {"include_get_document": True, "use_cache": False},
     "swebench": {"subset": "princeton-nlp/SWE-bench_Verified"},
 }
 

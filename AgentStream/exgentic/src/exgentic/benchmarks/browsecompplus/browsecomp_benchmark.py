@@ -90,6 +90,7 @@ class BrowseCompPlusSession(Session):
         max_interactions: int | None = 100,
         session_id: str | None = None,
         retriever_url: str | None = None,
+        use_cache: bool = True,
         **_kwargs: Any,
     ) -> None:
         if session_id is not None:
@@ -98,6 +99,10 @@ class BrowseCompPlusSession(Session):
         self._task_id = instance["task_id"]
         self._done = False
         self._searcher_params = searcher_params
+        # Search-result disk cache (one SQLite file per cwd, shared by every run started
+        # from it). Set use_cache=False to skip it entirely, e.g. when several jobs on
+        # different nodes share the checkout.
+        self._use_cache = use_cache
 
         # Initialize search: use shared retriever service if URL provided,
         # otherwise load the index locally via SearchService singleton.
@@ -368,7 +373,7 @@ class BrowseCompPlusSession(Session):
 
         args_dict = self.get_arguments_dict(act.arguments)
         searcher_params = self.get_searcher_params()
-        search_cache = SearchDiskCacheSession(args_dict["query"], **searcher_params)
+        search_cache = SearchDiskCacheSession(args_dict["query"], use_cache=self._use_cache, **searcher_params)
         search_cache.logger = self.logger
         result = search_cache.handle_start_fetch_results()
         if result:
@@ -409,6 +414,7 @@ class BrowseCompPlusEvaluator(Evaluator):
         inference_model: str = "N/A",
         retriever_url: str | None = None,
         eval_model_id: str = "openai/Azure/gpt-4.1",
+        use_cache: bool = True,
     ) -> None:
         self._subset = subset
         self._searcher_type = searcher_type
@@ -422,6 +428,7 @@ class BrowseCompPlusEvaluator(Evaluator):
         self._inference_model = inference_model
         self._retriever_url = retriever_url
         self._eval_model_id = eval_model_id
+        self._use_cache = use_cache
         self._dataset: list[dict[str, Any]] | None = None
         self._task_lookup: dict[str, dict[str, Any]] | None = None
 
@@ -502,6 +509,7 @@ class BrowseCompPlusEvaluator(Evaluator):
             "max_interactions": self._max_interactions,
             "session_id": index.session_id,
             "eval_model_id": self._eval_model_id,
+            "use_cache": self._use_cache,
         }
         if self._retriever_url:
             kwargs["retriever_url"] = self._retriever_url
@@ -695,6 +703,7 @@ class BrowseCompPlusBenchmark(Benchmark, BaseModel):
             "max_interactions": self.max_interactions,
             "inference_model": self.inference_model,
             "eval_model_id": self.eval_model_id,
+            "use_cache": self.use_cache,
         }
         # Auto-use a shared retriever service for Docker so that session
         # containers don't each load the heavy search index (OOM).
