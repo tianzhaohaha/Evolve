@@ -203,12 +203,12 @@ run_exp() {
 # ===== Experiment A: four arms in one job (OPD 0.01 unless stated; 12 steps by default) =====
 # A1: GRPO reference -- analysis off, no OPD. The launcher hard-codes SEED_ENABLE_ANALYSIS=True, so the
 #     analysis switch must go through a hydra override (after `--`), as run_agentstream_baseline.sh does.
-run_exp "A1 GRPO (analysis off, OPD 0)" "grpo" \
-    AGENTSTREAM_SEED_OPD_LOSS_COEF=0 \
-    -- algorithm.seed.enable_analysis=False actor_rollout_ref.actor.opd_loss_coef=0
+# run_exp "A1 GRPO (analysis off, OPD 0)" "grpo" \
+#     AGENTSTREAM_SEED_OPD_LOSS_COEF=0 \
+#     -- algorithm.seed.enable_analysis=False actor_rollout_ref.actor.opd_loss_coef=0
 
 # A2: SEED reference -- the unmodified objective, OPD 0.01 (= `run_agentstream_baseline.sh seed`).
-run_exp "A2 SEED (OPD 0.01)" "seed_opd001"
+# run_exp "A2 SEED (OPD 0.01)" "seed_opd001"
 
 # A3: floor candidate -- success_only + response norm + trajectory gate. The gate shuts OPD off under
 #     the self-written skill (pass_ratio ~ 0), so A3 should coincide with A1; A3 - A1 is the floor readout.
