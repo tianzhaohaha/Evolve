@@ -1,4 +1,4 @@
-"""Pure parts of examples/agentstream_trainer/delta_test.py (materials for C2 / C4, prompt hook, paired summary)."""
+"""Pure parts of examples/agentstream_trainer/delta_test.py (materials for C2 / C4 / C3, prompt hook, paired summary)."""
 
 from __future__ import annotations
 
@@ -40,14 +40,15 @@ C0 = [
     _record("t4", 0, True, 2, reset_error=True), _record("t4", 1, False, 3),      # only usable rollout fails
     _record("t5", 0, True, 3, slug="tau2"), _record("t5", 1, False, 6, slug="tau2"),
 ]
+TRAJ = delta_test.trajectory_renderer(obs_chars=20, response_chars=80, max_chars=6000)
 
 
 def test_build_materials_self_selects_mixed_tasks_and_the_shortest_best_success():
-    materials = delta_test.build_materials(C0, obs_chars=20, response_chars=80, max_chars=6000)
+    materials = delta_test.build_materials(C0, render=TRAJ)
     assert [m["task_id"] for m in materials] == ["bfcl/t1", "tau2/t5"]
     t1 = materials[0]
     assert (t1["c0_rollouts"], t1["c0_successes"], t1["source_rollout_id"], t1["source_num_steps"]) == (4, 3, 2, 2)
-    assert (t1["source"], t1["source_task_id"], t1["similarity"]) == ("self", "bfcl/t1", 1.0)
+    assert (t1["source"], t1["material"], t1["source_task_id"], t1["similarity"]) == ("self", "trajectory", "bfcl/t1", 1.0)
     assert t1["rendered_steps"] == 2 and t1["chars"] == len(t1["text"])
     assert t1["text"].startswith("Step 1 | obs: obs 0 | response: <think>step 0</think> <action>")
     assert materials[1]["slug"] == "tau2" and materials[1]["source_num_steps"] == 3
@@ -70,7 +71,7 @@ def test_select_neighbor_prefers_the_most_similar_solved_task_of_the_same_benchm
 
 
 def test_build_materials_neighbor_targets_unsolved_tasks_and_drops_the_final_step():
-    materials = delta_test.build_materials(C0, source="neighbor", drop_final_step=True, obs_chars=20, response_chars=80)
+    materials = delta_test.build_materials(C0, render=TRAJ, source="neighbor", drop_final_step=True)
     by_id = {m["task_id"]: m for m in materials}
     # t1 (mixed), t2 (all fail), t4 (fail) are targets; t3 (all success) is not; t5 has no same-benchmark partner.
     assert set(by_id) == {"bfcl/t1", "bfcl/t2", "bfcl/t4"}
@@ -82,18 +83,60 @@ def test_build_materials_neighbor_targets_unsolved_tasks_and_drops_the_final_ste
     assert by_id["bfcl/t2"]["source_num_steps"] == 2 and by_id["bfcl/t2"]["rendered_steps"] == 1
     assert "Step 2" not in by_id["bfcl/t2"]["text"] and "Step 1 | obs: obs 0" in by_id["bfcl/t2"]["text"]
     with pytest.raises(ValueError):
-        delta_test.build_materials(C0, source="pool")
+        delta_test.build_materials(C0, render=TRAJ, source="pool")
 
 
-def test_prompt_hook_matches_the_trainer_teacher_prompt_and_rejects_unknown_tasks():
-    materials = delta_test.build_materials(C0)
-    hook = delta_test.make_prompt_hook(materials)
+def test_skill_material_shares_neighbours_and_keeps_parse_failures():
+    calls = []
+
+    def build_record(*, trajectory, skill_endpoint, skill_mode, max_step_skills):  # stub of build_candidate_skill_record
+        calls.append((trajectory["task_id"], trajectory["rollout_id"], skill_endpoint, skill_mode, max_step_skills))
+        ok = trajectory["task_id"] == "bfcl/t1"
+        return {
+            "analysis_prompt": {"messages": [{"role": "user", "content": "Analyze " + trajectory["task_id"]}]},
+            "episode_skill": "  check the cart before paying  " if ok else "",
+            "episode_summary": "bought a mug" if ok else "",
+            "parse_ok": ok,
+            "analysis_error": None if ok else "ValueError: No JSON object found",
+        }
+
+    render = delta_test.skill_renderer("endpoint", build_record=build_record)
+    materials = delta_test.build_materials(C0, render=render, **delta_test.CONDITIONS["C3"])
+    by_id = {m["task_id"]: m for m in materials}
+    # Same targets and neighbours as C4; the neighbour shared by t2 / t4 is analysed once, with the trainer's settings.
+    c4 = delta_test.build_materials(C0, render=TRAJ, **delta_test.CONDITIONS["C4"])
+    assert [(m["task_id"], m["source_task_id"]) for m in materials] == [(m["task_id"], m["source_task_id"]) for m in c4]
+    assert calls == [("bfcl/t3", 0, "endpoint", "episode_only", 0), ("bfcl/t1", 2, "endpoint", "episode_only", 0)]
+    t2 = by_id["bfcl/t2"]
+    assert (t2["material"], t2["text"], t2["parse_ok"], t2["chars"]) == ("skill", "check the cart before paying", True, 28)
+    assert (t2["rendered_steps"], t2["episode_summary"], t2["prompt_chars"]) == (2, "bought a mug", len("Analyze bfcl/t1"))
+    t1 = by_id["bfcl/t1"]  # neighbour t3 -> parse failure -> kept with empty text, excluded from sampling
+    assert t1["text"] == "" and t1["parse_ok"] is False and "ValueError" in t1["analysis_error"]
+    assert [m["task_id"] for m in delta_test.active_materials(materials)] == ["bfcl/t2", "bfcl/t4"]
+
+    def broken(**kwargs):  # an exception in the analyzer call becomes a failed row, not an aborted phase
+        raise RuntimeError("endpoint down")
+
+    rows = delta_test.build_materials(C0, render=delta_test.skill_renderer("endpoint", build_record=broken), **delta_test.CONDITIONS["C3"])
+    assert [(m["text"], m["parse_ok"], m["analysis_error"]) for m in rows] == [("", False, "RuntimeError: endpoint down")] * 3
+
+
+def test_prompt_hook_injects_each_material_into_the_trainer_section():
     prompt = "You are an expert agent.\nYour task is: buy a mug\nYour current observation is: shop\n\nNow it's your turn to take an action."
+    materials = delta_test.build_materials(C0, render=TRAJ)
+    hook = delta_test.make_prompt_hook(materials)
     injected = hook(prompt, {"slug": "bfcl", "task_id": "t1", "rollout_id": 0}, 0)
     assert injected == build_augmented_observation_text(observation=prompt, reference_solution=materials[0]["text"])
     assert "Reference Solution" in injected and injected != prompt
     with pytest.raises(KeyError):
         hook(prompt, {"slug": "bfcl", "task_id": "t2", "rollout_id": 0}, 0)
+    skill = [{"task_id": "bfcl/t1", "material": "skill", "text": "check the cart before paying"},
+             {"task_id": "bfcl/t2", "material": "skill", "text": ""}]
+    injected = delta_test.make_prompt_hook(skill)(prompt, {"slug": "bfcl", "task_id": "t1", "rollout_id": 0}, 0)
+    assert injected == build_augmented_observation_text(observation=prompt, episode_skill="check the cart before paying")
+    assert "Episode-Level Skill" in injected and "Reference Solution" not in injected
+    with pytest.raises(KeyError):  # empty-text rows are not sampled
+        delta_test.make_prompt_hook(skill)(prompt, {"slug": "bfcl", "task_id": "t2", "rollout_id": 0}, 0)
 
 
 def test_summarize_delta_pairs_tasks_and_reports_c0_strata():
@@ -115,8 +158,13 @@ def test_summarize_delta_pairs_tasks_and_reports_c0_strata():
     assert rows["tau2"]["num_steps_c0"] == pytest.approx(4.5) and rows["tau2"]["num_steps_cx"] == pytest.approx(2.0)
     strata = {t["task_id"]: t["stratum"] for t in summary["per_task"]}
     assert strata == {"bfcl/t1": "c0_mixed", "bfcl/t2": "c0_all_fail", "tau2/t5": "c0_mixed"}
-    report = delta_test.format_report([("C4", summary, delta_test.build_materials(C0, source="neighbor", drop_final_step=True))])
-    assert "## C4: source=neighbor, final step dropped=True" in report
+    c4 = delta_test.build_materials(C0, render=TRAJ, **delta_test.CONDITIONS["C4"])
+    c3 = [dict(m, material="skill", text="" if m["task_id"] == "bfcl/t4" else "rule", chars=4) for m in c4]
+    report = delta_test.format_report([("C4", summary, c4), ("C3", summary, c3)])
+    assert "## C4: source=neighbor, material=trajectory, final step dropped=True" in report
+    assert "Tasks with a reference: 3;" in report
+    assert "## C3: source=neighbor, material=skill, final step dropped=False" in report
+    assert "Tasks with a reference: 2 (of 3 attempted, skill parse rate 0.67)" in report
     assert "| all | 3 |" in report and "| c0_all_fail | 1 |" in report
 
 

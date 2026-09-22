@@ -3,7 +3,9 @@
 # Does an in-context demonstration raise the frozen SFT policy's success rate? C0 = plain prompt;
 # C2 = the task's own shortest successful C0 rollout as a "Reference Solution" (same-task upper bound);
 # C4 = the most similar other task's demonstration, final step dropped (transfer, read the c0_all_fail
-# row); delta = success(Cx) - success(C0), paired over tasks. Then the token-level companion
+# row); C3 = C4's neighbours as the episode skill the frozen policy writes from them with the trainer's
+# analyzer prompt (what a global skill pool carries; C3 - C4 = abstraction); delta = success(Cx) -
+# success(C0), paired over tasks. Then the token-level companion
 # (delta_gap.py): does the C2 reference raise the likelihood of the policy's own C0 trajectories, with
 # structure around the divergence step -- the question SEED's OPD loss actually depends on.
 # No training, no Ray: one vLLM endpoint for the SFT checkpoint + exgentic sessions for the rollouts
@@ -14,7 +16,7 @@
 #   --dry-run prints the resolved settings and the commands without starting anything.
 # Overrides (env, all optional):
 #   DELTA_PHASE=all|c0|materials|conditions|report|gap   (all = rollout phases, report, then gap)
-#   DELTA_CONDITIONS=C2,C4                  DELTA_RUN_GAP=true   DELTA_GAP_GPU=<first of DELTA_GPUS>
+#   DELTA_CONDITIONS=C2,C4,C3               DELTA_RUN_GAP=true   DELTA_GAP_GPU=<first of DELTA_GPUS>
 #   DELTA_NUM_TASKS=16  DELTA_ROLLOUTS=8  DELTA_PARALLEL_SESSIONS=8
 #   DELTA_OUTPUT_DIR=<dir>                  DELTA_MODEL_DIR=$AGENTSTREAM_SFT_MODEL_DIR (the RL start checkpoint)
 #   DELTA_GPUS=$AGENTSTREAM_POLICY_GPU      DELTA_TP=$AGENTSTREAM_POLICY_TP   (vLLM replicas = GPUs / TP)
@@ -23,8 +25,10 @@
 # history_length, AGENTSTREAM_MAX_STEPS, the RL benchmark kwargs (tau2 user simulator, browsecomp
 # retriever URL), think optional / tool_call accepted. The Stage-1 per-benchmark caps
 # (AGENTSTREAM_MAX_STEPS_JSON / _OBS_MAX_CHARS_JSON) are NOT applied: RL does not use them.
-# Phases resume from their outputs; re-submit the same job to continue. Activate Conda in the caller.
-# Results: <DELTA_OUTPUT_DIR>/delta_report.md, delta_per_task_<C>.csv, materials_<C>.jsonl, C0/ C2/ C4/
+# C3's skill call mirrors the trainer's policy_vllm analyzer: greedy, AGENTSTREAM_SEED_ANALYSIS_MAX_COMPLETION_TOKENS.
+# Phases resume from their outputs; re-submit the same job to continue (e.g. add C3 to a finished v5 dir:
+# DELTA_OUTPUT_DIR=outputs/delta_test_qwen3_4b_2507_v5 DELTA_RUN_GAP=false bash ...). Activate Conda in the caller.
+# Results: <DELTA_OUTPUT_DIR>/delta_report.md, delta_per_task_<C>.csv, materials_<C>.jsonl, C0/ C2/ C4/ C3/
 # rollouts, gap_report.md, gap_per_trajectory.csv.
 
 set -eo pipefail
@@ -63,7 +67,7 @@ export PYTHONUNBUFFERED=1
 : "${CONDA_ENV:=seed}"
 : "${VLLM_CONDA_ENV:=$CONDA_ENV}"
 DELTA_PHASE="${DELTA_PHASE:-all}"
-DELTA_CONDITIONS="${DELTA_CONDITIONS:-C2,C4}"
+DELTA_CONDITIONS="${DELTA_CONDITIONS:-C2,C4,C3}"
 DELTA_RUN_GAP="${DELTA_RUN_GAP:-true}"
 DELTA_NUM_TASKS="${DELTA_NUM_TASKS:-16}"
 DELTA_ROLLOUTS="${DELTA_ROLLOUTS:-8}"
@@ -100,6 +104,7 @@ command=(
     --max-steps "$AGENTSTREAM_MAX_STEPS" --history-length "$history_length"
     --policy-base-url "$policy_base_url" --policy-model "$POLICY_MODEL"
     --policy-temperature 1.0 --policy-max-completion-tokens "$MAX_RESPONSE_LENGTH"
+    --skill-max-completion-tokens "$AGENTSTREAM_SEED_ANALYSIS_MAX_COMPLETION_TOKENS"
     ${POLICY_EXTRA_BODY_JSON:+--policy-extra-body-json "$POLICY_EXTRA_BODY_JSON"}
 )
 gap_command=(python examples/agentstream_trainer/delta_gap.py --output-dir "$DELTA_OUTPUT_DIR" --model "$DELTA_MODEL_DIR" --condition C2)
@@ -115,6 +120,7 @@ echo "  benchmarks               : $AGENTSTREAM_BENCHMARKS (RL train tasks minus
 echo "  model                    : $DELTA_MODEL_DIR"
 echo "  endpoint                 : $policy_base_url ($([[ $start_server == true ]] && echo "start $replicas vLLM replica(s) on GPUs $DELTA_GPUS, TP $DELTA_TP" || echo reuse))"
 echo "  sampling                 : temperature 1.0, $MAX_RESPONSE_LENGTH tokens, history $history_length, max_steps $AGENTSTREAM_MAX_STEPS, vLLM max_model_len $SEED_ANALYSIS_MAX_MODEL_LEN, extra body ${POLICY_EXTRA_BODY_JSON:-none}"
+echo "  skill material (C3)      : greedy, $AGENTSTREAM_SEED_ANALYSIS_MAX_COMPLETION_TOKENS tokens (trainer analyzer prompt, episode_only)"
 echo "  output                   : $DELTA_OUTPUT_DIR"
 if [[ "$DRY_RUN" == true ]]; then
     [[ "$DELTA_PHASE" == gap ]] || { printf 'Command:'; printf ' %q' "${command[@]}"; printf '\n'; }

@@ -10,7 +10,10 @@ Conditions on the same tasks, same frozen checkpoint, same sampling settings as 
       final step dropped (no answer / submit leakage) -- every task not already solved every time.
       Measures transferable information, i.e. what a global experience pool could deliver; read the
       "c0_all_fail" stratum first: that is where GRPO has no signal of its own.
-The injection goes through seed.prompting.build_augmented_observation_text, the very section the
+  C3  C4's neighbours again, but the material is the episode skill the frozen policy itself writes
+      from the neighbour's full success (the trainer's analyzer prompt + parser, greedy), injected as
+      the "Episode-Level Skill" -- what a global skill pool would carry. C3 - C4 isolates abstraction.
+The injection goes through seed.prompting.build_augmented_observation_text, the very sections the
 trainer's teacher prompt uses. delta = success(Cx) - success(C0) per task, paired over tasks (mean,
 standard error, by benchmark, by C0 stratum).
 
@@ -24,8 +27,11 @@ Needs a running OpenAI-compatible endpoint for the SFT checkpoint and the exgent
 wrapper examples/agentstream_trainer/run_delta_test.sh (one PBS line) sources the public config,
 starts the endpoint and passes the RL settings; direct use after `set -a; source
 examples/agentstream_trainer/agentstream_full.env; set +a`:
-  python examples/agentstream_trainer/delta_test.py --phase all --conditions C2,C4 --output-dir outputs/delta_test_v5
-Phases (each resumes from its outputs): c0 -> materials -> conditions -> report.
+  python examples/agentstream_trainer/delta_test.py --phase all --conditions C2,C4,C3 --output-dir outputs/delta_test_v5
+Phases (each resumes from its outputs): c0 -> materials -> conditions -> report. Skill materials
+(C3) call the policy endpoint once per distinct neighbour rollout and are reused once written (delete
+materials_C3.jsonl to regenerate); a parse failure keeps the row with an empty text (excluded from
+sampling, counted in the report's parse rate).
 Outputs under --output-dir: sampled_tasks.jsonl, C0/baseline_rollouts.jsonl, materials_<C>.jsonl,
 <C>/baseline_rollouts.jsonl, delta_report.md, delta_per_task_<C>.csv, run_config.json.
 The token-level companion (does the reference raise the likelihood of the C0 trajectories?) is
@@ -36,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import json
 import logging
 import math
@@ -55,12 +62,17 @@ from seed.prompting import build_augmented_observation_text  # noqa: E402
 from seed.sibling import build_reference_solution  # noqa: E402
 
 PHASES = ("c0", "materials", "conditions", "report")
-# source: whose successful rollout is the reference; drop_final_step: strip the answer / submit step.
+# source: whose successful rollout is the reference; material: how the policy sees it (the rendered
+# trajectory, or the episode skill the policy writes from it); drop_final_step: strip the answer /
+# submit step (trajectory material only: the analyzer always sees the full episode, as in training).
 CONDITIONS: Dict[str, Dict[str, Any]] = {
-    "C2": {"source": "self", "drop_final_step": False},
-    "C4": {"source": "neighbor", "drop_final_step": True},
+    "C2": {"source": "self", "material": "trajectory", "drop_final_step": False},
+    "C4": {"source": "neighbor", "material": "trajectory", "drop_final_step": True},
+    "C3": {"source": "neighbor", "material": "skill", "drop_final_step": False},
 }
 PromptHook = Callable[[str, Dict[str, Any], int], str]
+# (reference rollout record, its steps after drop_final_step) -> material fields, at least text / rendered_steps.
+Renderer = Callable[[Dict[str, Any], List[Dict[str, Any]]], Dict[str, Any]]
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -136,21 +148,63 @@ def select_neighbor(task_id: str, by_task: Dict[str, List[Dict[str, Any]]]) -> O
     return other, sim
 
 
+def trajectory_renderer(*, obs_chars: int = 160, response_chars: int = 1200, max_chars: int = 6000) -> Renderer:
+    """Reference solution: observation + full response per step (seed.sibling.build_reference_solution)."""
+
+    def render(reference: Dict[str, Any], steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        text, rendered = build_reference_solution(steps, obs_chars=obs_chars, response_chars=response_chars, max_chars=max_chars)
+        return {"text": text, "rendered_steps": rendered}
+
+    return render
+
+
+def skill_renderer(skill_endpoint: Any, *, build_record: Optional[Callable[..., Dict[str, Any]]] = None) -> Renderer:
+    """Episode skill written from the whole reference rollout by the policy behind ``skill_endpoint``,
+    through the trainer's own analyzer prompt and parser (scripts.sft._common.pipeline.
+    build_candidate_skill_record -> seed.analysis.SEEDEpisodeAnalyzer, teacher_bootstrap mode).
+    Memoised per reference rollout: several targets may share one neighbour. A parse failure yields
+    text == "" (the row is kept for the parse rate, see active_materials)."""
+    if build_record is None:
+        from scripts.sft._common.pipeline import build_candidate_skill_record as build_record
+    cache: Dict[Tuple[str, Any], Dict[str, Any]] = {}
+
+    def render(reference: Dict[str, Any], steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        key = (reference["task_id"], reference["rollout_id"])
+        if key not in cache:
+            try:
+                record = build_record(trajectory=reference, skill_endpoint=skill_endpoint, skill_mode="episode_only", max_step_skills=0)
+            except Exception as exc:  # one bad trajectory must not abort the phase (Stage-1 records it the same way)
+                record = {"analysis_error": f"{type(exc).__name__}: {exc}"}
+            messages = (record.get("analysis_prompt") or {}).get("messages") or [{}]
+            cache[key] = {
+                "text": str(record.get("episode_skill") or "").strip(),
+                "rendered_steps": int(reference.get("num_steps", len(steps))),
+                "parse_ok": bool(record.get("parse_ok")),
+                "analysis_error": record.get("analysis_error"),
+                "episode_summary": record.get("episode_summary", ""),
+                "prompt_chars": len(str(messages[-1].get("content", ""))),
+            }
+        return dict(cache[key])
+
+    return render
+
+
 def build_materials(
     c0_records: Sequence[Dict[str, Any]],
     *,
+    render: Renderer,
     source: str = "self",
+    material: str = "trajectory",
     drop_final_step: bool = False,
-    obs_chars: int = 160,
-    response_chars: int = 1200,
-    max_chars: int = 6000,
 ) -> List[Dict[str, Any]]:
-    """One reference solution per target task.
+    """One material row per target task (text == "" when rendering failed, see :func:`active_materials`).
 
     ``source="self"``: mixed-outcome tasks (0 < successes < rollouts), reference = own shortest success.
     ``source="neighbor"``: every task not solved every time, reference = the most similar other task's
     shortest success (see :func:`select_neighbor`). ``drop_final_step`` removes the reference's last
     step (the answer / submit action) so a transferred demonstration carries procedure, not the answer.
+    ``render`` turns the reference into the injected text; ``material`` labels the row and selects the
+    prompt section in :func:`make_prompt_hook`.
     """
     if source not in ("self", "neighbor"):
         raise ValueError(f"source must be 'self' or 'neighbor', got {source!r}")
@@ -173,9 +227,7 @@ def build_materials(
         steps = record_to_steps(reference)
         if drop_final_step and len(steps) > 1:
             steps = steps[:-1]
-        text, rendered = build_reference_solution(steps, obs_chars=obs_chars, response_chars=response_chars, max_chars=max_chars)
-        if not text:
-            continue
+        fields = render(reference, steps)
         materials.append(
             {
                 "task_id": task_id,
@@ -184,27 +236,35 @@ def build_materials(
                 "c0_rollouts": n,
                 "c0_successes": s,
                 "source": source,
+                "material": material,
                 "source_task_id": source_task,
                 "similarity": round(similarity, 4),
                 "source_rollout_id": reference["rollout_id"],
                 "source_num_steps": int(reference["num_steps"]),
-                "rendered_steps": rendered,
-                "chars": len(text),
-                "text": text,
+                **fields,
+                "chars": len(fields["text"]),
             }
         )
     return materials
 
 
+def active_materials(materials: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rows whose material rendered (a skill row with a parse failure carries text == "")."""
+    return [m for m in materials if m.get("text")]
+
+
 def make_prompt_hook(materials: Sequence[Dict[str, Any]]) -> PromptHook:
-    """Inject the task's reference solution exactly as the trainer builds its teacher prompt."""
-    texts = {m["task_id"]: m["text"] for m in materials}
+    """Inject the task's material exactly as the trainer builds its teacher prompt: a skill goes into the
+    "Episode-Level Skill" section, a rendered trajectory into "Reference Solution"."""
+    by_task = {m["task_id"]: m for m in active_materials(materials)}
 
     def hook(prompt: str, spec: Dict[str, Any], step_idx: int) -> str:
         key = f"{spec['slug']}/{spec['task_id']}"
-        if key not in texts:
-            raise KeyError(f"no reference solution for {key}; a condition must run on its materials' tasks only")
-        return build_augmented_observation_text(observation=prompt, reference_solution=texts[key])
+        if key not in by_task:
+            raise KeyError(f"no material for {key}; a condition must run on its materials' tasks only")
+        m = by_task[key]
+        section = "episode_skill" if m.get("material") == "skill" else "reference_solution"
+        return build_augmented_observation_text(observation=prompt, **{section: m["text"]})
 
     return hook
 
@@ -279,11 +339,16 @@ def format_report(sections: Sequence[Tuple[str, Dict[str, Any], Sequence[Dict[st
     lines = ["# Offline delta test: demonstration in context vs plain prompt (C0)", ""]
     for cond, summary, materials in sections:
         spec = CONDITIONS.get(cond, {})
+        active = active_materials(materials)
+        coverage = f"Tasks with a reference: {len(active)}"
+        if len(active) != len(materials):
+            coverage += f" (of {len(materials)} attempted, skill parse rate {len(active) / len(materials):.2f})"
         lines += [
-            f"## {cond}: source={spec.get('source', '?')}, final step dropped={spec.get('drop_final_step', '?')}",
+            f"## {cond}: source={spec.get('source', '?')}, material={spec.get('material', '?')}, "
+            f"final step dropped={spec.get('drop_final_step', '?')}",
             "",
-            f"Tasks with a reference: {len(materials)}; mean reference length {_mean([m['chars'] for m in materials]):.0f} chars, "
-            f"{_mean([m['rendered_steps'] for m in materials]):.1f} steps, mean task similarity {_mean([m.get('similarity', 1.0) for m in materials]):.2f}.",
+            f"{coverage}; mean reference length {_mean([m['chars'] for m in active]):.0f} chars, "
+            f"{_mean([m['rendered_steps'] for m in active]):.1f} steps, mean task similarity {_mean([m.get('similarity', 1.0) for m in active]):.2f}.",
             "",
             "| group | tasks | success C0 | success Cx | delta | SE | up / down | steps C0 -> Cx | invalid C0 -> Cx | resp chars C0 -> Cx |",
             "|---|---|---|---|---|---|---|---|---|---|",
@@ -298,7 +363,9 @@ def format_report(sections: Sequence[Tuple[str, Dict[str, Any], Sequence[Dict[st
     lines += [
         "Reading: delta within about one SE of zero = the context does not change the outcome; a positive delta with a large",
         "drop in response chars is style imitation, not help. C2 is the same-task upper bound (answer included); C4 is",
-        "transfer -- judge it on the c0_all_fail row, the tasks where GRPO has no signal of its own.",
+        "transfer -- judge it on the c0_all_fail row, the tasks where GRPO has no signal of its own. C3 shows C4's",
+        "neighbours as the policy's own abstract skill: C3 - C4 isolates abstraction; judge transfer on c0_all_fail",
+        "and harm on c0_mixed.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -345,6 +412,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ref-obs-chars", type=int, default=160)
     parser.add_argument("--ref-response-chars", type=int, default=1200)
     parser.add_argument("--ref-max-chars", type=int, default=6000)
+    # Skill material (C3): the analyzer call mirrors the trainer's policy_vllm backend on the same
+    # endpoint -- greedy, the configured analysis token budget.
+    parser.add_argument("--skill-temperature", type=float, default=0.0)
+    parser.add_argument("--skill-max-completion-tokens", type=int, default=int(env("AGENTSTREAM_SEED_ANALYSIS_MAX_COMPLETION_TOKENS", "1024")))
     # Policy endpoint: RL rollout sampling (temperature 1.0, 512 tokens). Explicit local defaults so the
     # resolver never falls back to the OPENAI_BASE_URL of .env (the skill-teacher API).
     parser.add_argument("--policy-base-url", default="http://127.0.0.1:60001/v1")
@@ -391,13 +462,30 @@ def rollout_args(args: argparse.Namespace, output_dir: Path, prompt_hook: Option
     )
 
 
+def policy_endpoint(args: argparse.Namespace):
+    """The SFT endpoint with the RL rollout sampling settings."""
+    from scripts.sft._common.pipeline import resolve_endpoint
+
+    return resolve_endpoint(
+        prefix="policy", args=args, default_base_url_env="POLICY_OPENAI_BASE_URL",
+        default_model_env="POLICY_OPENAI_MODEL", default_model="sft",
+        temperature=args.policy_temperature, max_completion_tokens=args.policy_max_completion_tokens,
+        timeout=args.policy_timeout, retries=args.policy_retries, retry_delay=args.policy_retry_delay,
+        extra_body_json=args.policy_extra_body_json,
+    )
+
+
+def skill_endpoint(args: argparse.Namespace):
+    """The same endpoint with the analyzer's sampling settings (greedy, the analysis token budget)."""
+    return dataclasses.replace(policy_endpoint(args), temperature=args.skill_temperature, max_completion_tokens=args.skill_max_completion_tokens)
+
+
 class Runner:
     """Shares the exgentic hub / policy endpoint between the rollout phases."""
 
     def __init__(self, args: argparse.Namespace, out: Path):
         from agent_system.environments.env_package.agentstream.as_config import resolve_benchmark_kwargs
         from agent_system.environments.env_package.agentstream.exgentic_client import BenchmarkHub
-        from scripts.sft._common.pipeline import resolve_endpoint
 
         if not args.exgentic_root:
             raise SystemExit("--exgentic-root (or AGENTSTREAM_EXGENTIC_ROOT) is required")
@@ -405,13 +493,7 @@ class Runner:
         self.slugs = sorted(s.strip() for s in args.benchmarks.split(",") if s.strip())
         overrides = json.loads(args.benchmark_kwargs_json)
         self.bm_kwargs = {slug: resolve_benchmark_kwargs(slug, overrides.get(slug)) for slug in self.slugs}
-        self.endpoint = resolve_endpoint(
-            prefix="policy", args=args, default_base_url_env="POLICY_OPENAI_BASE_URL",
-            default_model_env="POLICY_OPENAI_MODEL", default_model="sft",
-            temperature=args.policy_temperature, max_completion_tokens=args.policy_max_completion_tokens,
-            timeout=args.policy_timeout, retries=args.policy_retries, retry_delay=args.policy_retry_delay,
-            extra_body_json=args.policy_extra_body_json,
-        )
+        self.endpoint = policy_endpoint(args)
         self.hub = BenchmarkHub(
             exgentic_root=args.exgentic_root, slugs=self.slugs, benchmark_kwargs=self.bm_kwargs,
             runner=args.runner, output_dir=str(out / "exgentic_sessions"), run_id="delta_hub",
@@ -458,12 +540,21 @@ def phase_materials(args: argparse.Namespace, out: Path, cond: str) -> List[Dict
     c0 = read_jsonl(out / "C0" / "baseline_rollouts.jsonl")
     if not c0:
         raise SystemExit("materials: run --phase c0 first")
-    materials = build_materials(
-        c0, **CONDITIONS[cond], obs_chars=args.ref_obs_chars, response_chars=args.ref_response_chars, max_chars=args.ref_max_chars
-    )
-    write_jsonl(materials_path(out, cond), materials)
-    by_slug = Counter(m["slug"] for m in materials)
-    logging.info("materials[%s]: %d tasks with a reference (%s)", cond, len(materials), dict(by_slug))
+    spec, path = CONDITIONS[cond], materials_path(out, cond)
+    if spec["material"] == "skill":
+        # Skills are sampled: keep the file the existing rollouts were collected with (delete it to regenerate).
+        if path.exists():
+            logging.info("materials[%s]: reusing %s", cond, path)
+            return read_jsonl(path)
+        render = skill_renderer(skill_endpoint(args))
+    else:
+        render = trajectory_renderer(obs_chars=args.ref_obs_chars, response_chars=args.ref_response_chars, max_chars=args.ref_max_chars)
+    materials = build_materials(c0, render=render, **spec)
+    write_jsonl(path, materials)
+    active = active_materials(materials)
+    failed = [m["task_id"] for m in materials if not m["text"]]
+    logging.info("materials[%s]: %d/%d tasks with a reference (%s)%s", cond, len(active), len(materials),
+                 dict(Counter(m["slug"] for m in active)), f"; no material for {failed}" if failed else "")
     return materials
 
 
@@ -509,11 +600,12 @@ def main() -> None:
         for cond in args.condition_list:
             materials = phase_materials(args, out, cond) if "materials" in phases else read_jsonl(materials_path(out, cond))
             if "conditions" in phases:
-                if not materials:
+                active = active_materials(materials)
+                if not active:
                     logging.warning("[%s] no materials (run --phase materials); skipping", cond)
                     continue
-                tasks = [{"slug": m["slug"], "task_id": m["benchmark_task_id"]} for m in materials]
-                runner.collect(cond, tasks, prompt_hook=make_prompt_hook(materials))
+                tasks = [{"slug": m["slug"], "task_id": m["benchmark_task_id"]} for m in active]
+                runner.collect(cond, tasks, prompt_hook=make_prompt_hook(active))
         if "report" in phases:
             phase_report(out, args.condition_list)
     finally:

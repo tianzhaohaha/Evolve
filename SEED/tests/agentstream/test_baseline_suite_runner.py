@@ -12,7 +12,11 @@ import unittest
 
 SEED_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path("examples/agentstream_trainer")
-BASELINES = ["vanilla", "grpo", "seed", "opsd", "rlsd"]  # formal set; grpo_base / sdar stay available via run_agentstream_baseline.sh
+# The formal set is the script's default BASELINES list (read, not hard-coded, so it tracks edits).
+BASELINES = re.search(
+    r'\$\{BASELINES:-([\w,]+)\}', (SEED_ROOT / RUNNER_DIR / "run_baseline_suite.sh").read_text()
+).group(1).split(",")
+SKIPPED = next(b for b in BASELINES if b != "seed")  # planted as finished; "seed" is the one made to fail
 
 
 class BaselineSuiteRunnerTests(unittest.TestCase):
@@ -70,20 +74,20 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
         # Experiment name follows agentstream_full.env; read the run version from it rather than hard-coding.
         env_text = (SEED_ROOT / RUNNER_DIR / "agentstream_full.env").read_text()
         version = re.search(r"AGENTSTREAM_RUN_VERSION=\$\{AGENTSTREAM_RUN_VERSION:-(\w+)\}", env_text).group(1)
-        exp = f"grpo_qwen3_4b_2507_agentstream_{version}_n64_single_pass_b10_steps20_interleaved_online_s44"
+        exp = f"{SKIPPED}_qwen3_4b_2507_agentstream_{version}_n64_single_pass_b10_steps20_interleaved_online_s44"
         (self.ckpt / exp).mkdir(parents=True)
         (self.ckpt / exp / "latest_checkpointed_iteration.txt").write_text("20\n")
         result = self.run_suite(FAIL_BASELINE="seed")
         self.assertEqual(result.returncode, 1)
-        self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != "grpo"])
-        self.assertIn("[SKIP] grpo", result.stdout)
+        self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != SKIPPED])
+        self.assertIn(f"[SKIP] {SKIPPED}", result.stdout)
         self.assertIn("Failed baseline: seed", result.stdout)
 
     def test_isolated_mode_runs_per_benchmark_and_skips_only_when_all_runs_finished(self):
         env_text = (SEED_ROOT / RUNNER_DIR / "agentstream_full.env").read_text()
         version = re.search(r"AGENTSTREAM_RUN_VERSION=\$\{AGENTSTREAM_RUN_VERSION:-(\w+)\}", env_text).group(1)
-        exp = f"grpo_qwen3_4b_2507_agentstream_{version}_n64_single_pass_b10_steps7_isolated_online_s44"
-        for bench in ("bfcl", "tau2"):  # browsecompplus run missing -> grpo must still run
+        exp = f"{SKIPPED}_qwen3_4b_2507_agentstream_{version}_n64_single_pass_b10_steps7_isolated_online_s44"
+        for bench in ("bfcl", "tau2"):  # browsecompplus run missing -> the baseline must still run
             (self.ckpt / f"{exp}_{bench}").mkdir(parents=True)
             (self.ckpt / f"{exp}_{bench}" / "latest_checkpointed_iteration.txt").write_text("7\n")
         result = self.run_suite(STREAM_MODE="isolated")
@@ -99,5 +103,5 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
         (self.ckpt / f"{exp}_browsecompplus" / "latest_checkpointed_iteration.txt").write_text("7\n")
         self.capture.unlink()
         result = self.run_suite(STREAM_MODE="isolated")
-        self.assertIn("[SKIP] grpo", result.stdout)
-        self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != "grpo"])
+        self.assertIn(f"[SKIP] {SKIPPED}", result.stdout)
+        self.assertEqual([c["argv"][0] for c in self.calls()], [b for b in BASELINES if b != SKIPPED])
