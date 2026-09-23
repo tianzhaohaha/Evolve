@@ -9,8 +9,8 @@
 #
 # All baselines share one recipe (agentstream_full.env): same SFT init, stream, seed, group
 # size, lr, KL, step budget and evaluation. The extensions of this repo (gen OPD channel,
-# global pool, EMA, replay, positive-only, failed-skill-positive) are forced off. Only the
-# objective differs:
+# global pool, EMA, replay, positive-only, failed-skill-positive, sibling teacher / routing,
+# floor guards, sibling resample) are forced off. Only the objective differs:
 #   vanilla    frozen policy: no analysis, no actor update (critic_warmup), one validation
 #              before the stream (test_freq=0) -> online curve of the SFT model along the stream
 #   grpo       outcome advantage only, no analysis
@@ -49,6 +49,7 @@ overrides=(
     algorithm.seed.success_only=False
     actor_rollout_ref.actor.opd_norm_mode=mask
     algorithm.seed.traj_gap_gate.enable=False
+    algorithm.seed.sibling_resample.enable=False
 )
 # "<baseline>_base" = the same objective started from the raw backbone instead of the SFT
 # checkpoint (the paper's setting for every non-SEED row); the KL reference follows the init.

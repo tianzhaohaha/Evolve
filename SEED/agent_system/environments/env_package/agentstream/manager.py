@@ -31,6 +31,7 @@ import numpy as np
 
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 from agent_system.memory import SimpleMemory
+from seed.resample import augment_observations
 
 from .envs import AgentStreamEnvs
 from .metrics import OnlineMetricsRecorder
@@ -41,6 +42,10 @@ _TERMINAL_OBS = "[episode finished]"
 
 class AgentStreamEnvironmentManager(EnvironmentManagerBase):
     """SEED-compatible manager over :class:`AgentStreamEnvs`."""
+
+    # reset(kwargs=[{task_slug, task_id, reference_solution}, ...]) re-runs explicit tasks with a
+    # per-slot "Reference Solution" in the prompt (SEED sibling resample, seed/resample.py).
+    supports_task_refs = True
 
     def __init__(
         self,
@@ -55,6 +60,10 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self.recorder = recorder
         self.retrieval_memory = None  # parity with other SEED managers
         self._global_step: Optional[int] = None  # set by the trainer before each rollout
+        # Sibling resample pass: per-slot reference text ("" = plain prompt) and whether the
+        # current episode batch is such a pass (its episodes stay out of the online metrics).
+        self._reference_solutions: List[str] = []
+        self._resample_mode = False
 
         self._slugs: List[str] = []
         self._task_ids: List[str] = []
@@ -75,7 +84,17 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
     # ------------------------------------------------------------------ reset
 
     def reset(self, kwargs=None):
-        payloads, infos = self.envs.reset()
+        # Resample requests are per-slot dicts carrying task_slug; any other env_kwargs are
+        # ignored, as this manager always did.
+        requests = list(kwargs) if kwargs is not None and len(kwargs) else []
+        if not (requests and isinstance(requests[0], dict) and "task_slug" in requests[0]):
+            payloads, infos = self.envs.reset()
+            self._reference_solutions = [""] * len(payloads)
+            self._resample_mode = False
+        else:
+            payloads, infos = self.envs.reset_refs([(str(r["task_slug"]), str(r["task_id"])) for r in requests])
+            self._reference_solutions = [str(r.get("reference_solution", "")) for r in requests]
+            self._resample_mode = True
         batch_size = len(payloads)
 
         self.memory.reset(batch_size=batch_size)
@@ -100,7 +119,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
 
         full_text_obs = self.build_text_obs(raw_obs, init=True)
         observations = {
-            "text": full_text_obs,
+            "text": augment_observations(full_text_obs, self._reference_solutions),
             "text_base": full_text_obs,
             "image": None,
             "anchor": raw_obs,
@@ -152,8 +171,9 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         self._record_finished_episodes(dones, infos)
 
         full_text_obs = self.build_text_obs(display_obs, init=False)
+        references = getattr(self, "_reference_solutions", None) or [""] * len(full_text_obs)
         next_observations = {
-            "text": full_text_obs,
+            "text": augment_observations(full_text_obs, references),
             "text_base": full_text_obs,
             "image": None,
             "anchor": display_obs,
@@ -161,7 +181,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         return next_observations, to_numpy(rewards), to_numpy(dones), infos
 
     def _record_finished_episodes(self, dones, infos) -> None:
-        if self.recorder is None or self.phase != "train":
+        if self.recorder is None or self.phase != "train" or getattr(self, "_resample_mode", False):
             return
         for i, done in enumerate(dones):
             if not done or self._recorded[i]:

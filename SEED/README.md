@@ -253,7 +253,7 @@ bash examples/seed_trainer/run_sokoban_sft_gemini_self.sh
 
 ## 可选改进开关（AgentStream / global pool，默认全部关闭）
 
-八个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
+九个开关都在 `examples/agentstream_trainer/agentstream_full.env`（§4 末尾），经
 `run_agentstream_sft_glm_self.sh` → `_common/agentstream.sh` → hydra 传入；关闭时训练逻辑与
 原始实现逐 bit 一致（`run_agentstream_baseline.sh` 另把它们显式钉在默认值上）。共同背景：OPD 损失
 `loss = gate·(teacher_lp − student_lp)`，`gate = sigmoid(β·(teacher_lp − student_lp))`，其梯度对每个
@@ -273,6 +273,7 @@ v5 单遍流上 SEED 落后 GRPO 的差距几乎全在 browsecomp，机制是 OP
 | `AGENTSTREAM_SEED_SUCCESS_ONLY` → `algorithm.seed.success_only` | False | 只分析、只蒸馏被验证成功的轨迹（无标签轨迹跳过），`failed_only` 的镜像，两者互斥；掩码由"已分析轨迹"推出，OPD 与 teacher-advantage 两条路径自动只覆盖成功轨迹，失败轨迹只剩 GRPO 一个目标。与 `local_teacher_source=sibling_success` 互斥；须与下一项同开 |
 | `AGENTSTREAM_SEED_OPD_NORM_MODE` → `actor_rollout_ref.actor.opd_norm_mode` | mask | `response`：spec 与 gen 两通道的 OPD 分子不变，分母从掩码 token 数改为全部 response token 数（与 PG 同分母），系数变成固定的"OPD 每 token 力度 / PG 每 token 力度"，不再随掩码占比放大（mask 模式的隐式放大倍数 = 1/掩码占比，基线里在 0.13–0.75 之间跳动）。`actor/opd_*` 指标口径不变；要求 `loss_agg_mode=token-mean` |
 | `AGENTSTREAM_SEED_TRAJ_GAP_GATE` → `algorithm.seed.traj_gap_gate.enable`（配 `..._MARGIN` → `margin`，nats/token） | False / 0.0 | 每条有 teacher 信号的轨迹，把 `teacher_lp − old_lp` 在其信号行的 response token 上取平均，均值 ≤ margin 的轨迹整条移出全部 teacher 掩码（OPD 与 teacher-advantage 都跳过），teacher 对数概率不改。在 teacher 信号汇合后、`compute_advantage` 与 replay 之前执行。与 `ema_mode=teacher/both`、`local_teacher_source=sibling_success` 互斥 |
+| `AGENTSTREAM_SEED_SIBLING_RESAMPLE` → `algorithm.seed.sibling_resample.enable`（配 `..._MAX_GROUPS` → `max_groups`；渲染上限 hydra-only） | False / 4 | 正常采样后，最多取 `max_groups` 个有成有败的组，每组最短成功轨迹渲染成 "Reference Solution"（逐步 观测 + 完整回复），对这些题再采一遍（每题仍 `env.rollout.n` 条），参考只进采样 prompt；新行在普通 prompt 下重新分词并入本步 batch，与其他行同样做 reward / old_log_prob / advantage / 更新，自成 GRPO 组。在线指标不计这一遍。需要 `env.rollout.n > 1`，与 `algorithm.filter_groups` 互斥，只支持 AgentStream |
 
 为什么需要它们：
 
@@ -305,6 +306,12 @@ v5 单遍流上 SEED 落后 GRPO 的差距几乎全在 browsecomp，机制是 OP
   `positive_only` 挡不住；整条轨迹的平均 gap 把几百个 token 的噪声抵消，只问"上下文有没有让这次成功
   整体更顺理成章"。自写 skill 的 teacher 下（gap 均值每 token −0.02 到 −0.04）几乎没有轨迹能过门，
   OPD 自动关闭，训练退回 GRPO；带真实信息的 teacher 才会开门。
+- **同题兄弟重采样（生成而非重打分）**。离线 Δ 测试给出三个数：同题成功演示放进上下文后再采样，
+  冻结策略成功率 0.40 → 0.73；用同一份演示给旧样本重打分，成功/失败轨迹的 gap 一律 −0.19 nats/token
+  （0% 为正，teacher 分不清对错）；跨题演示为负。所以经验只能在生成时用、只能来自同一道题。训练里
+  这份经验就是每组里的成功兄弟：带它再采一遍，再在普通 prompt 下训练，学"没有演示也做出有演示时的
+  行为"（context distillation）。新行自成 GRPO 组，不动原组基线；代价是每步多 混合组数 × `env.rollout.n`
+  条 rollout。
 
 观测指标：`seed/global_pool/never_injected_ratio`（从未被检索条目占比）、`evicted_total`（累计满员
 淘汰数）、`expired`（window 每步过期条数）；`actor/opd_loss`、`actor/opd_teacher_gap_mean`、
@@ -312,16 +319,21 @@ v5 单遍流上 SEED 落后 GRPO 的差距几乎全在 browsecomp，机制是 OP
 allfail_group_ratio, rows_masked, ref_chars_mean, ref_steps_mean}`、`seed/route/{rows_pg_weighted_ratio,
 rows_pg_full_ratio, teacher_rows}`、`actor/pg_row_weight_mean`；`seed/analysis_mode_success_only`、
 `actor/opd_mask_token_fraction`（掩码 token / response token）、`seed/traj_gate/{trajs_scored, pass_ratio,
-rows_before, rows_after, gap_mean_pass, gap_mean_fail}`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
-再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[6]-[8] 的阶梯验证套件（F1–F3）见
+rows_before, rows_after, gap_mean_pass, gap_mean_fail}`；`seed/resample/{groups_mixed, groups_requested,
+rows, trajs, frac_rows, success_rate, uniform_group_ratio, ref_chars_mean, ref_steps_mean, prompt_clip_ratio}`、
+`timing_s/gen_resample`，重采样行在 rollout dump 里带 `resample_pass=1`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
+再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[9] 的同作业对照（B1 GRPO / B2 SEED / B3 GRPO+重采样）见
 `examples/agentstream_trainer/run_ours_debug.sh`。代码落点：`verl/trainer/ppo/core_algos.py`
 （`compute_opd_loss(positive_only, norm_mode)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
 （`select_admission_candidates` / `_evict_locked` / `expire`）、`seed/sibling.py`（骨架、参照选择、
-行权重）、`seed/gating.py`（`should_analyze_trajectory` / `compute_traj_gap_gate`）、`seed/prompting.py`
-（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`（开关装配与 `expire` 调用、
-`_build_seed_sibling_analysis` / `_apply_seed_sample_routing` / `_apply_seed_traj_gap_gate`）、
-`verl/workers/actor/dp_actor.py`（PG 项的行权重掩码、`opd_norm_mode` 透传）；测试见
-`tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer,sibling_teacher,floor_gating,episode_skill_guidance}.py`。
+行权重）、`seed/gating.py`（`should_analyze_trajectory` / `compute_traj_gap_gate`）、`seed/resample.py`
+（重采样请求、列对齐、参照注入）、`seed/prompting.py`（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`
+（开关装配与 `expire` 调用、`_build_seed_sibling_analysis` / `_apply_seed_sample_routing` /
+`_apply_seed_traj_gap_gate` / `_apply_seed_sibling_resample`）、`verl/workers/actor/dp_actor.py`（PG 项的行权重
+掩码、`opd_norm_mode` 透传）、`agent_system/environments/env_package/agentstream/{envs,manager}.py`
+（`reset_refs` 子集重置、`reset(kwargs)` 的按槽位参照注入）；测试见
+`tests/trainer/ppo/test_{opd_loss,global_skill_pool,seed_analyzer,sibling_teacher,sibling_resample,floor_gating,episode_skill_guidance}.py`
+与 `tests/agentstream/test_sibling_resample_manager.py`。
 更多池机制见 [GLOBAL_SKILL_POOL_V1.md](GLOBAL_SKILL_POOL_V1.md)。
 
 ## AgentStream 基线复现（`run_agentstream_baseline.sh`）
@@ -329,7 +341,7 @@ rows_before, rows_after, gap_mean_pass, gap_mean_fail}`。建议启用顺序：�
 SEED 论文 Table 1 的基线在 AgentStream 流上统一由一个入口启动，所有基线共用
 `agentstream_full.env` 的任务流、seed、group size、lr、KL 与步数（起点：SEED 用共享 SFT
 权重，其余基线套件默认从原始底座起跑，见 `_base` 后缀），本仓库的扩展
-（gen 通道、global pool、EMA、replay 以及上表的八个开关）一律强制关闭，只有目标函数不同：
+（gen 通道、global pool、EMA、replay 以及上表的九个开关）一律强制关闭，只有目标函数不同：
 
 ```bash
 bash examples/agentstream_trainer/run_agentstream_baseline.sh <baseline> <mode> [hydra 覆盖...]

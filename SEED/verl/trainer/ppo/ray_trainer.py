@@ -30,6 +30,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pprint import pprint
+from functools import partial
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 import numpy as np
@@ -76,8 +78,16 @@ from seed.prompting import (
     validate_skill_mode,
 )
 from seed.replay import ReplayBuffer, merge_for_update
-from seed.sibling import SIBLING_ANALYSIS_MODE, compute_pg_row_weights, select_sibling_references
+from seed.sibling import (
+    SIBLING_ANALYSIS_MODE,
+    build_reference_solution,
+    compute_pg_row_weights,
+    select_group_references,
+    select_sibling_references,
+)
+from seed.resample import build_resample_requests, reconcile_non_tensor_keys, summarize_resample_batch
 from seed.gating import compute_traj_gap_gate, should_analyze_trajectory
+from verl.trainer.ppo.metric_utils import is_episode_metric_key
 from verl.utils.ema import ema_applies_to, normalize_ema_mode
 from seed.global_pool import (
     GlobalPoolConfig,
@@ -765,6 +775,206 @@ class RayPPOTrainer:
     def _get_seed_traj_gap_gate_margin(self) -> float:
         value = OmegaConf.select(self.config, "algorithm.seed.traj_gap_gate.margin")
         return 0.0 if value is None else float(value)
+
+    # Sibling resample pass (seed/resample.py); default off = one rollout per step, as before.
+    def _is_seed_sibling_resample_enabled(self) -> bool:
+        return bool(OmegaConf.select(self.config, "algorithm.seed.sibling_resample.enable") or False)
+
+    def _get_seed_sibling_resample_config(self) -> SimpleNamespace:
+        def _select(name: str, default):
+            value = OmegaConf.select(self.config, f"algorithm.seed.sibling_resample.{name}")
+            return default if value is None else value
+
+        return SimpleNamespace(
+            max_groups=int(_select("max_groups", 4)),
+            obs_chars=int(_select("obs_chars", 160)),
+            response_chars=int(_select("response_chars", 1200)),
+            max_chars=int(_select("max_chars", 6000)),
+        )
+
+    def _build_prompt_response_batch(
+        self,
+        *,
+        obs_texts: List[str],
+        responses: torch.Tensor,
+        response_masks: torch.Tensor,
+        data_sources: List[object],
+        meta_info: Dict[str, Any],
+        prompt_images: Optional[List[Any]] = None,
+    ) -> Tuple[DataProto, DataProto]:
+        """Tokenise ``obs_texts`` as prompts (the rollout's chat template, left-padded to
+        ``data.max_prompt_length``) and attach the given responses. Returns ``(batch, prompt_batch)``:
+        the batch carries ``responses`` / ``input_ids`` / ``attention_mask`` / ``position_ids`` (and
+        ``multi_modal_inputs`` when images are given), the prompt batch the prompt-only tensors.
+        Used by the teacher scoring (augmented prompt, existing responses) and by the sibling
+        resample pass (plain prompt, responses sampled under the augmented one)."""
+        prompt_batch = self.traj_collector.build_prompt_batch(
+            obs_contents=obs_texts,
+            data_sources=data_sources,
+            meta_info=meta_info,
+            images=prompt_images,
+        )
+        input_ids = torch.cat([prompt_batch.batch["input_ids"], responses], dim=-1)
+        attention_mask = torch.cat(
+            [
+                prompt_batch.batch["attention_mask"],
+                response_masks.to(dtype=prompt_batch.batch["attention_mask"].dtype),
+            ],
+            dim=-1,
+        )
+        position_ids = self._append_response_position_ids(prompt_batch.batch["position_ids"], responses.size(-1))
+        non_tensors = {}
+        if "multi_modal_inputs" in prompt_batch.non_tensor_batch:
+            non_tensors["multi_modal_inputs"] = prompt_batch.non_tensor_batch["multi_modal_inputs"]
+        batch = DataProto.from_dict(
+            tensors={
+                "responses": responses,
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+            },
+            non_tensors=non_tensors,
+            meta_info=meta_info,
+        )
+        return batch, prompt_batch
+
+    def _apply_seed_sibling_resample(
+        self,
+        *,
+        batch: DataProto,
+        gen_batch: DataProto,
+        metrics: Dict[str, float],
+        timing_raw: Dict[str, float],
+    ) -> DataProto:
+        """Context distillation from same-task siblings (``algorithm.seed.sibling_resample``).
+
+        Mixed-outcome groups of the rollout ``batch`` nominate their shortest successful
+        trajectory; up to ``max_groups`` of those tasks are rolled out again with that trajectory
+        as a "Reference Solution" in every prompt (``env_kwargs`` -> AgentStream manager). The new
+        rows are re-tokenised under the plain prompt (``obs_text_base``) and concatenated to the
+        batch before reward / old_log_prob / advantage, so they are trained like any other rows
+        while keeping the fresh ``uid``s of the second pass (own GRPO groups).
+        """
+        prefix = "seed/resample/"
+        names = (
+            "groups_mixed", "groups_requested", "rows", "trajs", "frac_rows", "success_rate",
+            "uniform_group_ratio", "ref_chars_mean", "ref_steps_mean", "prompt_clip_ratio",
+        )
+        metrics.update({f"{prefix}{name}": 0.0 for name in names})
+        # Row flag (0 = main pass) on every step while the switch is on, so batches with and
+        # without a resample pass keep one key set (replay merges, dumps).
+        batch.non_tensor_batch["resample_pass"] = np.zeros(len(batch), dtype=np.int8)
+        if not getattr(self.envs, "supports_task_refs", False):
+            raise ValueError(
+                "algorithm.seed.sibling_resample needs an environment manager that can re-run explicit tasks "
+                "(AgentStream: reset(kwargs=[{task_slug, task_id, reference_solution}, ...]))."
+            )
+        cfg = self._get_seed_sibling_resample_config()
+        nt = batch.non_tensor_batch
+        missing = [k for k in ("uid", "traj_uid", "episode_rewards", "task_slug", "task_id", "sample_id", "obs_text") if k not in nt]
+        if missing:
+            module_logger.warning("SEED sibling resample skipped: the rollout batch lacks %s.", missing)
+            return batch
+
+        traj_uids = nt["traj_uid"]
+        episodes = core_seed.build_episode_records(
+            tokenizer=self.tokenizer,
+            obs_texts=nt.get("obs_text_base", nt["obs_text"]),
+            obs_raws=nt.get("anchor_obs"),
+            responses=batch.batch["responses"],
+            response_mask=compute_response_mask(batch),
+            traj_index=traj_uids,
+            step_indices=core_seed.build_traj_step_indices(traj_uids),
+            action_valids=nt.get("is_action_valid"),
+        )
+        task_refs: Dict[object, Tuple[int, str, str]] = {}
+        for i, uid in enumerate(nt["uid"]):
+            task_refs.setdefault(uid, (int(nt["sample_id"][i]), str(nt["task_slug"][i]), str(nt["task_id"][i])))
+        render = partial(
+            build_reference_solution, obs_chars=cfg.obs_chars, response_chars=cfg.response_chars, max_chars=cfg.max_chars
+        )
+        references, group_metrics = select_group_references(
+            episodes, nt["uid"], traj_uids, self._build_seed_traj_success_map(batch),
+            self._build_seed_traj_reward_map(batch), render=render,
+        )
+        requests = build_resample_requests(references, task_refs, max_groups=cfg.max_groups)
+        metrics.update(
+            {
+                f"{prefix}groups_mixed": group_metrics["mixed_groups"],
+                f"{prefix}groups_requested": float(len(requests)),
+                f"{prefix}ref_chars_mean": float(np.mean([len(r["reference_solution"]) for r in requests])) if requests else 0.0,
+                f"{prefix}ref_steps_mean": float(np.mean([references[r["uid"]].rendered_steps for r in requests])) if requests else 0.0,
+            }
+        )
+        if not requests:
+            return batch
+
+        # Second pass on the requested tasks only: the collector repeats each row env.rollout.n
+        # times and hands the per-slot request to the manager through env_kwargs.
+        sub = gen_batch.select_idxs(np.asarray([r["sample_id"] for r in requests]))
+        sub.meta_info = dict(gen_batch.meta_info)
+        sub.non_tensor_batch["env_kwargs"] = self.traj_collector._object_array(
+            [{k: r[k] for k in ("task_slug", "task_id", "reference_solution")} for r in requests]
+        )
+        with _timer("gen_resample", timing_raw):
+            extra = self.traj_collector.multi_turn_loop(
+                gen_batch=sub, actor_rollout_wg=self.actor_rollout_wg, envs=self.envs, is_train=True
+            )
+        if len(extra) == 0:
+            module_logger.warning("SEED sibling resample produced no usable trajectory this step.")
+            return batch
+        ent = extra.non_tensor_batch
+        summary = summarize_resample_batch(
+            ent["uid"], ent["traj_uid"], ent["episode_rewards"], self._get_seed_failure_success_threshold()
+        )
+        prompt_width = extra.batch["prompts"].size(-1)
+        prompt_clip = (extra.batch["attention_mask"][:, :prompt_width].sum(dim=-1) >= prompt_width).float().mean().item()
+
+        # Train under the plain prompt: same responses, prompt tensors rebuilt from obs_text_base.
+        # rollout_log_probs stay as sampled under the augmented prompt (only the
+        # training/rollout_probs_diff_* diagnostic reads them).
+        plain, prompt_batch = self._build_prompt_response_batch(
+            obs_texts=list(ent["obs_text_base"]),
+            responses=extra.batch["responses"],
+            response_masks=compute_response_mask(extra),
+            data_sources=list(ent["data_source"]),
+            meta_info={},
+        )
+        extra.batch["prompts"] = prompt_batch.batch["input_ids"]
+        for key in ("input_ids", "attention_mask", "position_ids"):
+            extra.batch[key] = plain.batch[key]
+        ent["obs_text"] = ent["obs_text_base"]
+        # Distinct sample_id / step_id from the main pass (rollout dumps), and a row flag for analysis.
+        ent["sample_id"] = ent["sample_id"] + int(self.config.data.train_batch_size)
+        ent["step_id"] = np.asarray(
+            [f"{int(s)}_{int(r)}_{int(n)}" for s, r, n in zip(ent["sample_id"], ent["rollout_id"], ent["step_num"])], dtype=object
+        )
+        ent["resample_pass"] = np.ones(len(extra), dtype=np.int8)
+        columns, dropped, _ = reconcile_non_tensor_keys(nt, ent, is_broadcast_key=is_episode_metric_key)
+        if dropped:
+            module_logger.info("SEED sibling resample: dropped resample-only columns %s.", dropped)
+        extra.non_tensor_batch = columns
+        if set(extra.batch.keys()) != set(batch.batch.keys()):
+            raise RuntimeError(
+                f"SEED sibling resample: tensor keys differ ({sorted(set(extra.batch.keys()) ^ set(batch.batch.keys()))})."
+            )
+        merged = DataProto.concat([batch, extra])
+        metrics.update(
+            {
+                f"{prefix}rows": summary["rows"],
+                f"{prefix}trajs": summary["trajs"],
+                f"{prefix}frac_rows": len(extra) / len(merged),
+                f"{prefix}success_rate": summary["success_rate"],
+                f"{prefix}uniform_group_ratio": summary["uniform_group_ratio"],
+                f"{prefix}prompt_clip_ratio": prompt_clip,
+            }
+        )
+        module_logger.info(
+            "SEED sibling resample: %d/%d mixed groups re-run, %d trajectories (%d rows, success %.2f, %.0f%% of the batch).",
+            len(requests), int(metrics[f"{prefix}groups_mixed"]), int(summary["trajs"]), len(extra), summary["success_rate"],
+            100.0 * len(extra) / len(merged),
+        )
+        return merged
 
     def _seed_ema_uses(self, target: str) -> bool:
         """Whether the EMA shadow replaces the KL reference ('ref') or the OPD teacher base ('teacher')."""
@@ -1492,6 +1702,20 @@ class RayPPOTrainer:
                 module_logger.warning(
                     "algorithm.seed.traj_gap_gate.enable has no consumer: enable an OPD loss coefficient or a teacher-advantage weight."
                 )
+        # Sibling resample pass (seed/resample.py): a second rollout of mixed-outcome tasks.
+        if bool(OmegaConf.select(config, "algorithm.seed.sibling_resample.enable") or False):
+            if bool(OmegaConf.select(config, "algorithm.filter_groups.enable") or False):
+                raise ValueError(
+                    "algorithm.seed.sibling_resample cannot be combined with algorithm.filter_groups: the dynamic "
+                    "rollout loop locates groups by train_batch_size x env.rollout.n rows."
+                )
+            if int(OmegaConf.select(config, "env.rollout.n") or 1) <= 1:
+                raise ValueError("algorithm.seed.sibling_resample needs env.rollout.n > 1 (mixed-outcome groups).")
+            if int(OmegaConf.select(config, "algorithm.seed.sibling_resample.max_groups") or 0) < 1:
+                raise ValueError("algorithm.seed.sibling_resample.max_groups must be >= 1.")
+            for key in ("obs_chars", "response_chars", "max_chars"):
+                if int(OmegaConf.select(config, f"algorithm.seed.sibling_resample.{key}") or 0) <= 0:
+                    raise ValueError(f"algorithm.seed.sibling_resample.{key} must be > 0.")
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
@@ -2823,6 +3047,15 @@ class RayPPOTrainer:
         return traj_success
 
     @staticmethod
+    def _build_seed_traj_reward_map(batch: DataProto) -> Dict[object, float]:
+        """{traj_uid: episode reward} from the rows' broadcast ``episode_rewards`` ({} when absent)."""
+        traj_rewards: Dict[object, float] = {}
+        if "episode_rewards" in batch.non_tensor_batch:
+            for traj_uid, reward in zip(batch.non_tensor_batch["traj_uid"], batch.non_tensor_batch["episode_rewards"]):
+                traj_rewards.setdefault(traj_uid, float(reward))
+        return traj_rewards
+
+    @staticmethod
     def _record_seed_analyzed_counts(
         metrics: Dict[str, float], *, analyzed: int, total: int, failed: Optional[int] = None
     ) -> None:
@@ -2856,16 +3089,12 @@ class RayPPOTrainer:
             self._record_seed_analyzed_counts(metrics, analyzed=0, total=len(episodes))
             return
         cfg = OmegaConf.select(self.config, "algorithm.seed.sibling_teacher") or {}
-        traj_rewards: Dict[object, float] = {}
-        if "episode_rewards" in batch.non_tensor_batch:
-            for traj_uid, reward in zip(batch.non_tensor_batch["traj_uid"], batch.non_tensor_batch["episode_rewards"]):
-                traj_rewards.setdefault(traj_uid, float(reward))
         references, sibling_metrics = select_sibling_references(
             episodes=episodes,
             uids=batch.non_tensor_batch["uid"],
             traj_uids=batch.non_tensor_batch["traj_uid"],
             traj_success=traj_success,
-            traj_rewards=traj_rewards,
+            traj_rewards=self._build_seed_traj_reward_map(batch),
             obs_chars=int(cfg.get("obs_chars", 160)),
             action_chars=int(cfg.get("action_chars", 300)),
             max_chars=int(cfg.get("max_chars", 6000)),
@@ -3726,11 +3955,13 @@ class RayPPOTrainer:
                     "SEED %s teacher scoring received a mixed visual/text prompt batch."
                     % label
                 )
-            teacher_prompt_batch = self.traj_collector.build_prompt_batch(
-                obs_contents=obs_texts,
+            teacher_batch, teacher_prompt_batch = self._build_prompt_response_batch(
+                obs_texts=obs_texts,
+                responses=responses,
+                response_masks=response_masks,
                 data_sources=data_sources,
                 meta_info=teacher_meta_info,
-                images=prompt_images if use_prompt_images else None,
+                prompt_images=prompt_images if use_prompt_images else None,
             )
             prompt_lengths = teacher_prompt_batch.batch["attention_mask"].sum(dim=-1).detach().cpu().numpy()
             module_logger.info(
@@ -3740,32 +3971,6 @@ class RayPPOTrainer:
                 float(prompt_lengths.mean()),
                 int(prompt_lengths.max()),
                 bool(use_prompt_images),
-            )
-
-            teacher_input_ids = torch.cat([teacher_prompt_batch.batch["input_ids"], responses], dim=-1)
-            teacher_attention_mask = torch.cat(
-                [
-                    teacher_prompt_batch.batch["attention_mask"],
-                    response_masks.to(dtype=teacher_prompt_batch.batch["attention_mask"].dtype),
-                ],
-                dim=-1,
-            )
-            teacher_position_ids = self._append_response_position_ids(
-                teacher_prompt_batch.batch["position_ids"],
-                responses.size(-1),
-            )
-            teacher_non_tensors = {}
-            if "multi_modal_inputs" in teacher_prompt_batch.non_tensor_batch:
-                teacher_non_tensors["multi_modal_inputs"] = teacher_prompt_batch.non_tensor_batch["multi_modal_inputs"]
-            teacher_batch = DataProto.from_dict(
-                tensors={
-                    "responses": responses,
-                    "input_ids": teacher_input_ids,
-                    "attention_mask": teacher_attention_mask,
-                    "position_ids": teacher_position_ids,
-                },
-                non_tensors=teacher_non_tensors,
-                meta_info=teacher_meta_info,
             )
             teacher_batch_padded, teacher_pad_size = pad_dataproto_to_divisor(
                 teacher_batch,
@@ -4182,6 +4387,13 @@ class RayPPOTrainer:
                     # batch = batch.union(gen_batch_output)
                     del batch
                     batch = gen_batch_output
+
+                    # Sibling resample pass: extra reference-conditioned rollouts of mixed tasks, re-tokenised
+                    # under the plain prompt, join the batch here so every stage below treats them alike.
+                    if self._is_seed_sibling_resample_enabled():
+                        batch = self._apply_seed_sibling_resample(
+                            batch=batch, gen_batch=gen_batch, metrics=metrics, timing_raw=timing_raw
+                        )
 
                     if self.config.algorithm.adv_estimator in [AdvantageEstimator.GiGPO, AdvantageEstimator.SEED]:
                         step_rewards_tensor = core_gigpo.compute_step_discounted_returns(

@@ -215,6 +215,9 @@ SEED_ROUTE_PG_FAILED_WEIGHT=${SEED_ROUTE_PG_FAILED_WEIGHT:-0.0}
 SEED_SUCCESS_ONLY=${SEED_SUCCESS_ONLY:-False}
 SEED_TRAJ_GAP_GATE=${SEED_TRAJ_GAP_GATE:-False}
 SEED_TRAJ_GAP_GATE_MARGIN=${SEED_TRAJ_GAP_GATE_MARGIN:-0.0}
+# Sibling resample pass (README "可选改进开关" [9], seed/resample.py); rendering caps are hydra-only.
+SEED_SIBLING_RESAMPLE=${SEED_SIBLING_RESAMPLE:-False}
+SEED_SIBLING_RESAMPLE_MAX_GROUPS=${SEED_SIBLING_RESAMPLE_MAX_GROUPS:-4}
 
 SEED_ENABLE_ANALYSIS=${SEED_ENABLE_ANALYSIS:-True}
 SEED_SELECTOR=${SEED_SELECTOR:-llm}
@@ -341,6 +344,8 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.success_only=$SEED_SUCCESS_ONLY \
     algorithm.seed.traj_gap_gate.enable=$SEED_TRAJ_GAP_GATE \
     algorithm.seed.traj_gap_gate.margin=$SEED_TRAJ_GAP_GATE_MARGIN \
+    algorithm.seed.sibling_resample.enable=$SEED_SIBLING_RESAMPLE \
+    algorithm.seed.sibling_resample.max_groups=$SEED_SIBLING_RESAMPLE_MAX_GROUPS \
     algorithm.seed.mode=$SEED_MODE \
     algorithm.seed.enable_analysis=$SEED_ENABLE_ANALYSIS \
     algorithm.seed.selector=$SEED_SELECTOR \

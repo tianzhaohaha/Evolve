@@ -9,8 +9,8 @@ teacher (PG weight ``failed_weight``), rows of uniform-outcome groups by PG as b
 
 ``build_reference_solution`` renders the same trajectory with the policy's full responses (reasoning
 and action) instead of action-only skeletons; it is the context of the offline delta test
-(examples/agentstream_trainer/delta_test.py) and the candidate format for a reasoning-aware sibling
-teacher.
+(examples/agentstream_trainer/delta_test.py) and of the sibling resample pass (seed/resample.py:
+``algorithm.seed.sibling_resample``).
 
 Everything here is pure (numpy / json / re) so it is unit-testable without Ray or torch.
 """
@@ -20,7 +20,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from functools import partial
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -166,34 +167,34 @@ def group_outcomes(
 
 @dataclass(frozen=True)
 class SiblingReference:
-    traj_uid: object  # the successful sibling whose skeleton is the reference
+    traj_uid: object  # the successful sibling whose rendering is the reference
     text: str
     rendered_steps: int
     total_steps: int
 
 
-def select_sibling_references(
+# (steps of one trajectory) -> (rendered text, rendered step count); "" = nothing to show.
+ReferenceRenderer = Callable[[Sequence[Mapping[str, object]]], Tuple[str, int]]
+
+
+def select_group_references(
     episodes: Mapping[object, Sequence[Mapping[str, object]]],
     uids: Sequence[object],
     traj_uids: Sequence[object],
     traj_success: Mapping[object, float],
     traj_rewards: Optional[Mapping[object, float]] = None,
     *,
-    obs_chars: int = 160,
-    action_chars: int = 300,
-    max_chars: int = 6000,
+    render: ReferenceRenderer,
 ) -> Tuple[Dict[object, SiblingReference], Dict[str, float]]:
-    """Map every failed trajectory of a mixed-outcome group to its group's reference solution.
-
-    The reference is the shortest successful sibling (ties: higher reward, then ``traj_uid``)
-    whose skeleton is non-empty. Returns ``(failed_traj_uid -> reference, metrics)``.
-    """
+    """One reference per mixed-outcome group: the shortest successful sibling (ties: higher
+    reward, then ``traj_uid``) whose rendering is non-empty. Returns ``(uid -> reference,
+    metrics)``; the metrics carry no prefix (``groups_total``, ``mixed_groups``, ``mixed_group_ratio``,
+    ``allfail_group_ratio``, ``allsuccess_group_ratio``, ``ref_chars_mean``, ``ref_steps_mean``)."""
     groups = group_outcomes(uids, traj_uids, traj_success)
     rewards = traj_rewards or {}
     references: Dict[object, SiblingReference] = {}
-    group_refs: List[SiblingReference] = []
     mixed = allfail = allsuccess = 0
-    for successes, failures in groups.values():
+    for uid, (successes, failures) in groups.items():
         if not successes:
             allfail += 1
             continue
@@ -207,26 +208,48 @@ def select_sibling_references(
         )
         for candidate in ranked:
             steps = episodes.get(candidate, ())
-            text, rendered = build_action_skeleton(
-                steps, obs_chars=obs_chars, action_chars=action_chars, max_chars=max_chars
-            )
-            if not text:
-                continue
-            reference = SiblingReference(candidate, text, rendered, len(steps))
-            group_refs.append(reference)
-            for failed in failures:
-                references[failed] = reference
-            break
+            text, rendered = render(steps)
+            if text:
+                references[uid] = SiblingReference(candidate, text, rendered, len(steps))
+                break
     total = len(groups)
+    refs = list(references.values())
     metrics = {
-        "seed/sibling/groups_total": float(total),
-        "seed/sibling/mixed_group_ratio": mixed / total if total else 0.0,
-        "seed/sibling/allfail_group_ratio": allfail / total if total else 0.0,
-        "seed/sibling/allsuccess_group_ratio": allsuccess / total if total else 0.0,
-        "seed/sibling/failed_trajs_masked": float(len(references)),
-        "seed/sibling/ref_chars_mean": float(np.mean([len(r.text) for r in group_refs])) if group_refs else 0.0,
-        "seed/sibling/ref_steps_mean": float(np.mean([r.rendered_steps for r in group_refs])) if group_refs else 0.0,
+        "groups_total": float(total),
+        "mixed_groups": float(mixed),
+        "mixed_group_ratio": mixed / total if total else 0.0,
+        "allfail_group_ratio": allfail / total if total else 0.0,
+        "allsuccess_group_ratio": allsuccess / total if total else 0.0,
+        "ref_chars_mean": float(np.mean([len(r.text) for r in refs])) if refs else 0.0,
+        "ref_steps_mean": float(np.mean([r.rendered_steps for r in refs])) if refs else 0.0,
     }
+    return references, metrics
+
+
+def select_sibling_references(
+    episodes: Mapping[object, Sequence[Mapping[str, object]]],
+    uids: Sequence[object],
+    traj_uids: Sequence[object],
+    traj_success: Mapping[object, float],
+    traj_rewards: Optional[Mapping[object, float]] = None,
+    *,
+    obs_chars: int = 160,
+    action_chars: int = 300,
+    max_chars: int = 6000,
+) -> Tuple[Dict[object, SiblingReference], Dict[str, float]]:
+    """Map every failed trajectory of a mixed-outcome group to its group's action skeleton
+    (:func:`select_group_references` with :func:`build_action_skeleton`).
+    Returns ``(failed_traj_uid -> reference, metrics)``."""
+    render = partial(build_action_skeleton, obs_chars=obs_chars, action_chars=action_chars, max_chars=max_chars)
+    group_refs, group_metrics = select_group_references(episodes, uids, traj_uids, traj_success, traj_rewards, render=render)
+    references = {
+        failed: group_refs[uid]
+        for uid, (_, failures) in group_outcomes(uids, traj_uids, traj_success).items()
+        if uid in group_refs
+        for failed in failures
+    }
+    metrics = {f"seed/sibling/{k}": v for k, v in group_metrics.items()}
+    metrics["seed/sibling/failed_trajs_masked"] = float(len(references))
     return references, metrics
 
 

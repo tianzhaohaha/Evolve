@@ -26,7 +26,7 @@ the SEED-original random sampling are realized with the same machinery.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import ray
 
@@ -115,6 +115,7 @@ class AgentStreamEnvs:
         self.env_num = env_num
         self.group_n = group_n
         self.num_processes = env_num * group_n
+        self._active = self.num_processes  # slots in use: all after reset(), len(refs) after reset_refs()
         self._current_batch: Optional[StreamBatch] = None
 
         if not ray.is_initialized():
@@ -197,11 +198,24 @@ class AgentStreamEnvs:
             # keeping test_freq curves comparable over training.
             self.task_source.reset_cursor()
 
-        batch = self.task_source.next_batch(self.env_num).replicate(self.group_n)
+        return self._reset_batch(self.task_source.next_batch(self.env_num).replicate(self.group_n))
+
+    def reset_refs(self, refs: Sequence[TaskRef]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Start sessions for explicit per-slot task refs on the first ``len(refs)`` workers,
+        without touching the task stream (its cursor, passes and online bookkeeping stay as
+        they are: ``stream_index`` / ``pass_idx`` are reported as -1). Used by the SEED sibling
+        resample pass to roll out a subset of the current step's tasks again."""
+        if not 0 < len(refs) <= self.num_processes:
+            raise ValueError(f"reset_refs takes 1..{self.num_processes} refs, got {len(refs)}")
+        refs = list(refs)
+        return self._reset_batch(StreamBatch(refs=refs, stream_indices=[-1] * len(refs), passes=[-1] * len(refs)))
+
+    def _reset_batch(self, batch: StreamBatch) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         self._current_batch = batch
+        self._active = len(batch.refs)
 
         futures = []
-        for i, worker in enumerate(self.workers):
+        for i, worker in enumerate(self.workers[: self._active]):
             slug, task_id = batch.refs[i]
             bm_kwargs = self.cfg.resolved_benchmark_kwargs(slug)
             session_kwargs = self.hub.session_kwargs(slug, task_id)
@@ -245,11 +259,11 @@ class AgentStreamEnvs:
     def step(
         self, action_payloads: List[Dict[str, Any]]
     ) -> Tuple[List[str], List[float], List[bool], List[Dict[str, Any]]]:
-        assert len(action_payloads) == self.num_processes, (
-            f"Expected {self.num_processes} actions, got {len(action_payloads)}"
+        assert len(action_payloads) == self._active, (
+            f"Expected {self._active} actions, got {len(action_payloads)}"
         )
         futures = [
-            worker.step.remote(action_payloads[i]) for i, worker in enumerate(self.workers)
+            worker.step.remote(action_payloads[i]) for i, worker in enumerate(self.workers[: self._active])
         ]
 
         timeout_s = self.cfg.step_timeout_s
