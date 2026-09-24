@@ -27,7 +27,8 @@ class OursDebugRunnerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         scripts = Path(self.temp.name) / "SEED" / RUNNER_DIR
         scripts.mkdir(parents=True)
-        for filename in SCRIPTS:
+        (scripts / "_common").mkdir()
+        for filename in SCRIPTS + ("_common/ours_method.sh",):
             shutil.copyfile(SEED_ROOT / RUNNER_DIR / filename, scripts / filename)
         self.scripts = scripts
         self.capture = Path(self.temp.name) / "calls.jsonl"
@@ -107,6 +108,12 @@ class OursDebugRunnerTests(unittest.TestCase):
         self.assertIn("[SKIP] E1 A3 floor", result.stdout)
         self.assertIn("[FAILED] E4", result.stdout)
         self.assertIn("[SUCCESS] E8b", result.stdout)
+
+    def test_checkpoint_settings_honour_the_environment(self):
+        result = self.run_script(DEBUG_ARMS="E1", AGENTSTREAM_RL_SAVE_FREQ="0", AGENTSTREAM_RL_MAX_CKPT_TO_KEEP="2")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (call,) = self.calls()
+        self.assertEqual((call["env"]["AGENTSTREAM_RL_SAVE_FREQ"], call["env"]["AGENTSTREAM_RL_MAX_CKPT_TO_KEEP"]), ("0", "2"))
 
     def test_continuation_reuses_the_run_id_and_moves_the_checkpoint_to_the_new_last_step(self):
         result = self.run_script(DEBUG_RUN_ID="70000.pbs", DEBUG_ARMS="E4", TOTAL_STEPS="20")

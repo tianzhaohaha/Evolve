@@ -12,11 +12,10 @@ import unittest
 
 SEED_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path("examples/agentstream_trainer")
-# The formal set is the script's default BASELINES list (read, not hard-coded, so it tracks edits).
-BASELINES = re.search(
-    r'\$\{BASELINES:-([\w,]+)\}', (SEED_ROOT / RUNNER_DIR / "run_baseline_suite.sh").read_text()
-).group(1).split(",")
-SKIPPED = next(b for b in BASELINES if b != "seed")  # planted as finished; "seed" is the one made to fail
+# The suite takes its list from the BASELINES environment override; the tests pin one (the script's
+# working default is edited between campaigns and may hold a single baseline).
+BASELINES = ["grpo_base", "seed", "opsd_base"]
+SKIPPED = BASELINES[0]  # planted as finished; "seed" is the one made to fail
 
 
 class BaselineSuiteRunnerTests(unittest.TestCase):
@@ -43,7 +42,7 @@ class BaselineSuiteRunnerTests(unittest.TestCase):
             '[[ "$1" == "${FAIL_BASELINE:-}" ]] && exit 7\n'
             "exit 0\n"
         )
-        self.env = {"PATH": os.environ["PATH"], "HOME": self.temp.name, "CAPTURE": str(self.capture)}
+        self.env = {"PATH": os.environ["PATH"], "HOME": self.temp.name, "CAPTURE": str(self.capture), "BASELINES": ",".join(BASELINES)}
 
     def run_suite(self, *args, **env):
         return subprocess.run(

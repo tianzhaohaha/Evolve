@@ -34,14 +34,19 @@
 # trajectory more likely than its own skill does), actor/opd_gen_gate_mean, seed/global_pool/retrieval_hit_ratio.
 #
 # Layout (as run_global_ablation.sh): COMMON_ENV = the stream settings shared with
-# run_baseline_suite.sh, SEED_BASE_ENV pins every extension off (= `run_agentstream_baseline.sh seed`),
-# A4_ENV / A3_ENV / RESAMPLE_ENV / POOL_ENV are the reusable blocks, SKILL_FORMS the skill-form dimension,
+# run_baseline_suite.sh; the switch blocks come from _common/ours_method.sh (SEED_BASE_ENV pins every
+# extension off = `run_agentstream_baseline.sh seed`; A4_ENV / A3_ENV / RESAMPLE_ENV / POOL_ENV are the
+# reusable blocks, SKILL_FORMS the skill-form dimension, OURS_METHOD_ENV = arm E5 = run_ours_method.sh),
 # and every run_exp call spells out only what it adds. Hydra overrides go after `--`. Activate Conda in the caller.
 #
 # Usage: bash examples/agentstream_trainer/run_ours_debug.sh [--dry-run]
 #   --dry-run prints each arm's resolved setup without training.
 #   DEBUG_ARMS=E1,E3 bash ...           # run a subset of arm ids (default: every arm below)
 #   TOTAL_STEPS=2 bash ...              # smoke run
+#   AGENTSTREAM_RL_SAVE_FREQ=0 bash ... # no checkpoints (default: the last step only; SAVE_FREQ / MAX_CKPT_TO_KEEP honour the environment)
+# These variables are read after <repo>/.env is sourced, so .env must not define DEBUG_RUN_ID / DEBUG_ARMS /
+# TOTAL_STEPS / STREAM_MODE / AGENTSTREAM_RL_SAVE_FREQ / AGENTSTREAM_RL_MAX_CKPT_TO_KEEP (it holds keys and paths).
+# Final-method continuations / reruns of single arms: run_ours_final.sh.
 # Three nodes: run_ours_debug_node{1,2,3}.sh set DEBUG_ARMS so that every arm has its anchor on its node
 # (node1 E1,E3,E4,E2a; node2 E1,E5,E6,E2b; node3 E7,E8a,E8b,E8c,E1,E2c); pair only inside a node.
 #
@@ -126,65 +131,13 @@ COMMON_ENV=(
     AGENTSTREAM_RL_STREAM_PROFILE=single_pass
     AGENTSTREAM_RL_TRAIN_DATA_SIZE=10                                     # tasks per step, as the suite
     "AGENTSTREAM_RL_EPOCHS=$TOTAL_STEPS"                                  # 20 = full single pass
-    "AGENTSTREAM_RL_SAVE_FREQ=$TOTAL_STEPS"                               # checkpoint the last step only
-    AGENTSTREAM_RL_MAX_CKPT_TO_KEEP=1
-    "AGENTSTREAM_SEED_SKILL_MODE=${AGENTSTREAM_SEED_SKILL_MODE:-episode_only}"
-    AGENTSTREAM_SEED_OPD_GEN_DOMINANCE=none                               # inert while gen is off
-    AGENTSTREAM_SEED_EMA_TAU=0.9                                          # inert while EMA is off
-    AGENTSTREAM_SEED_REPLAY_CAPACITY=32                                   # inert while replay is off
+    "AGENTSTREAM_RL_SAVE_FREQ=${AGENTSTREAM_RL_SAVE_FREQ:-$TOTAL_STEPS}"  # checkpoint the last step only; 0 = never (env override)
+    "AGENTSTREAM_RL_MAX_CKPT_TO_KEEP=${AGENTSTREAM_RL_MAX_CKPT_TO_KEEP:-1}"
 )
-# ===== SEED baseline switches shared by every arm: the full forced-off set of the seed arm of
-# run_agentstream_baseline.sh (single-track OPD 0.01, policy_vllm analyzer; every extension off). =====
-SEED_BASE_ENV=(
-    AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01
-    AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF=0
-    AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=copy
-    AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED=False
-    AGENTSTREAM_SEED_GLOBAL_POOL_EVICT_POLICY=gate_ema
-    AGENTSTREAM_SEED_GLOBAL_POOL_WINDOW_STEPS=48
-    AGENTSTREAM_SEED_GLOBAL_POOL_ADMISSION=gap
-    AGENTSTREAM_SEED_GLOBAL_POOL_JUDGE_BACKEND=openai
-    AGENTSTREAM_SEED_GLOBAL_POOL_REWRITE=none
-    AGENTSTREAM_SEED_FAILED_SKILL_POSITIVE=False
-    AGENTSTREAM_SEED_OPD_GATE_EPS=0
-    AGENTSTREAM_SEED_OPD_POSITIVE_ONLY=False
-    AGENTSTREAM_SEED_EMA_MODE=off
-    AGENTSTREAM_SEED_REPLAY_ENABLE=False
-    AGENTSTREAM_SEED_LOCAL_TEACHER_SOURCE=skill
-    AGENTSTREAM_SEED_ROUTE_MODE=none
-    AGENTSTREAM_SEED_SUCCESS_ONLY=False
-    AGENTSTREAM_SEED_OPD_NORM_MODE=mask
-    AGENTSTREAM_SEED_TRAJ_GAP_GATE=False
-    AGENTSTREAM_SEED_TRAJ_GAP_GATE_MARGIN=0.0
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE=False
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE_MAX_GROUPS=4
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE_BASELINE=own
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE_POOL_MAX_GROUPS=0
-)
-# ===== Reusable blocks =====
-# A4 base [6][7]: distil successes only with the PG denominator; both skill losses stay active.
-A4_ENV=(
-    AGENTSTREAM_SEED_SUCCESS_ONLY=True
-    AGENTSTREAM_SEED_OPD_NORM_MODE=response
-)
-# A3 floor [6][7][8]: A4 plus the trajectory gate (= GRPO when the gate shuts OPD off).
-A3_ENV=("${A4_ENV[@]}" AGENTSTREAM_SEED_TRAJ_GAP_GATE=True)
-# [9] sibling resample with the source-group baseline.
-RESAMPLE_ENV=(
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE=True
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE_MAX_GROUPS=4
-    AGENTSTREAM_SEED_SIBLING_RESAMPLE_BASELINE=source
-)
-# [10] pool filled by the policy's own judge (success admission, no API key), 10-step window eviction.
-POOL_ENV=(
-    AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=pool
-    AGENTSTREAM_SEED_GLOBAL_POOL_ADMISSION=success
-    AGENTSTREAM_SEED_GLOBAL_POOL_JUDGE_BACKEND=policy_vllm
-    AGENTSTREAM_SEED_GLOBAL_POOL_EVICT_POLICY=window
-    AGENTSTREAM_SEED_GLOBAL_POOL_WINDOW_STEPS=10
-)
-# Skill form stored in the pool, "<rewrite mode>:<tag>": the arm dimension of E4-E6 and E8a-E8c.
-SKILL_FORMS=(none:raw deinstantiate:deinst aggregate:agg)
+# ===== Switch blocks (SEED_BASE_ENV / A4_ENV / A3_ENV / RESAMPLE_ENV / POOL_ENV / SKILL_FORMS): shared with
+# run_ours_method.sh so the arms and the method cannot drift apart. =====
+# shellcheck source=_common/ours_method.sh
+source "$SCRIPT_DIR/_common/ours_method.sh"
 
 # DEBUG_RUN_ID reuses an earlier job's experiment names (continuation); a new job gets fresh names.
 RUN_ID="${DEBUG_RUN_ID:-${PBS_JOBID:-$(date +%Y%m%d_%H%M%S)}}"

@@ -333,7 +333,7 @@ rows, trajs, frac_rows, success_rate, uniform_group_ratio, ref_chars_mean, ref_s
 再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[9] / [10] 的同作业对照分两族——A3 底座（E1 锚、E3 重采样+来源基线、
 E4–E6 池重采样 raw / deinst / agg、E2a–E2c 过门的 gen OPD raw / deinst / agg），A4 底座（不开门，两条 skill loss 都活着：
 E7 锚、E8a–E8c gen OPD raw / deinst / agg）——见 `examples/agentstream_trainer/run_ours_debug.sh` 与三个节点包装脚本
-`run_ours_debug_node{1,2,3}.sh`（每个节点带自己那族的锚）。代码落点：`verl/trainer/ppo/core_algos.py`
+`run_ours_debug_node{1,2,3}.sh`（每个节点带自己那族的锚）；单臂续跑 / 重跑（E5 续到 20 步、E3 续跑与从头 20 步的池消融）见 `run_ours_final.sh`。开关块统一放在 `_common/ours_method.sh`（`OURS_METHOD_ENV` = E5 = 最终方法）；`run_ours_method.sh <mode>` 以基线 launcher 的接口跑最终方法，`run_ours_suite.sh` 在 4B‑isolated / 7B‑interleaved / 7B‑isolated 三个场景上按基线套件的命名（`ours_<model>_…`）跑它。代码落点：`verl/trainer/ppo/core_algos.py`
 （`compute_opd_loss(positive_only, norm_mode)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
 （`select_admission_candidates` / `_evict_locked` / `expire`）、`seed/sibling.py`（骨架、参照选择、
 行权重）、`seed/gating.py`（`should_analyze_trajectory` / `compute_traj_gap_gate`）、`seed/resample.py`
