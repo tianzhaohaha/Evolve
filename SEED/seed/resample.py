@@ -14,20 +14,29 @@ Everything here is pure (numpy) so it is unit-testable without Ray or torch.
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Mapping, Sequence, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from seed.prompting import build_augmented_observation_text
 from seed.sibling import SiblingReference
 
+# Prompt section a resample request's context goes into (a keyword of build_augmented_observation_text):
+# the sibling's rendered trajectory ("Reference Solution") or a pool skill ("General Skill").
+SIBLING_SECTION = "reference_solution"
+POOL_SECTION = "global_skill"
+REQUEST_SECTIONS = (SIBLING_SECTION, POOL_SECTION)
 
-def augment_observations(texts: Sequence[str], references: Sequence[str]) -> List[str]:
-    """Prompt texts with the per-slot reference injected as the "Reference Solution" section;
-    slots with an empty reference are returned verbatim."""
+
+def augment_observations(
+    texts: Sequence[str], references: Sequence[str], sections: Optional[Sequence[str]] = None
+) -> List[str]:
+    """Prompt texts with the per-slot context injected into its section (default: the
+    "Reference Solution" section); slots with an empty context are returned verbatim."""
+    sections = [SIBLING_SECTION] * len(texts) if sections is None else list(sections)
     return [
-        build_augmented_observation_text(observation=text, reference_solution=ref) if ref else text
-        for text, ref in zip(texts, references)
+        build_augmented_observation_text(observation=text, **{section or SIBLING_SECTION: ref}) if ref else text
+        for text, ref, section in zip(texts, references, sections)
     ]
 
 
@@ -51,10 +60,38 @@ def build_resample_requests(
             "sample_id": int(sample_id),
             "task_slug": str(task_refs_by_uid[uid][1]),
             "task_id": str(task_refs_by_uid[uid][2]),
-            "reference_solution": ref.text,
+            "section": SIBLING_SECTION,
+            SIBLING_SECTION: ref.text,
             "reference_traj_uid": ref.traj_uid,
         }
         for sample_id, uid, ref in rows[: max(int(max_groups), 0)]
+    ]
+
+
+def build_pool_requests(
+    allfail_uids: Sequence[object],
+    hits_by_uid: Mapping[object, Tuple[str, str]],
+    task_refs_by_uid: Mapping[object, Tuple[int, str, str]],
+    *,
+    max_groups: int,
+) -> List[Dict[str, object]]:
+    """One request per all-fail group that retrieved a pool skill: the first ``max_groups``
+    (by ``sample_id``) of ``allfail_uids`` present in ``hits_by_uid`` (``uid -> (skill_id, text)``)
+    and ``task_refs_by_uid``; the skill goes into the "General Skill" section."""
+    rows = sorted(
+        (task_refs_by_uid[uid][0], uid) for uid in allfail_uids if uid in hits_by_uid and uid in task_refs_by_uid
+    )
+    return [
+        {
+            "uid": uid,
+            "sample_id": int(sample_id),
+            "task_slug": str(task_refs_by_uid[uid][1]),
+            "task_id": str(task_refs_by_uid[uid][2]),
+            "section": POOL_SECTION,
+            POOL_SECTION: hits_by_uid[uid][1],
+            "skill_id": hits_by_uid[uid][0],
+        }
+        for sample_id, uid in rows[: max(int(max_groups), 0)]
     ]
 
 

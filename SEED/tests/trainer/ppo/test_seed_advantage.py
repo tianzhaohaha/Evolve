@@ -129,3 +129,50 @@ def test_seed_outcome_weight_scales_reported_episode_term():
     )
     torch.testing.assert_close(scores, episode_adv)  # no teacher gap -> scores are the weighted episode term
     assert episode_adv.abs().max() < 1.0  # mean_std_norm gives |adv|~1 before the 0.5 weight
+
+
+# ---- sibling_resample.baseline=source: foreign-group normalisation (foreign_baseline_stats) ------
+
+def _reward_rows(rewards, index, traj_index):
+    token_level_rewards = torch.zeros((len(rewards), 2))
+    token_level_rewards[:, -1] = torch.tensor(rewards, dtype=torch.float32)
+    return token_level_rewards, torch.ones((len(rewards), 2)), np.asarray(index, dtype=object), np.asarray(traj_index, dtype=object)
+
+
+def test_episode_norm_reward_ignores_a_baseline_column_that_names_own_groups():
+    from gigpo.core_gigpo import episode_norm_reward
+
+    rewards, mask, index, traj = _reward_rows([1, 0, 0, 1], ["g1", "g1", "g2", "g2"], list("abcd"))
+    for remove_std in (True, False):
+        original = episode_norm_reward(rewards, mask, index, traj, remove_std=remove_std)
+        same = episode_norm_reward(rewards, mask, index, traj, remove_std=remove_std, baseline_index=index.copy(), stats_mask=np.ones(4, bool))
+        assert torch.equal(original, same)
+
+
+def test_foreign_baseline_uses_the_source_group_stats_with_a_std_floor_and_falls_back_without_stats():
+    from gigpo.core_gigpo import episode_norm_reward, foreign_baseline_stats
+
+    # main pass: g1 mixed (1, 0), g2 all-fail (0, 0); second pass r1 (1, 1) spawned from g2.
+    rewards, mask, index, traj = _reward_rows([1, 0, 0, 0, 1, 1], ["g1", "g1", "g2", "g2", "r1", "r1"], list("abcdef"))
+    baseline = np.asarray(["g1", "g1", "g2", "g2", "g2", "g2"], dtype=object)
+    stats_mask = np.asarray([1, 1, 1, 1, 0, 0], dtype=bool)
+    uses, mean, std = foreign_baseline_stats(rewards.sum(-1), index, traj, baseline, stats_mask)
+    assert uses.tolist() == [False] * 4 + [True] * 2
+    assert float(mean[4]) == 0.0 and float(std[4]) == pytest_approx(0.5)  # g2's std 0 floored at std([1,0,0,0])
+
+    own = episode_norm_reward(rewards, mask, index, traj, remove_std=False)
+    assert float(own[4, 0]) == pytest_approx(0.0)  # an all-success second pass carries no signal under its own group
+    source = episode_norm_reward(rewards, mask, index, traj, remove_std=False, baseline_index=baseline, stats_mask=stats_mask)
+    assert torch.equal(source[:4], own[:4])  # main rows untouched
+    assert float(source[4, 0]) == pytest_approx(1 / (0.5 + 1e-6))
+    mean_only = episode_norm_reward(rewards, mask, index, traj, remove_std=True, baseline_index=baseline, stats_mask=stats_mask)
+    assert float(mean_only[4, 0]) == pytest_approx(1.0)
+    # a baseline group without statistics (or the row's own group) keeps the ordinary path
+    unknown = np.asarray(["g1", "g1", "g2", "g2", "gx", "r1"], dtype=object)
+    assert torch.equal(episode_norm_reward(rewards, mask, index, traj, remove_std=False, baseline_index=unknown, stats_mask=stats_mask), own)
+
+
+def pytest_approx(value):
+    import pytest
+
+    return pytest.approx(value, rel=1e-5)

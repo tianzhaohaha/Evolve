@@ -87,3 +87,19 @@ def test_empty_or_foreign_kwargs_take_the_plain_path(tmp_path):
     foreign = np.array([{"question": "q1"}, {"question": "q2"}], dtype=object)  # a dataset's own env_kwargs
     obs, _ = m.reset(kwargs=foreign)
     assert m.envs.calls == [("reset", None), ("reset", None)] and obs["text"] == obs["text_base"] and not m._resample_mode
+
+
+def test_pool_requests_inject_the_skill_into_the_general_skill_section(tmp_path):
+    m = _manager(tmp_path)
+    requests = np.array(
+        [{"task_slug": "bfcl", "task_id": "t9", "section": "global_skill", "global_skill": "Check the schema first."},
+         {"task_slug": "tau2", "task_id": "t3", "section": "reference_solution", "reference_solution": "Step 1 | go"}],
+        dtype=object,
+    )
+    obs, _ = m.reset(kwargs=requests)
+    assert "General Skill" in obs["text"][0] and "Check the schema first." in obs["text"][0] and "Reference Solution" not in obs["text"][0]
+    assert "Reference Solution" in obs["text"][1] and "Step 1 | go" in obs["text"][1]
+    assert all("Check the schema first." not in text and "Step 1 | go" not in text for text in obs["text_base"])
+    next_obs, _, _, _ = m.step(["<action>noop</action>"] * 2)
+    assert "Check the schema first." in next_obs["text"][0] and "Check the schema first." not in next_obs["text_base"][0]
+    assert "online/cumulative_avg_score" not in m.recorder.snapshot()

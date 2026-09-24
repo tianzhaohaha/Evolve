@@ -91,3 +91,47 @@ def test_actor_default_norm_mode_is_mask(run_update):
     result = run_update()
     assert [call["norm_mode"] for call in result.calls] == ["mask", "mask"]
     assert result.metrics["actor/opd_mask_token_fraction"][0] == pytest.approx(3 / 7)
+
+
+# ---------------------------------------------------------------- trainer: gen channel through the gate
+
+def _gate_batch(gen_mask):
+    import numpy as np
+    from verl import DataProto
+
+    tensors = {
+        "responses": torch.zeros((5, 4), dtype=torch.long), "attention_mask": RESPONSE_MASK.clone(),
+        "teacher_log_prob": TEACHER.clone(), "old_log_probs": OLD.clone(), "teacher_signal_mask": SIGNAL.clone(),
+        "gen_teacher_log_prob": TEACHER.clone(), "gen_skill_mask": gen_mask,
+    }
+    return DataProto.from_dict(tensors=tensors, non_tensors={"traj_uid": np.asarray(TRAJ_UIDS, dtype=object)})
+
+
+def _gate_trainer():
+    from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+
+    trainer = RayPPOTrainer.__new__(RayPPOTrainer)
+    trainer._get_seed_traj_gap_gate_margin = lambda: 0.0
+    return trainer
+
+
+def test_trainer_gate_leaves_an_empty_gen_mask_alone_and_reports_no_gen_metrics():
+    metrics = {}
+    batch = _gate_trainer()._apply_seed_traj_gap_gate(batch=_gate_batch(torch.zeros(5, dtype=torch.bool)), metrics=metrics)
+    assert batch.batch["teacher_signal_mask"].tolist() == [True, True, False, False, False]
+    assert not batch.batch["gen_skill_mask"].any()
+    assert metrics["seed/traj_gate/pass_ratio"] == pytest.approx(0.5)
+    assert not any(key.startswith("seed/traj_gate/gen_") for key in metrics)
+
+
+@pytest.mark.parametrize("two_d", [False, True])
+def test_trainer_gate_covers_the_gen_channel_with_its_own_metrics(two_d):
+    gen_mask = (SIGNAL[:, None] & RESPONSE_MASK.bool()) if two_d else SIGNAL.clone()
+    metrics = {}
+    batch = _gate_trainer()._apply_seed_traj_gap_gate(batch=_gate_batch(gen_mask), metrics=metrics)
+    kept = batch.batch["gen_skill_mask"]
+    assert (kept.any(dim=-1) if two_d else kept).tolist() == [True, True, False, False, False]
+    assert metrics["seed/traj_gate/gen_pass_ratio"] == pytest.approx(0.5)
+    assert metrics["seed/traj_gate/gen_gap_mean_pass"] == pytest.approx(MEAN_A)
+    assert metrics["seed/traj_gate/gen_gap_mean_fail"] == pytest.approx(MEAN_B)
+    assert metrics["seed/traj_gate/gen_rows_after"] == 2.0

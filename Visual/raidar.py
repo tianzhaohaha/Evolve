@@ -21,50 +21,77 @@ FP_BOLD = FontProperties(family=FONT, weight="bold")
 # ============================================================
 # 1. Data
 # ============================================================
-legend_order = ["EvoStream (Ours)", "SDAR", "RLSD", "SEED", "OPSD", "GRPO", "Skill-Prompt", "Vanilla"]
+# legend_order = ["EvoStream (Ours)", "SDAR", "RLSD", "SEED", "OPSD", "GRPO", "Skill-Prompt", "Vanilla"]
+legend_order = ["BORDER", "SEED", "GRPO", "OPSD", "Vanilla"]
+
 bar_order    = legend_order[::-1]          # 组内顺时针顺序：Vanilla ... EvoStream，主角在最外侧
-hero         = "EvoStream (Ours)"          # 主角方法：数值标签加粗
+hero         = "BORDER"          # 主角方法：数值标签加粗
+
+# colors = {
+#     "BORDER (Ours)": "#5C54C7",   # 主角深紫
+#     # "SDAR":             "#BBDDBD",
+#     # "RLSD":             "#F4C5AB",
+#     "SEED":             "#9DB7D8",
+#     "OPSD":             "#DFA57E",
+#     "GRPO":             "#D3BEE3",
+#     # "Skill-Prompt":     "#EFE0A3",
+#     "Vanilla":          "#CFCFCF",   # 基线用灰色
+# }
 
 colors = {
-    "EvoStream (Ours)": "#5C54C7",   # 主角深紫
-    "SDAR":             "#BBDDBD",
-    "RLSD":             "#F4C5AB",
-    "SEED":             "#9DB7D8",
-    "OPSD":             "#DFA57E",
-    "GRPO":             "#D3BEE3",
-    "Skill-Prompt":     "#EFE0A3",
+    "BORDER": "#5C54C7",   # 主角深紫
+    # "SDAR":             "#BBDDBD",
+    # "RLSD":             "#F4C5AB",
+    "SEED":             "#BBDDBD",
+    "OPSD":             "#F4C5AB",
+    "GRPO":             "#9DB7D8",
+    # "Skill-Prompt":     "#EFE0A3",
     "Vanilla":          "#CFCFCF",   # 基线用灰色
 }
 
-# ---- 占位数据：全部随手填的，请替换成真实结果（分数按 0–100 计）----
+
+
+# ---- 占位数据：两种模式暂时沿用原有分数，请分别替换成真实结果（0–100）----
+benchmark_order = ["BFCL", "BrowseComp+", "Tau2"]
+mode_order = ["Isolated", "Interleaved"]
 data = {
-    "AppWorld":    {"EvoStream (Ours)": 62.4, "SDAR": 55.1, "RLSD": 52.8, "SEED": 50.3, "OPSD": 48.9, "GRPO": 46.2, "Skill-Prompt": 41.7, "Vanilla": 36.5},
-    "BFCL":        {"EvoStream (Ours)": 78.6, "SDAR": 74.2, "RLSD": 73.0, "SEED": 71.5, "OPSD": 70.8, "GRPO": 69.1, "Skill-Prompt": 66.4, "Vanilla": 63.2},
-    "BrowseComp+": {"EvoStream (Ours)": 41.3, "SDAR": 35.7, "RLSD": 33.9, "SEED": 32.4, "OPSD": 30.6, "GRPO": 29.8, "Skill-Prompt": 25.1, "Vanilla": 21.4},
-    "HLE":         {"EvoStream (Ours)": 24.8, "SDAR": 20.3, "RLSD": 19.5, "SEED": 18.7, "OPSD": 17.2, "GRPO": 16.9, "Skill-Prompt": 14.6, "Vanilla": 12.1},
-    "SWE":         {"EvoStream (Ours)": 57.9, "SDAR": 51.2, "RLSD": 49.6, "SEED": 47.8, "OPSD": 46.1, "GRPO": 44.3, "Skill-Prompt": 39.5, "Vanilla": 34.8},
-    "Tau2":        {"EvoStream (Ours)": 69.5, "SDAR": 63.8, "RLSD": 62.1, "SEED": 60.4, "OPSD": 58.7, "GRPO": 57.3, "Skill-Prompt": 52.6, "Vanilla": 48.9},
+    "BFCL": {
+        "Isolated":    {"BORDER": 78.6, "SEED": 71.5, "OPSD": 70.8, "GRPO": 69.1, "Vanilla": 63.2},
+        "Interleaved": {"BORDER": 78.6, "SEED": 71.5, "OPSD": 70.8, "GRPO": 69.1, "Vanilla": 63.2},
+    },
+    "BrowseComp+": {
+        "Isolated":    {"BORDER": 41.3, "SEED": 32.4, "OPSD": 30.6, "GRPO": 29.8, "Vanilla": 21.4},
+        "Interleaved": {"BORDER": 41.3, "SEED": 32.4, "OPSD": 30.6, "GRPO": 29.8, "Vanilla": 21.4},
+    },
+    "Tau2": {
+        "Isolated":    {"BORDER": 69.5, "SEED": 60.4, "OPSD": 58.7, "GRPO": 57.3, "Vanilla": 48.9},
+        "Interleaved": {"BORDER": 69.5, "SEED": 60.4, "OPSD": 58.7, "GRPO": 57.3, "Vanilla": 48.9},
+    },
 }
-# Avg 自动由上面六个 benchmark 求均值；如果你有自己的 Avg 数值，直接写 data["Avg"] = {...} 覆盖即可
-data["Avg"] = {m: float(np.mean([data[b][m] for b in data])) for m in legend_order}
+# Avg 只有一组：对三个 benchmark × 两种模式等权求均值。
+# 如果有自己的 Avg 数值，直接用 data["Avg"] = {方法名: 分数, ...} 覆盖即可。
+data["Avg"] = {
+    m: float(np.mean([data[b][mode][m] for b in benchmark_order for mode in mode_order]))
+    for m in legend_order
+}
 
-# 顺时针绘制顺序；下面 start_deg 会让最后一个（Avg）正好落在 12 点方向
-metric_order = ["AppWorld", "BFCL", "BrowseComp+", "HLE", "SWE", "Tau2", "Avg"]
+# 按模式分区，每个模式依次排列三个 benchmark；None 表示 Avg 不区分模式。
+group_order = [(b, mode) for mode in mode_order for b in benchmark_order] + [("Avg", None)]
 
 # ============================================================
-# 2. 几何参数（与原方案一致：360° 均分）
+# 2. 几何参数（六个模式分组 + 一个 Avg，360° 均分）
 # ============================================================
-n_groups, n_bars = len(metric_order), len(bar_order)
+n_groups, n_bars = len(group_order), len(bar_order)
 group_span_deg = 360.0 / n_groups
 group_gap_deg  = 4.5
 bar_gap_deg    = 0.45
 bar_step_deg   = (group_span_deg - group_gap_deg) / n_bars
 bar_width_deg  = bar_step_deg - bar_gap_deg
 bar_width      = np.deg2rad(bar_width_deg)
-start_deg      = -(n_groups - 1) * group_span_deg   # 让 metric_order 的最后一项落在 0°（正上方）
-group_center_deg = {m: start_deg + i * group_span_deg for i, m in enumerate(metric_order)}
+start_deg      = -(n_groups - 1) * group_span_deg   # 最后一组 Avg 居于 0°（正上方）
+group_center_deg = {group: start_deg + i * group_span_deg for i, group in enumerate(group_order)}
 
-inner_radius   = 2.30
+inner_radius   = 3.00      # 为双层标注留空间，同时保留中心标题的空白区
 max_bar_height = 2.60
 zero_height    = 0.26
 
@@ -72,9 +99,17 @@ fs_min, fs_max = 5.0, 10.5
 label_pad_pts  = 2.2
 zero_fill      = 0.62
 
-metric_fs      = 6.4        # 指标名字号
-arc_lw         = 1.3        # 黑弧线宽
-label_r        = inner_radius - 0.29   # 指标名所在半径（文字中线）
+mode_fs        = 8
+mode_text_color = "#666666"      # 深灰模式名，与黑色 benchmark 区分且保持可读性
+benchmark_fs   = 8
+arc_lw         = 0.6
+benchmark_arc_color = "#D0D0D5"   # 外层细浅灰线，弱化装饰的视觉权重
+benchmark_arc_r = inner_radius - 0.09
+benchmark_label_r = inner_radius - 0.29   # 外层：紧邻柱子的 benchmark 名（包括 Avg）
+mode_label_r   = inner_radius - 0.68   # 模式文字位置保持不变
+mode_band_color = "#F2F2F5"        # 两种模式共用浅灰色，避免与方法配色混淆
+mode_band_inner_r = mode_label_r - 0.16
+mode_band_outer_r = mode_label_r + 0.16
 
 # ============================================================
 # 3. 文本工具
@@ -85,7 +120,7 @@ def normalize_rotation(a):
     if a < -90: a += 180
     return a
 
-def value_string(metric, value):
+def value_string(value):
     return "0" if value == 0 else f"{value:.1f}"
 
 def ink_extents(s, fs, fp=FP):
@@ -146,7 +181,8 @@ def put_arc_text(ax, center_deg, r_mid, s, fs, pts_per_unit, fp=FP_BOLD, color="
     x = 0.0
     for (ch, size, raise_pt), a in zip(chars, adv):
         th = theta0 + direction * (x + a / 2) * ang_per_pt
-        rot = normalize_rotation(-np.rad2deg(th))
+        # 整个词采用一致朝向，避免跨过侧边时个别字符单独翻转。
+        rot = -np.rad2deg(th) + (180 if flip else 0)
         tp = TextPath((0, 0), ch, size=size, prop=fp)
         # 锚点：本字前进宽度中点、基线（上标则再抬高）
         ax.add_patch(GlyphPatch(ax, th, r_base, tp, (a / 2, -raise_pt), rot,
@@ -156,11 +192,13 @@ def put_arc_text(ax, center_deg, r_mid, s, fs, pts_per_unit, fp=FP_BOLD, color="
 # ============================================================
 # 4. 画布
 # ============================================================
-fig = plt.figure(figsize=(6.2, 6.9), facecolor="white")
-ax = fig.add_axes([0.02, 0.13, 0.96, 0.86], projection="polar")
+# 压缩圆图与单行图例之间的留白，不改变内部半径和分组间距。
+fig = plt.figure(figsize=(6.2, 6.3), facecolor="white")
+ax = fig.add_axes([0.02, 0.1, 0.96, 0.89], projection="polar")
 ax.set_theta_zero_location("N"); ax.set_theta_direction(-1); ax.set_axis_off()
-ax.set_ylim(0, inner_radius + max_bar_height + 0.35)
+ax.set_ylim(0, inner_radius + max_bar_height + 0.25)
 
+fig.canvas.draw()   # 先确定极坐标轴的实际尺寸，再将文字 pt 换算为半径单位
 _p0, _p1 = ax.transData.transform((0, 0)), ax.transData.transform((0, 1))
 pts_per_unit = np.hypot(*(_p1 - _p0)) * 72 / fig.dpi
 pad_units = label_pad_pts / pts_per_unit
@@ -170,15 +208,17 @@ def font_for_height(h):
     return fs_min + (fs_max - fs_min) * t ** 0.6
 
 # ============================================================
-# 5. 柱子 + 数值 + 黑弧 + 弧形指标名
+# 5. 柱子 + 数值 + 外层 benchmark 标注（包括 Avg）
 # ============================================================
-for metric in metric_order:
-    center_deg = group_center_deg[metric]
-    raw = np.array([data[metric][m] for m in bar_order], float)
-    labels = [value_string(metric, v) for v in raw]
+for benchmark, mode in group_order:
+    center_deg = group_center_deg[(benchmark, mode)]
+    scores = data[benchmark] if mode is None else data[benchmark][mode]
+    raw = np.array([scores[m] for m in bar_order], float)
+    labels = [value_string(v) for v in raw]
     fps = [FP_BOLD if m == hero else FP for m in bar_order]
 
-    heights = np.where(raw > 0, zero_height + raw / raw.max() * (max_bar_height - zero_height), zero_height)
+    scale = raw.max() if raw.max() > 0 else 1.0
+    heights = np.where(raw > 0, zero_height + raw / scale * (max_bar_height - zero_height), zero_height)
     zero_fs = {}
     for k, (v, s, fp) in enumerate(zip(raw, labels, fps)):
         heights[k] = max(heights[k], text_width_pts(s, fs_min, fp) / pts_per_unit + 2 * pad_units)
@@ -206,27 +246,38 @@ for metric in metric_order:
 
     half = (group_span_deg - group_gap_deg) / 2
     at = np.deg2rad(np.linspace(center_deg - half, center_deg + half, 80))
-    ax.plot(at, np.full_like(at, inner_radius - 0.09), color="black", lw=arc_lw,
+    ax.plot(at, np.full_like(at, benchmark_arc_r), color=benchmark_arc_color, lw=arc_lw,
             solid_capstyle="butt", zorder=4)
+    put_arc_text(ax, center_deg, benchmark_label_r, benchmark, benchmark_fs, pts_per_unit)
 
-    put_arc_text(ax, center_deg, label_r, metric, metric_fs, pts_per_unit)
+# 内层：用无描边的浅灰环带替代粗黑弧线，跨度和文字位置保持不变。
+# Avg 不属于任何模式，其下方不绘制环带，只保留外层名称和细线。
+for mode in mode_order:
+    centers = [group_center_deg[group] for group in group_order if group[1] == mode]
+    center_deg = (centers[0] + centers[-1]) / 2
+    half = (centers[-1] - centers[0] + group_span_deg - group_gap_deg) / 2
+    at = np.deg2rad(np.linspace(center_deg - half, center_deg + half, 160))
+    ax.fill_between(at, mode_band_inner_r, mode_band_outer_r,
+                    facecolor=mode_band_color, edgecolor="none", linewidth=0, zorder=1)
+    put_arc_text(ax, center_deg, mode_label_r, mode, mode_fs, pts_per_unit, color=mode_text_color)
 
 # ============================================================
 # 6. 中心标题 + 图例
 # ============================================================
 title_color = "#30259B"
 cx, cy = fig.transFigure.inverted().transform(ax.transData.transform((0, 0)))
-fig.text(cx, cy + 0.040, "EvoStream", ha="center", va="center", fontsize=22,
+fig.text(cx, cy, "BORDER", ha="center", va="center", fontsize=22,
          fontweight="bold", fontstyle="italic", color=title_color)
-fig.text(cx, cy - 0.030, "Subtitle line 1,\nSubtitle line 2\n(replace me)",
-         ha="center", va="center", fontsize=7.4, fontweight="bold", fontstyle="italic",
-         linespacing=1.08, color=title_color)
+# fig.text(cx, cy - 0.030, "Subtitle line 1,\nSubtitle line 2\n(replace me)",
+#          ha="center", va="center", fontsize=7.4, fontweight="bold", fontstyle="italic",
+#          linespacing=1.08, color=title_color)
 
 handles = [Patch(facecolor=colors[m], edgecolor="none", label=m) for m in legend_order]
-fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.025), ncol=4,
-           frameon=False, fontsize=9, handlelength=2.1, handleheight=0.9,
+fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.006), ncol=5,
+           borderaxespad=0,
+           frameon=False, fontsize=12, handlelength=2.1, handleheight=0.9,
            columnspacing=1.8, handletextpad=0.55, labelspacing=0.25)
 
-plt.savefig("evostream_radial.png", dpi=300, bbox_inches="tight", pad_inches=0.05)
-plt.savefig("evostream_radial.pdf", bbox_inches="tight", pad_inches=0.05)
+plt.savefig("evostream_radial.png", dpi=300, bbox_inches="tight", pad_inches=0.1)
+plt.savefig("evostream_radial.pdf", bbox_inches="tight", pad_inches=0.1)
 plt.show()

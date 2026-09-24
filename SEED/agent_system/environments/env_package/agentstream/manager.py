@@ -63,6 +63,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         # Sibling resample pass: per-slot reference text ("" = plain prompt) and whether the
         # current episode batch is such a pass (its episodes stay out of the online metrics).
         self._reference_solutions: List[str] = []
+        self._sections: List[str] = []  # prompt section per slot (reference_solution | global_skill)
         self._resample_mode = False
 
         self._slugs: List[str] = []
@@ -90,10 +91,13 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
         if not (requests and isinstance(requests[0], dict) and "task_slug" in requests[0]):
             payloads, infos = self.envs.reset()
             self._reference_solutions = [""] * len(payloads)
+            self._sections = ["reference_solution"] * len(payloads)
             self._resample_mode = False
         else:
             payloads, infos = self.envs.reset_refs([(str(r["task_slug"]), str(r["task_id"])) for r in requests])
-            self._reference_solutions = [str(r.get("reference_solution", "")) for r in requests]
+            # The section name doubles as the key of the context text (seed/resample.py).
+            self._sections = [str(r.get("section", "reference_solution")) for r in requests]
+            self._reference_solutions = [str(r.get(section, "")) for r, section in zip(requests, self._sections)]
             self._resample_mode = True
         batch_size = len(payloads)
 
@@ -119,7 +123,7 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
 
         full_text_obs = self.build_text_obs(raw_obs, init=True)
         observations = {
-            "text": augment_observations(full_text_obs, self._reference_solutions),
+            "text": augment_observations(full_text_obs, self._reference_solutions, self._sections),
             "text_base": full_text_obs,
             "image": None,
             "anchor": raw_obs,
@@ -172,8 +176,9 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
 
         full_text_obs = self.build_text_obs(display_obs, init=False)
         references = getattr(self, "_reference_solutions", None) or [""] * len(full_text_obs)
+        sections = getattr(self, "_sections", None) or None
         next_observations = {
-            "text": augment_observations(full_text_obs, references),
+            "text": augment_observations(full_text_obs, references, sections),
             "text_base": full_text_obs,
             "image": None,
             "anchor": display_obs,

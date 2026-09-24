@@ -422,6 +422,8 @@ def compute_seed_advantage_components(
     teacher_adv_mode: str = "additive",
     teacher_adv_mult_eps: float = 0.2,
     metrics_prefix: str = "seed/state_group",
+    baseline_index: Optional[np.ndarray] = None,
+    stats_mask: Optional[np.ndarray] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, float]]:
     """
     Compute SEED advantages with independently weighted episode- and step-skill teacher terms.
@@ -443,6 +445,8 @@ def compute_seed_advantage_components(
         traj_index=traj_index,
         epsilon=epsilon,
         remove_std=remove_std,
+        baseline_index=baseline_index,
+        stats_mask=stats_mask,
     )
 
     step_weight = float(step_advantage_w or 0.0)
@@ -573,6 +577,8 @@ def compute_seed_outcome_advantage(token_level_rewards: torch.Tensor,
                                    teacher_adv_mode: str = "additive",
                                    teacher_adv_mult_eps: float = 0.2,
                                    return_metrics: bool = False,
+                                   baseline_index: Optional[np.ndarray] = None,
+                                   stats_mask: Optional[np.ndarray] = None,
                                    ):
     """
     Compute the advantages for SEED.
@@ -604,6 +610,8 @@ def compute_seed_outcome_advantage(token_level_rewards: torch.Tensor,
         clip_teacher_adv=clip_teacher_adv,
         outcome_advantage_w=outcome_advantage_w,
         teacher_adv_mode=teacher_adv_mode,
+        baseline_index=baseline_index,
+        stats_mask=stats_mask,
         teacher_adv_mult_eps=teacher_adv_mult_eps,
         metrics_prefix="seed/state_group",
     )
@@ -621,6 +629,49 @@ def compute_seed_outcome_advantage(token_level_rewards: torch.Tensor,
     return scores, scores
 
 
+def foreign_baseline_stats(scores: torch.Tensor,
+                           index: np.array,
+                           traj_index: np.array,
+                           baseline_index: np.array,
+                           stats_mask: Optional[np.ndarray],
+                           compute_mean_std_cross_steps: bool = True,
+                           ) -> Tuple[np.ndarray, torch.Tensor, torch.Tensor]:
+    """Per-row (uses_foreign, mean, std) for rows whose ``baseline_index`` names another group.
+
+    Group statistics come from the rows selected by ``stats_mask`` only (the plain-prompt rows),
+    grouped by ``index`` with the same per-row / per-trajectory convention as
+    :func:`episode_norm_reward`. A foreign group's std is floored at the std of all
+    statistics rows: a group that never succeeded has std 0, and dividing a rescued row by
+    it would blow the advantage up. Rows whose baseline is their own group, or a group without
+    statistics, keep ``uses_foreign=False`` (the caller falls back to the ordinary stats).
+    """
+    raw = scores.detach().cpu().clone()
+    bsz = len(index)
+    mask = np.ones(bsz, dtype=bool) if stats_mask is None else np.asarray(stats_mask, dtype=bool)
+    per_group = defaultdict(list)
+    seen = set()
+    for i in range(bsz):
+        if not mask[i] or (index[i], traj_index[i]) in seen:
+            continue
+        per_group[index[i]].append(float(raw[i]))
+        if not compute_mean_std_cross_steps:
+            seen.add((index[i], traj_index[i]))
+    every = [value for values in per_group.values() for value in values]
+    std_floor = float(np.std(every, ddof=1)) if len(every) > 1 else 0.0
+    uses_foreign = np.zeros(bsz, dtype=bool)
+    mean = torch.zeros(bsz, dtype=raw.dtype)
+    std = torch.ones(bsz, dtype=raw.dtype)
+    for i in range(bsz):
+        source = baseline_index[i]
+        if source == index[i] or source not in per_group:
+            continue
+        values = per_group[source]
+        uses_foreign[i] = True
+        mean[i] = float(np.mean(values))
+        std[i] = max(float(np.std(values, ddof=1)) if len(values) > 1 else 0.0, std_floor)
+    return uses_foreign, mean, std
+
+
 def episode_norm_reward(token_level_rewards: torch.Tensor,
                         response_mask: torch.Tensor,
                         index: np.array,
@@ -628,10 +679,15 @@ def episode_norm_reward(token_level_rewards: torch.Tensor,
                         epsilon: float = 1e-6,
                         remove_std: bool = True,
                         compute_mean_std_cross_steps: bool = True,
+                        baseline_index: Optional[np.ndarray] = None,
+                        stats_mask: Optional[np.ndarray] = None,
                         ):
     """
     Compute episode-level advantage using mean-std normalization for GiGPO.
     (with only one scalar reward for each episode).
+    ``baseline_index`` / ``stats_mask`` (both optional, default = original behaviour) let rows
+    sampled under another context (the SEED sibling resample pass) be normalised against the
+    plain-prompt rows of their source group, see :func:`foreign_baseline_stats`.
     Args:
         token_level_rewards: `(torch.Tensor)`
             shape: (bs, response_length)
@@ -680,11 +736,19 @@ def episode_norm_reward(token_level_rewards: torch.Tensor,
                 id2std[idx] = torch.std(torch.tensor([id2score[idx]]))
             else:
                 raise ValueError(f"no score in prompt index: {idx}")
+        uses_foreign = None
+        if baseline_index is not None:
+            uses_foreign, foreign_mean, foreign_std = foreign_baseline_stats(
+                scores, index, traj_index, baseline_index, stats_mask, compute_mean_std_cross_steps
+            )
         for i in range(bsz):
+            mean, std = id2mean[index[i]], id2std[index[i]]
+            if uses_foreign is not None and uses_foreign[i]:
+                mean, std = foreign_mean[i], foreign_std[i]
             if remove_std:
-                scores[i] = scores[i] - id2mean[index[i]]
+                scores[i] = scores[i] - mean
             else:
-                scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
+                scores[i] = (scores[i] - mean) / (std + epsilon)
         episode_advantages = scores.unsqueeze(-1).tile([1, response_length]) * response_mask
 
     return episode_advantages

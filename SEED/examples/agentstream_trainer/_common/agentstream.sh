@@ -193,6 +193,10 @@ SEED_GLOBAL_POOL_SCORE_THRESHOLD=${SEED_GLOBAL_POOL_SCORE_THRESHOLD:-0.6}
 SEED_GLOBAL_POOL_ADMIT_FAILED=${SEED_GLOBAL_POOL_ADMIT_FAILED:-False}
 SEED_GLOBAL_POOL_EVICT_POLICY=${SEED_GLOBAL_POOL_EVICT_POLICY:-gate_ema}
 SEED_GLOBAL_POOL_WINDOW_STEPS=${SEED_GLOBAL_POOL_WINDOW_STEPS:-48}
+# Pool admission / content switches (README "可选改进开关" [10], seed/skill_rewrite.py); defaults = original pipeline.
+SEED_GLOBAL_POOL_ADMISSION=${SEED_GLOBAL_POOL_ADMISSION:-gap}
+SEED_GLOBAL_POOL_JUDGE_BACKEND=${SEED_GLOBAL_POOL_JUDGE_BACKEND:-openai}
+SEED_GLOBAL_POOL_REWRITE=${SEED_GLOBAL_POOL_REWRITE:-none}
 SEED_GLOBAL_POOL_JUDGE_MODEL=${SEED_GLOBAL_POOL_JUDGE_MODEL:-z-ai/glm-5.2}
 SEED_SKILL_GEN_MICRO_BATCH_SIZE_PER_GPU=${SEED_SKILL_GEN_MICRO_BATCH_SIZE_PER_GPU:-${SEED_SKILL_GEN_MICRO_BATCH_SIZE:-1}}
 SEED_SKILL_GEN_MAX_SAMPLES=${SEED_SKILL_GEN_MAX_SAMPLES:-all}
@@ -218,6 +222,8 @@ SEED_TRAJ_GAP_GATE_MARGIN=${SEED_TRAJ_GAP_GATE_MARGIN:-0.0}
 # Sibling resample pass (README "可选改进开关" [9], seed/resample.py); rendering caps are hydra-only.
 SEED_SIBLING_RESAMPLE=${SEED_SIBLING_RESAMPLE:-False}
 SEED_SIBLING_RESAMPLE_MAX_GROUPS=${SEED_SIBLING_RESAMPLE_MAX_GROUPS:-4}
+SEED_SIBLING_RESAMPLE_BASELINE=${SEED_SIBLING_RESAMPLE_BASELINE:-own}
+SEED_SIBLING_RESAMPLE_POOL_MAX_GROUPS=${SEED_SIBLING_RESAMPLE_POOL_MAX_GROUPS:-0}
 
 SEED_ENABLE_ANALYSIS=${SEED_ENABLE_ANALYSIS:-True}
 SEED_SELECTOR=${SEED_SELECTOR:-llm}
@@ -300,6 +306,9 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.global_pool.admit_failed=$SEED_GLOBAL_POOL_ADMIT_FAILED \
     algorithm.seed.global_pool.evict_policy=$SEED_GLOBAL_POOL_EVICT_POLICY \
     algorithm.seed.global_pool.window_steps=$SEED_GLOBAL_POOL_WINDOW_STEPS \
+    algorithm.seed.global_pool.admission=$SEED_GLOBAL_POOL_ADMISSION \
+    algorithm.seed.global_pool.judge_backend=$SEED_GLOBAL_POOL_JUDGE_BACKEND \
+    algorithm.seed.global_pool.rewrite=$SEED_GLOBAL_POOL_REWRITE \
     algorithm.seed.global_pool.judge_model=$SEED_GLOBAL_POOL_JUDGE_MODEL \
     actor_rollout_ref.actor.skill_gen_micro_batch_size_per_gpu=$SEED_SKILL_GEN_MICRO_BATCH_SIZE_PER_GPU \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
@@ -346,6 +355,8 @@ python3 -m verl.trainer.main_ppo \
     algorithm.seed.traj_gap_gate.margin=$SEED_TRAJ_GAP_GATE_MARGIN \
     algorithm.seed.sibling_resample.enable=$SEED_SIBLING_RESAMPLE \
     algorithm.seed.sibling_resample.max_groups=$SEED_SIBLING_RESAMPLE_MAX_GROUPS \
+    algorithm.seed.sibling_resample.baseline=$SEED_SIBLING_RESAMPLE_BASELINE \
+    algorithm.seed.sibling_resample.pool_max_groups=$SEED_SIBLING_RESAMPLE_POOL_MAX_GROUPS \
     algorithm.seed.mode=$SEED_MODE \
     algorithm.seed.enable_analysis=$SEED_ENABLE_ANALYSIS \
     algorithm.seed.selector=$SEED_SELECTOR \

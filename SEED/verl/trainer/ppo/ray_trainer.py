@@ -82,10 +82,18 @@ from seed.sibling import (
     SIBLING_ANALYSIS_MODE,
     build_reference_solution,
     compute_pg_row_weights,
+    group_outcomes,
     select_group_references,
     select_sibling_references,
 )
-from seed.resample import build_resample_requests, reconcile_non_tensor_keys, summarize_resample_batch
+from seed.resample import (
+    POOL_SECTION,
+    build_pool_requests,
+    build_resample_requests,
+    reconcile_non_tensor_keys,
+    summarize_resample_batch,
+)
+from seed.skill_rewrite import build_judge_rewrite_prompt, parse_judge_rewrite
 from seed.gating import compute_traj_gap_gate, should_analyze_trajectory
 from verl.trainer.ppo.metric_utils import is_episode_metric_key
 from verl.utils.ema import ema_applies_to, normalize_ema_mode
@@ -487,6 +495,14 @@ def compute_advantage(
         else:
             step_skill_mask = None
 
+        # sibling_resample.baseline=source: resample rows carry the uid of the group they were
+        # spawned from; their advantage is normalised with that group's main-pass statistics.
+        baseline_index = data.non_tensor_batch.get('baseline_uid')
+        stats_mask = (
+            np.asarray(data.non_tensor_batch['resample_pass']) == 0
+            if baseline_index is not None and 'resample_pass' in data.non_tensor_batch
+            else None
+        )
         advantages, returns, seed_adv_metrics = core_gigpo.compute_seed_outcome_advantage(
             token_level_rewards=data.batch['token_level_rewards'],
             step_rewards=data.batch['step_rewards'],
@@ -494,6 +510,8 @@ def compute_advantage(
             anchor_obs=data.non_tensor_batch['anchor_obs'],
             index=data.non_tensor_batch['uid'],
             traj_index=data.non_tensor_batch['traj_uid'],
+            baseline_index=baseline_index,
+            stats_mask=stats_mask,
             teacher_log_prob=teacher_log_prob,
             episode_teacher_log_prob=episode_teacher_log_prob,
             step_teacher_log_prob=step_teacher_log_prob,
@@ -735,6 +753,11 @@ class RayPPOTrainer:
             judge_base_url=str(_select("judge_base_url", defaults.judge_base_url)),
             judge_api_key_env=str(_select("judge_api_key_env", defaults.judge_api_key_env)),
             judge_batch_size=int(_select("judge_batch_size", defaults.judge_batch_size)),
+            admission=str(_select("admission", defaults.admission)),
+            judge_backend=str(_select("judge_backend", defaults.judge_backend)),
+            rewrite=str(_select("rewrite", defaults.rewrite)),
+            rewrite_neighbors=int(_select("rewrite_neighbors", defaults.rewrite_neighbors)),
+            rewrite_max_tokens=int(_select("rewrite_max_tokens", defaults.rewrite_max_tokens)),
             embed_backend=str(_select("embed_backend", defaults.embed_backend)),
             embed_model=str(_select("embed_model", defaults.embed_model)),
             embed_url=_select("embed_url", defaults.embed_url),
@@ -743,6 +766,15 @@ class RayPPOTrainer:
 
     def _is_seed_global_pool_enabled(self) -> bool:
         return str(OmegaConf.select(self.config, "algorithm.seed.global_pool.source") or "copy") == "pool"
+
+    @staticmethod
+    def _seed_pool_admits_synchronously(pool_config: GlobalPoolConfig) -> bool:
+        """policy_vllm / none judges run on the trainer thread right after the analysis (the
+        vLLM engine cannot be shared with a background thread); openai keeps the async job."""
+        return pool_config.judge_backend != "openai"
+
+    def _get_seed_analysis_context_length(self) -> int:
+        return int(OmegaConf.select(self.config, "algorithm.seed.analysis_context_length") or 16384)
 
     def _is_seed_failed_skill_positive(self) -> bool:
         """Failed-episode skills are written as positive rules (analysis prompt) and skip the
@@ -790,6 +822,8 @@ class RayPPOTrainer:
             obs_chars=int(_select("obs_chars", 160)),
             response_chars=int(_select("response_chars", 1200)),
             max_chars=int(_select("max_chars", 6000)),
+            baseline=str(_select("baseline", "own")),
+            pool_max_groups=int(_select("pool_max_groups", 0)),
         )
 
     def _build_prompt_response_batch(
@@ -859,18 +893,22 @@ class RayPPOTrainer:
         names = (
             "groups_mixed", "groups_requested", "rows", "trajs", "frac_rows", "success_rate",
             "uniform_group_ratio", "ref_chars_mean", "ref_steps_mean", "prompt_clip_ratio",
+            "pool_groups_allfail", "pool_groups_requested", "pool_hit_rate", "pool_rescue_rate", "pool_retrieval_failed",
         )
         metrics.update({f"{prefix}{name}": 0.0 for name in names})
+        cfg = self._get_seed_sibling_resample_config()
+        nt = batch.non_tensor_batch
         # Row flag (0 = main pass) on every step while the switch is on, so batches with and
-        # without a resample pass keep one key set (replay merges, dumps).
-        batch.non_tensor_batch["resample_pass"] = np.zeros(len(batch), dtype=np.int8)
+        # without a resample pass keep one key set (replay merges, dumps). With baseline=source
+        # every row also names the group whose statistics normalise it (main rows: their own).
+        nt["resample_pass"] = np.zeros(len(batch), dtype=np.int8)
+        if cfg.baseline == "source" and "uid" in nt:
+            nt["baseline_uid"] = np.array(nt["uid"], dtype=object)
         if not getattr(self.envs, "supports_task_refs", False):
             raise ValueError(
                 "algorithm.seed.sibling_resample needs an environment manager that can re-run explicit tasks "
-                "(AgentStream: reset(kwargs=[{task_slug, task_id, reference_solution}, ...]))."
+                "(AgentStream: reset(kwargs=[{task_slug, task_id, section, <section>: text}, ...]))."
             )
-        cfg = self._get_seed_sibling_resample_config()
-        nt = batch.non_tensor_batch
         missing = [k for k in ("uid", "traj_uid", "episode_rewards", "task_slug", "task_id", "sample_id", "obs_text") if k not in nt]
         if missing:
             module_logger.warning("SEED sibling resample skipped: the rollout batch lacks %s.", missing)
@@ -893,19 +931,26 @@ class RayPPOTrainer:
         render = partial(
             build_reference_solution, obs_chars=cfg.obs_chars, response_chars=cfg.response_chars, max_chars=cfg.max_chars
         )
+        traj_success = self._build_seed_traj_success_map(batch)
         references, group_metrics = select_group_references(
-            episodes, nt["uid"], traj_uids, self._build_seed_traj_success_map(batch),
-            self._build_seed_traj_reward_map(batch), render=render,
+            episodes, nt["uid"], traj_uids, traj_success, self._build_seed_traj_reward_map(batch), render=render
         )
         requests = build_resample_requests(references, task_refs, max_groups=cfg.max_groups)
         metrics.update(
             {
                 f"{prefix}groups_mixed": group_metrics["mixed_groups"],
                 f"{prefix}groups_requested": float(len(requests)),
-                f"{prefix}ref_chars_mean": float(np.mean([len(r["reference_solution"]) for r in requests])) if requests else 0.0,
+                f"{prefix}ref_chars_mean": float(np.mean([len(r[r["section"]]) for r in requests])) if requests else 0.0,
                 f"{prefix}ref_steps_mean": float(np.mean([references[r["uid"]].rendered_steps for r in requests])) if requests else 0.0,
             }
         )
+        # Pool channel (pool_max_groups > 0): all-fail groups have no sibling to learn from, so
+        # they are re-run with a retrieved cross-task skill instead (own request section).
+        if cfg.pool_max_groups > 0 and self._is_seed_global_pool_enabled():
+            requests += self._build_seed_pool_resample_requests(
+                batch=batch, episodes=episodes, traj_success=traj_success, task_refs=task_refs,
+                max_groups=cfg.pool_max_groups, metrics=metrics,
+            )
         if not requests:
             return batch
 
@@ -914,7 +959,7 @@ class RayPPOTrainer:
         sub = gen_batch.select_idxs(np.asarray([r["sample_id"] for r in requests]))
         sub.meta_info = dict(gen_batch.meta_info)
         sub.non_tensor_batch["env_kwargs"] = self.traj_collector._object_array(
-            [{k: r[k] for k in ("task_slug", "task_id", "reference_solution")} for r in requests]
+            [{k: r[k] for k in ("task_slug", "task_id", "section", r["section"])} for r in requests]
         )
         with _timer("gen_resample", timing_raw):
             extra = self.traj_collector.multi_turn_loop(
@@ -927,6 +972,11 @@ class RayPPOTrainer:
         summary = summarize_resample_batch(
             ent["uid"], ent["traj_uid"], ent["episode_rewards"], self._get_seed_failure_success_threshold()
         )
+        # Before the sample_id offset below: the second pass numbers its rows by request index.
+        request_of_row = [requests[int(sample_id)] for sample_id in ent["sample_id"]]
+        if "baseline_uid" in nt:
+            ent["baseline_uid"] = np.array([request["uid"] for request in request_of_row], dtype=object)
+        metrics[f"{prefix}pool_rescue_rate"] = self._record_seed_pool_rescues(extra, request_of_row)
         prompt_width = extra.batch["prompts"].size(-1)
         prompt_clip = (extra.batch["attention_mask"][:, :prompt_width].sum(dim=-1) >= prompt_width).float().mean().item()
 
@@ -975,6 +1025,82 @@ class RayPPOTrainer:
             100.0 * len(extra) / len(merged),
         )
         return merged
+
+    def _build_seed_pool_resample_requests(
+        self,
+        *,
+        batch: DataProto,
+        episodes: Dict[object, List[Dict[str, object]]],
+        traj_success: Dict[object, float],
+        task_refs: Dict[object, Tuple[int, str, str]],
+        max_groups: int,
+        metrics: Dict[str, float],
+    ) -> List[Dict[str, object]]:
+        """Second-pass requests for the all-fail groups of the main pass: each retrieves one pool
+        skill (same-task entries excluded, ``min_sim`` applies); the first ``max_groups`` hits by
+        ``sample_id`` are re-run with the skill in the "General Skill" section."""
+        prefix = "seed/resample/pool_"
+        nt = batch.non_tensor_batch
+        outcomes = group_outcomes(nt["uid"], nt["traj_uid"], traj_success)
+        allfail = [uid for uid, (successes, failures) in outcomes.items() if failures and not successes]
+        metrics[f"{prefix}groups_allfail"] = float(len(allfail))
+        pool, _, embedder = self._lazy_init_seed_global_pool()
+        if not allfail or len(pool) == 0:
+            return []
+        task_meta = self._build_seed_traj_task_meta(batch)
+        first_traj: Dict[object, object] = {}
+        for uid, traj_uid in zip(nt["uid"], nt["traj_uid"]):
+            first_traj.setdefault(uid, traj_uid)
+        queries, task_keys = [], []
+        for uid in allfail:
+            query, task_key, _, _ = self._seed_pool_task_query(task_meta, first_traj[uid], episodes.get(first_traj[uid], []))
+            queries.append(query)
+            task_keys.append(task_key)
+        try:
+            results = pool.retrieve(embedder.encode(queries), task_keys, current_step=int(self.global_steps))
+        except Exception as exc:  # noqa: BLE001 - as the gen-channel retrieval: flagged, never fatal
+            metrics[f"{prefix}retrieval_failed"] = 1.0
+            module_logger.warning("SEED pool resample retrieval failed; no pool requests this step: %s", exc)
+            return []
+        hits = {uid: (result.hit.skill_id, result.hit.text) for uid, result in zip(allfail, results) if result.hit is not None}
+        requests = build_pool_requests(allfail, hits, task_refs, max_groups=max_groups)
+        metrics[f"{prefix}hit_rate"] = len(hits) / len(allfail)
+        metrics[f"{prefix}groups_requested"] = float(len(requests))
+        return requests
+
+    def _record_seed_pool_rescues(self, extra: DataProto, request_of_row: List[Dict[str, object]]) -> float:
+        """Credit each pool skill with the outcome of the second-pass group that used it
+        (``record_rescue`` also refreshes the window-eviction clock); returns the share of pool
+        groups that produced at least one success."""
+        ent = extra.non_tensor_batch
+        request_by_uid: Dict[object, Dict[str, object]] = {}
+        for uid, request in zip(ent["uid"], request_of_row):
+            if request["section"] == POOL_SECTION:
+                request_by_uid.setdefault(uid, request)
+        if not request_by_uid:
+            return 0.0
+        outcomes = group_outcomes(ent["uid"], ent["traj_uid"], self._build_seed_traj_success_map(extra))
+        pool, _, _ = self._lazy_init_seed_global_pool()
+        rescued = 0
+        for uid, request in request_by_uid.items():
+            successes, _ = outcomes.get(uid, ([], []))
+            pool.record_rescue(str(request["skill_id"]), bool(successes), int(self.global_steps))
+            rescued += 1 if successes else 0
+        pool.save()
+        return rescued / len(request_by_uid)
+
+    @staticmethod
+    def _seed_resample_advantage_metrics(batch: DataProto) -> Dict[str, float]:
+        """Token-level advantage of the resample rows (mean, positive share); zeros without any."""
+        rows = torch.as_tensor(np.asarray(batch.non_tensor_batch["resample_pass"]) == 1)
+        if not bool(rows.any()):
+            return {"seed/resample/adv_mean": 0.0, "seed/resample/adv_pos_frac": 0.0}
+        token_mask = batch.batch["response_mask"][rows].bool()
+        advantages = batch.batch["advantages"][rows][token_mask].float()
+        return {
+            "seed/resample/adv_mean": float(advantages.mean()) if advantages.numel() else 0.0,
+            "seed/resample/adv_pos_frac": float((advantages > 0).float().mean()) if advantages.numel() else 0.0,
+        }
 
     def _seed_ema_uses(self, target: str) -> bool:
         """Whether the EMA shadow replaces the KL reference ('ref') or the OPD teacher base ('teacher')."""
@@ -1073,6 +1199,21 @@ class RayPPOTrainer:
                 keep = keep_rows.view(-1, *([1] * (mask.dim() - 1))).to(device=mask.device, dtype=mask.dtype)
                 batch.batch[key] = mask & keep
         metrics.update(gate_metrics)
+        # The gen channel (pool skill as the teacher context) is gated the same way; its keys are
+        # zero-filled on every path, so only a batch with gen signal produces gen metrics.
+        gen_mask = batch.batch.get("gen_skill_mask") if "gen_skill_mask" in batch.batch.keys() else None
+        if gen_mask is not None and "gen_teacher_log_prob" in batch.batch.keys() and bool(gen_mask.any()):
+            keep_gen, gen_metrics = compute_traj_gap_gate(
+                traj_uids=batch.non_tensor_batch["traj_uid"],
+                teacher_log_prob=batch.batch["gen_teacher_log_prob"],
+                old_log_probs=batch.batch["old_log_probs"],
+                response_mask=compute_response_mask(batch),
+                signal_mask=gen_mask,
+                margin=self._get_seed_traj_gap_gate_margin(),
+            )
+            keep = keep_gen.view(-1, *([1] * (gen_mask.dim() - 1))).to(device=gen_mask.device, dtype=gen_mask.dtype)
+            batch.batch["gen_skill_mask"] = gen_mask & keep
+            metrics.update({k.replace("seed/traj_gate/", "seed/traj_gate/gen_"): v for k, v in gen_metrics.items()})
         return batch
 
     @staticmethod
@@ -1582,13 +1723,15 @@ class RayPPOTrainer:
         global_pool_source = str(OmegaConf.select(config, "algorithm.seed.global_pool.source") or "copy")
         if global_pool_source not in ("copy", "pool"):
             raise ValueError("algorithm.seed.global_pool.source must be 'copy' or 'pool'.")
+        pool_resample_groups = int(OmegaConf.select(config, "algorithm.seed.sibling_resample.pool_max_groups") or 0)
         if global_pool_source == "pool":
-            if opd_gen_loss_coef <= 0:
+            if opd_gen_loss_coef <= 0 and pool_resample_groups <= 0:
                 raise ValueError(
-                    "algorithm.seed.global_pool.source='pool' requires actor_rollout_ref.actor.opd_gen_loss_coef > 0 "
-                    "(the pool only feeds the gen OPD channel)."
+                    "algorithm.seed.global_pool.source='pool' has no consumer: set actor_rollout_ref.actor.opd_gen_loss_coef > 0 "
+                    "(gen OPD channel) and/or algorithm.seed.sibling_resample.pool_max_groups > 0 (resample channel)."
                 )
-            # GlobalPoolConfig.validate() covers embed_backend/embed_url and the numeric ranges.
+            # GlobalPoolConfig.validate() covers embed_backend/embed_url, the numeric ranges and the
+            # admission / judge_backend / rewrite value sets.
             GlobalPoolConfig(
                 source=global_pool_source,
                 embed_backend=str(OmegaConf.select(config, "algorithm.seed.global_pool.embed_backend") or "local"),
@@ -1596,7 +1739,20 @@ class RayPPOTrainer:
                 capacity=int(OmegaConf.select(config, "algorithm.seed.global_pool.capacity") or 64),
                 evict_policy=str(OmegaConf.select(config, "algorithm.seed.global_pool.evict_policy") or "gate_ema"),
                 window_steps=int(OmegaConf.select(config, "algorithm.seed.global_pool.window_steps") or 48),
+                admission=str(OmegaConf.select(config, "algorithm.seed.global_pool.admission") or "gap"),
+                judge_backend=str(OmegaConf.select(config, "algorithm.seed.global_pool.judge_backend") or "openai"),
+                rewrite=str(OmegaConf.select(config, "algorithm.seed.global_pool.rewrite") or "none"),
+                rewrite_neighbors=int(OmegaConf.select(config, "algorithm.seed.global_pool.rewrite_neighbors") or 0),
+                rewrite_max_tokens=int(OmegaConf.select(config, "algorithm.seed.global_pool.rewrite_max_tokens") or 512),
             ).validate()
+            if str(OmegaConf.select(config, "algorithm.seed.global_pool.judge_backend") or "openai") == "policy_vllm":
+                # The policy judges on the trainer thread right after the analysis; that needs the
+                # synchronous policy_vllm analysis path (no thread-pool preparation overlapping the
+                # engine) and the gap-free admission (the spec gap is computed later, in the merge).
+                if str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai") != "policy_vllm":
+                    raise ValueError("algorithm.seed.global_pool.judge_backend=policy_vllm requires algorithm.seed.analysis_backend=policy_vllm.")
+                if str(OmegaConf.select(config, "algorithm.seed.global_pool.admission") or "gap") != "success":
+                    raise ValueError("algorithm.seed.global_pool.judge_backend=policy_vllm requires algorithm.seed.global_pool.admission=success.")
             if bool(OmegaConf.select(config, "algorithm.seed.failed_skill_positive")) and not bool(
                 OmegaConf.select(config, "algorithm.seed.global_pool.admit_failed")
             ):
@@ -1716,6 +1872,17 @@ class RayPPOTrainer:
             for key in ("obs_chars", "response_chars", "max_chars"):
                 if int(OmegaConf.select(config, f"algorithm.seed.sibling_resample.{key}") or 0) <= 0:
                     raise ValueError(f"algorithm.seed.sibling_resample.{key} must be > 0.")
+            if str(OmegaConf.select(config, "algorithm.seed.sibling_resample.baseline") or "own") not in ("own", "source"):
+                raise ValueError("algorithm.seed.sibling_resample.baseline must be 'own' or 'source'.")
+        if pool_resample_groups < 0:
+            raise ValueError("algorithm.seed.sibling_resample.pool_max_groups must be >= 0.")
+        if pool_resample_groups > 0:
+            if not bool(OmegaConf.select(config, "algorithm.seed.sibling_resample.enable") or False):
+                raise ValueError("algorithm.seed.sibling_resample.pool_max_groups > 0 requires algorithm.seed.sibling_resample.enable=True.")
+            if str(OmegaConf.select(config, "algorithm.seed.global_pool.source") or "copy") != "pool":
+                raise ValueError("algorithm.seed.sibling_resample.pool_max_groups > 0 requires algorithm.seed.global_pool.source=pool.")
+            if not analysis_enabled:
+                raise ValueError("algorithm.seed.sibling_resample.pool_max_groups > 0 requires algorithm.seed.enable_analysis=True (pool skills come from the analyzer).")
         if config.algorithm.adv_estimator == AdvantageEstimator.SEED or str(config.algorithm.adv_estimator) == AdvantageEstimator.SEED.value:
             analysis_backend = str(OmegaConf.select(config, "algorithm.seed.analysis_backend") or "openai")
             analysis_prompt_version = core_seed.validate_analysis_prompt_version(
@@ -2677,11 +2844,15 @@ class RayPPOTrainer:
                 load_existing=not fresh_start,
                 max_global_step=None if fresh_start else max(int(self.global_steps) - 1, 0),
             )
-            self._seed_skill_judge = SkillJudge(
-                model=pool_config.judge_model,
-                base_url=pool_config.judge_base_url,
-                api_key_env=pool_config.judge_api_key_env,
-                batch_size=pool_config.judge_batch_size,
+            self._seed_skill_judge = (
+                SkillJudge(
+                    model=pool_config.judge_model,
+                    base_url=pool_config.judge_base_url,
+                    api_key_env=pool_config.judge_api_key_env,
+                    batch_size=pool_config.judge_batch_size,
+                )
+                if pool_config.judge_backend == "openai"
+                else None
             )
             self._seed_pool_embedder = TextEmbedder(
                 backend=pool_config.embed_backend,
@@ -2742,6 +2913,232 @@ class RayPPOTrainer:
                 }
         return meta
 
+    def _seed_pool_task_query(self, task_meta: Dict[str, Dict[str, str]], traj_uid: object, steps) -> Tuple[str, str, str, str]:
+        """(retrieval query, task_key, task_slug, task_id) of one trajectory. The env-provided identity
+        keys the same-task guard (prompt-derived text is a benchmark-level constant on tau2 and the
+        QA benchmarks, which would ban whole benchmarks)."""
+        meta = task_meta.get(str(traj_uid), {})
+        task_text = str(meta.get("task_text") or "") or core_seed.infer_task_description(steps)
+        task_slug = str(meta.get("task_slug") or "")
+        task_id = str(meta.get("task_id") or "")
+        task_key = f"{task_slug}::{task_id}" if task_slug and task_id else skill_id_for(task_text or str(traj_uid))
+        first_obs = str(meta.get("task_first_obs") or "") or (str(steps[0].get("observation") or "") if steps else "")
+        return build_retrieval_query(task_text, first_obs), task_key, task_slug, task_id
+
+    def _collect_seed_pool_candidates(
+        self,
+        *,
+        batch: DataProto,
+        episodes: Dict[object, List[Dict[str, object]]],
+        episode_analysis: Dict[object, Dict[str, object]],
+        traj_success: Dict[object, float],
+    ) -> Tuple[List[Dict[str, object]], List[str], List[str], int]:
+        """Admission candidates (this batch's local skills not yet in the pool) plus the retrieval
+        query / task_key of every analysed trajectory, in ``episode_analysis`` order.
+        Returns ``(candidates, queries, task_keys, success_filtered)``."""
+        pool, _, _ = self._lazy_init_seed_global_pool()
+        task_meta = self._build_seed_traj_task_meta(batch)
+        queries: List[str] = []
+        task_keys: List[str] = []
+        candidates: List[Dict[str, object]] = []
+        success_filtered = 0
+        for traj_uid, analysis in episode_analysis.items():
+            steps = episodes.get(traj_uid, [])
+            query, task_key, task_slug, task_id = self._seed_pool_task_query(task_meta, traj_uid, steps)
+            queries.append(query)
+            task_keys.append(task_key)
+            episode_skill = str(analysis.get("episode_skill") or "").strip()
+            raw_id = skill_id_for(episode_skill) if episode_skill else ""
+            if not episode_skill or pool.has(raw_id) or pool.has_raw(raw_id):
+                continue
+            success_value = traj_success.get(traj_uid)
+            episode_success = None if success_value is None else float(success_value) >= 1.0
+            if episode_success is False and not pool.config.admit_failed:
+                success_filtered += 1
+                continue
+            candidates.append(
+                {
+                    "traj_uid": str(traj_uid),
+                    "task_key": task_key,
+                    "task_slug": task_slug,
+                    "task_id": task_id,
+                    "skill": episode_skill,
+                    "episode_success": episode_success,
+                }
+            )
+        return candidates, queries, task_keys, success_filtered
+
+    def _admit_seed_pool_candidates_sync(
+        self,
+        *,
+        batch: DataProto,
+        episodes: Dict[object, List[Dict[str, object]]],
+        episode_analysis: Dict[object, Dict[str, object]],
+        traj_success: Dict[object, float],
+        metrics: Dict[str, float],
+    ) -> None:
+        """Admission on the trainer thread for judge_backend policy_vllm / none: the policy scores
+        (and, per ``rewrite``, generalises) each candidate in one generation (seed/skill_rewrite.py),
+        accepted texts are embedded and added. Runs right after the analysis, before any teacher
+        scoring, so the vLLM engine is not shared with a log-prob RPC."""
+        pool, _, embedder = self._lazy_init_seed_global_pool()
+        cfg = pool.config
+        candidates, _, _, success_filtered = self._collect_seed_pool_candidates(
+            batch=batch, episodes=episodes, episode_analysis=episode_analysis, traj_success=traj_success
+        )
+        kept = select_admission_candidates(
+            [(candidate, None) for candidate in candidates],
+            cfg.max_candidates_per_step,
+            failed_skill_positive=self._is_seed_failed_skill_positive(),
+            admission=cfg.admission,
+        )
+        metrics.update(
+            {
+                "seed/global_pool/candidates": float(len(candidates)),
+                "seed/global_pool/candidates_kept": float(len(kept)),
+                "seed/global_pool/candidates_success_filtered": float(success_filtered),
+                "seed/global_pool/judge_parse_failed": 0.0,
+                "seed/global_pool/rewrite_chars_mean": 0.0,
+            }
+        )
+        added = parse_failed = 0
+        accepted: List[Tuple[Dict[str, object], Tuple[float, str]]] = []
+        if kept:
+            # Same contract as the async job: a failed admission is counted (jobs_failed), never raised.
+            try:
+                raw_texts = [str(candidate["skill"]) for candidate in kept]
+                if cfg.judge_backend == "none":
+                    verdicts: List[Optional[Tuple[float, str]]] = [(1.0, text) for text in raw_texts]
+                else:
+                    neighbors: List[List[str]] = [[] for _ in kept]
+                    if cfg.rewrite == "aggregate" and cfg.rewrite_neighbors > 0 and len(pool) > 0:
+                        for i, (candidate, embedding) in enumerate(zip(kept, embedder.encode(raw_texts))):
+                            hits = pool.nearest_k(embedding, cfg.rewrite_neighbors, exclude_task_key=str(candidate["task_key"]))
+                            neighbors[i] = [hit.text for hit in hits]
+                    prompts = [
+                        build_judge_rewrite_prompt(text, mode=cfg.rewrite, neighbors=near)
+                        for text, near in zip(raw_texts, neighbors)
+                    ]
+                    contents, _, _ = self._generate_with_policy_vllm(
+                        prompts,
+                        max_tokens=cfg.rewrite_max_tokens,
+                        max_prompt_length=self._get_seed_analysis_context_length(),
+                        label="pool judge",
+                    )
+                    verdicts = [parse_judge_rewrite(content, raw_skill=text) for content, text in zip(contents, raw_texts)]
+                    if cfg.rewrite == "none":  # score only: the raw skill enters the pool whatever the reply's text
+                        verdicts = [None if verdict is None else (verdict[0], text) for verdict, text in zip(verdicts, raw_texts)]
+                parse_failed = sum(verdict is None for verdict in verdicts)
+                accepted = [
+                    (candidate, verdict)
+                    for candidate, verdict in zip(kept, verdicts)
+                    if verdict is not None and verdict[0] >= float(cfg.score_threshold)
+                ]
+                if accepted:
+                    embeddings = embedder.encode([verdict[1] for _, verdict in accepted])
+                    for (candidate, (score, text)), embedding in zip(accepted, embeddings):
+                        status = pool.add(
+                            text=text,
+                            embedding=embedding,
+                            source={
+                                "task_key": str(candidate["task_key"]),
+                                "task_slug": str(candidate.get("task_slug", "")),
+                                "task_id": str(candidate.get("task_id", "")),
+                                "traj_uid": str(candidate["traj_uid"]),
+                                "global_step": int(self.global_steps),
+                                "episode_success": candidate.get("episode_success"),
+                                "raw_id": skill_id_for(str(candidate["skill"])),
+                                "raw_text": str(candidate["skill"]),
+                                "rewrite": cfg.rewrite,
+                            },
+                            judge={"score": float(score), "tag": cfg.judge_backend, "reason": ""},
+                            global_step=int(self.global_steps),
+                        )
+                        added += 1 if status == "added" else 0
+                    pool.save()
+                self._bump_seed_pool_admission_counters(
+                    jobs_ok=1, judged=len(kept) - parse_failed, accepted=len(accepted), added=added
+                )
+            except Exception as exc:  # noqa: BLE001 - reported through the admission counters
+                self._bump_seed_pool_admission_counters(jobs_failed=1, added=added)
+                module_logger.warning("SEED global pool sync admission failed; the step continues without it: %s", exc)
+        admission_stats = self._drain_seed_pool_admission_counters()
+        for name in ("jobs_ok", "jobs_failed", "judged", "accepted", "added"):
+            metrics[f"seed/global_pool/admission_{name}"] = float(admission_stats.get(name, 0))
+        metrics["seed/global_pool/judge_parse_failed"] = float(parse_failed)
+        metrics["seed/global_pool/rewrite_chars_mean"] = (
+            float(np.mean([len(verdict[1]) for _, verdict in accepted])) if accepted else 0.0
+        )
+        metrics.update(pool.snapshot_metrics())
+        module_logger.info(
+            "SEED global pool sync admission: %d candidates, %d judged, %d accepted, %d added, %d parse failures (judge=%s, rewrite=%s, size=%d).",
+            len(candidates), len(kept), len(accepted), added, parse_failed, cfg.judge_backend, cfg.rewrite, len(pool),
+        )
+
+    def _generate_with_policy_vllm(
+        self,
+        prompt_texts: List[str],
+        *,
+        max_tokens: int,
+        max_prompt_length: int,
+        prompt_images: Optional[List[Any]] = None,
+        label: str = "analysis",
+    ) -> Tuple[List[str], List[int], DataProto]:
+        """Greedy generation with the policy's own vLLM engine for one user message per prompt (the
+        SEED analyzer, the pool judge / rewriter). Returns (decoded texts, valid lengths, output batch)."""
+        use_visual_prompts = prompt_images is not None and any(bool(images) for images in prompt_images)
+        if use_visual_prompts and not all(bool(images) for images in prompt_images):
+            raise RuntimeError(f"SEED policy_vllm received a mixed visual/text {label} batch.")
+        prompt_batch = self.traj_collector.build_prompt_batch(
+            obs_contents=prompt_texts,
+            data_sources=[None] * len(prompt_texts),
+            meta_info={
+                "eos_token_id": self.tokenizer.eos_token_id,
+                "pad_token_id": self.tokenizer.pad_token_id,
+                "recompute_log_prob": False,
+                "do_sample": True,
+                "validate": False,
+                "sampling_params": {
+                    "n": 1,
+                    "temperature": 0,
+                    "top_p": 1.0,
+                    "top_k": -1,
+                    "max_tokens": int(max_tokens),
+                },
+            },
+            max_prompt_length=int(max_prompt_length),
+            images=prompt_images if use_visual_prompts else None,
+        )
+        prompt_lengths = prompt_batch.batch["attention_mask"].sum(dim=-1).detach().cpu().numpy()
+        module_logger.info(
+            "SEED policy_vllm %s prompt lengths: min=%s, mean=%.2f, max=%s, max_completion_tokens=%s, visual=%s",
+            label,
+            int(prompt_lengths.min()),
+            float(prompt_lengths.mean()),
+            int(prompt_lengths.max()),
+            int(max_tokens),
+            bool(use_visual_prompts),
+        )
+        gen_meta_info = deepcopy(prompt_batch.meta_info)
+        non_tensor_batch_keys = ["raw_prompt_ids"]
+        if "multi_modal_data" in prompt_batch.non_tensor_batch:
+            non_tensor_batch_keys.append("multi_modal_data")
+        gen_prompt_batch = prompt_batch.pop(
+            batch_keys=["input_ids", "attention_mask", "position_ids"],
+            non_tensor_batch_keys=non_tensor_batch_keys,
+        )
+        gen_prompt_batch.meta_info = gen_meta_info
+        gen_prompt_batch_padded, pad_size = pad_dataproto_to_divisor(gen_prompt_batch, self.actor_rollout_wg.world_size)
+        gen_output_padded = self.actor_rollout_wg.generate_sequences(gen_prompt_batch_padded)
+        gen_output = unpad_dataproto(gen_output_padded, pad_size=pad_size)
+        response_mask = compute_response_mask(gen_output).detach().cpu()
+        responses = gen_output.batch["responses"].detach().cpu()
+        valid_lens = [int(response_mask[i].sum().item()) for i in range(len(prompt_texts))]
+        contents = [
+            self.tokenizer.decode(responses[i][:valid_lens[i]], skip_special_tokens=True) for i in range(len(prompt_texts))
+        ]
+        return contents, valid_lens, gen_output
+
     def _select_seed_global_skills(
         self,
         *,
@@ -2760,51 +3157,14 @@ class RayPPOTrainer:
         # Clean up before candidate deduplication; retrieve() rechecks under its lock
         # in case a delayed admission lands while the queries are being prepared.
         pool.expire(current_step)
-        task_meta = self._build_seed_traj_task_meta(batch)
         traj_uids = list(episode_analysis.keys())
-        queries: List[str] = []
-        task_keys: List[str] = []
-        candidates: List[Dict[str, object]] = []
-        success_filtered = 0
-        for traj_uid in traj_uids:
-            steps = episodes.get(traj_uid, [])
-            meta = task_meta.get(str(traj_uid), {})
-            task_text = str(meta.get("task_text") or "") or core_seed.infer_task_description(steps)
-            task_slug = str(meta.get("task_slug") or "")
-            task_id = str(meta.get("task_id") or "")
-            if task_slug and task_id:
-                # Env-provided identity: the same-task guard excludes exactly this
-                # task (prompt-derived text is a benchmark-level constant on tau2
-                # and the QA benchmarks, which would ban whole benchmarks).
-                task_key = f"{task_slug}::{task_id}"
-            else:
-                task_key = skill_id_for(task_text or str(traj_uid))
-            first_obs = str(meta.get("task_first_obs") or "") or (
-                str(steps[0].get("observation") or "") if steps else ""
-            )
-            queries.append(build_retrieval_query(task_text, first_obs))
-            task_keys.append(task_key)
-
-            episode_skill = str(episode_analysis[traj_uid].get("episode_skill") or "").strip()
-            if not episode_skill or pool.has(skill_id_for(episode_skill)):
-                continue
-            success_value = traj_success.get(traj_uid)
-            episode_success = None if success_value is None else float(success_value) >= 1.0
-            if episode_success is False and not pool.config.admit_failed:
-                success_filtered += 1
-                continue
-            candidates.append(
-                {
-                    "traj_uid": str(traj_uid),
-                    "task_key": task_key,
-                    "task_slug": task_slug,
-                    "task_id": task_id,
-                    "skill": episode_skill,
-                    "episode_success": episode_success,
-                }
-            )
+        candidates, queries, task_keys, success_filtered = self._collect_seed_pool_candidates(
+            batch=batch, episodes=episodes, episode_analysis=episode_analysis, traj_success=traj_success
+        )
+        if self._seed_pool_admits_synchronously(pool.config):
+            candidates = []  # already admitted right after the analysis (policy_vllm / none judge)
         metrics["seed/global_pool/candidates_success_filtered"] = float(success_filtered)
-        metrics["seed/global_pool/judge_available"] = 1.0 if judge.available else 0.0
+        metrics["seed/global_pool/judge_available"] = 1.0 if judge is None or judge.available else 0.0
 
         metrics["seed/global_pool/retrieval_failed"] = 0.0
         retrieval_results = None
@@ -2866,7 +3226,8 @@ class RayPPOTrainer:
         metrics["seed/global_pool/retrieval_eligible_ratio"] = (
             float(len(top_similarities)) / len(traj_uids) if traj_uids else 0.0
         )
-        metrics["seed/global_pool/candidates"] = float(len(candidates))
+        # Synchronous admission (policy_vllm / none judge) reported its own candidate count already.
+        metrics.setdefault("seed/global_pool/candidates", float(len(candidates)))
         return {"injections": injections, "candidates": candidates}
 
     def _update_seed_global_pool(self, *, batch: DataProto, metrics: Dict[str, float]) -> None:
@@ -2925,7 +3286,8 @@ class RayPPOTrainer:
         metrics["seed/global_pool/injected_trajs"] = float(len(injections))
         metrics["seed/global_pool/unique_skills_injected"] = float(len(set(injections.values())))
         metrics["seed/global_pool/usage_gate_mean"] = float(np.mean(usage_gates)) if usage_gates else 0.0
-
+        if self._seed_pool_admits_synchronously(pool.config):
+            return  # admitted (and reported) on the trainer thread right after the analysis
         candidates = payload.get("candidates") or []
         scored: List[Tuple[Dict[str, object], Optional[float]]] = []
         if candidates and "episode_teacher_log_prob" in batch.batch.keys():
@@ -2941,7 +3303,10 @@ class RayPPOTrainer:
         # Best candidate per task, ranked by signed utility, then capped — see
         # select_admission_candidates for why batch-order truncation is biased.
         kept = select_admission_candidates(
-            scored, pool.config.max_candidates_per_step, failed_skill_positive=self._is_seed_failed_skill_positive()
+            scored,
+            pool.config.max_candidates_per_step,
+            failed_skill_positive=self._is_seed_failed_skill_positive(),
+            admission=pool.config.admission,
         )
         metrics["seed/global_pool/candidates_kept"] = float(len(kept))
         admission_stats = self._drain_seed_pool_admission_counters()
@@ -3288,70 +3653,17 @@ class RayPPOTrainer:
                 )
             )
 
-        analysis_context_length = int(
-            OmegaConf.select(self.config, "algorithm.seed.analysis_context_length") or 16384
+        contents, valid_lens, gen_output = self._generate_with_policy_vllm(
+            prompt_texts,
+            max_tokens=int(self.config.algorithm.seed.analysis_max_completion_tokens),
+            max_prompt_length=self._get_seed_analysis_context_length(),
+            prompt_images=prompt_images,
+            label="analysis",
         )
-        max_completion_tokens = int(self.config.algorithm.seed.analysis_max_completion_tokens)
-        use_visual_prompts = any(bool(images) for images in prompt_images)
-        if use_visual_prompts and not all(bool(images) for images in prompt_images):
-            raise RuntimeError(
-                "SEED policy_vllm received a mixed visual/text analysis batch."
-            )
-        prompt_batch = self.traj_collector.build_prompt_batch(
-            obs_contents=prompt_texts,
-            data_sources=[None] * len(prompt_texts),
-            meta_info={
-                "eos_token_id": self.tokenizer.eos_token_id,
-                "pad_token_id": self.tokenizer.pad_token_id,
-                "recompute_log_prob": False,
-                "do_sample": True,
-                "validate": False,
-                "sampling_params": {
-                    "n": 1,
-                    "temperature": 0,
-                    "top_p": 1.0,
-                    "top_k": -1,
-                    "max_tokens": max_completion_tokens,
-                },
-            },
-            max_prompt_length=analysis_context_length,
-            images=prompt_images if use_visual_prompts else None,
-        )
-        prompt_lengths = prompt_batch.batch["attention_mask"].sum(dim=-1).detach().cpu().numpy()
-        module_logger.info(
-            "SEED policy_vllm analysis prompt lengths: min=%s, mean=%.2f, max=%s, max_completion_tokens=%s, visual=%s",
-            int(prompt_lengths.min()),
-            float(prompt_lengths.mean()),
-            int(prompt_lengths.max()),
-            max_completion_tokens,
-            bool(use_visual_prompts),
-        )
-
-        gen_meta_info = deepcopy(prompt_batch.meta_info)
-        non_tensor_batch_keys = ["raw_prompt_ids"]
-        if "multi_modal_data" in prompt_batch.non_tensor_batch:
-            non_tensor_batch_keys.append("multi_modal_data")
-        gen_prompt_batch = prompt_batch.pop(
-            batch_keys=["input_ids", "attention_mask", "position_ids"],
-            non_tensor_batch_keys=non_tensor_batch_keys,
-        )
-        gen_prompt_batch.meta_info = gen_meta_info
-        gen_prompt_batch_padded, pad_size = pad_dataproto_to_divisor(
-            gen_prompt_batch,
-            self.actor_rollout_wg.world_size,
-        )
-        gen_output_padded = self.actor_rollout_wg.generate_sequences(gen_prompt_batch_padded)
-        gen_output = unpad_dataproto(gen_output_padded, pad_size=pad_size)
-        response_mask = compute_response_mask(gen_output).detach().cpu()
-        responses = gen_output.batch["responses"].detach().cpu()
 
         results = {}
         for output_idx, traj_uid in enumerate(traj_uids):
-            valid_len = int(response_mask[output_idx].sum().item())
-            content = self.tokenizer.decode(
-                responses[output_idx][:valid_len],
-                skip_special_tokens=True,
-            )
+            content, valid_len = contents[output_idx], valid_lens[output_idx]
             task = analysis_tasks[traj_uid]
             analysis = self._finalize_policy_vllm_seed_analysis(
                 analyzer,
@@ -3652,6 +3964,16 @@ class RayPPOTrainer:
             if _has_successful_analysis(traj_uid, analysis)
         }
         failed_analysis_count = len(episode_analysis) - len(successful_episode_analysis)
+        if self._is_seed_global_pool_enabled() and self._seed_pool_admits_synchronously(
+            self._lazy_init_seed_global_pool()[0].config
+        ):
+            self._admit_seed_pool_candidates_sync(
+                batch=batch,
+                episodes=episodes,
+                episode_analysis=successful_episode_analysis,
+                traj_success=traj_success,
+                metrics=metrics,
+            )
 
         critical_mask_np = np.zeros(batch_size, dtype=bool)
         analyzed_traj_uids = set(successful_episode_analysis.keys())
@@ -4638,6 +4960,8 @@ class RayPPOTrainer:
                         )
                         if self.config.algorithm.adv_estimator == AdvantageEstimator.SEED:
                             metrics.update(batch.meta_info.pop("seed_adv_metrics", {}))
+                            if "resample_pass" in batch.non_tensor_batch:
+                                metrics.update(self._seed_resample_advantage_metrics(batch))
                             if self._get_seed_route_mode() == "sample":
                                 batch = self._apply_seed_sample_routing(batch=batch, metrics=metrics)
                         elif self.config.algorithm.adv_estimator == AdvantageEstimator.GiGPO:

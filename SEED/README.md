@@ -274,6 +274,11 @@ v5 单遍流上 SEED 落后 GRPO 的差距几乎全在 browsecomp，机制是 OP
 | `AGENTSTREAM_SEED_OPD_NORM_MODE` → `actor_rollout_ref.actor.opd_norm_mode` | mask | `response`：spec 与 gen 两通道的 OPD 分子不变，分母从掩码 token 数改为全部 response token 数（与 PG 同分母），系数变成固定的"OPD 每 token 力度 / PG 每 token 力度"，不再随掩码占比放大（mask 模式的隐式放大倍数 = 1/掩码占比，基线里在 0.13–0.75 之间跳动）。`actor/opd_*` 指标口径不变；要求 `loss_agg_mode=token-mean` |
 | `AGENTSTREAM_SEED_TRAJ_GAP_GATE` → `algorithm.seed.traj_gap_gate.enable`（配 `..._MARGIN` → `margin`，nats/token） | False / 0.0 | 每条有 teacher 信号的轨迹，把 `teacher_lp − old_lp` 在其信号行的 response token 上取平均，均值 ≤ margin 的轨迹整条移出全部 teacher 掩码（OPD 与 teacher-advantage 都跳过），teacher 对数概率不改。在 teacher 信号汇合后、`compute_advantage` 与 replay 之前执行。与 `ema_mode=teacher/both`、`local_teacher_source=sibling_success` 互斥 |
 | `AGENTSTREAM_SEED_SIBLING_RESAMPLE` → `algorithm.seed.sibling_resample.enable`（配 `..._MAX_GROUPS` → `max_groups`；渲染上限 hydra-only） | False / 4 | 正常采样后，最多取 `max_groups` 个有成有败的组，每组最短成功轨迹渲染成 "Reference Solution"（逐步 观测 + 完整回复），对这些题再采一遍（每题仍 `env.rollout.n` 条），参考只进采样 prompt；新行在普通 prompt 下重新分词并入本步 batch，与其他行同样做 reward / old_log_prob / advantage / 更新，自成 GRPO 组。在线指标不计这一遍。需要 `env.rollout.n > 1`，与 `algorithm.filter_groups` 互斥，只支持 AgentStream |
+| `AGENTSTREAM_SEED_SIBLING_RESAMPLE_BASELINE` → `algorithm.seed.sibling_resample.baseline` | own | `source`：重采行不再自成 GRPO 组，而用其来源组主遍的均值 / 方差归一化（`gigpo/core_gigpo.py::foreign_baseline_stats`，方差取来源组与全体主遍行的较大者，避免全失败来源组的 σ=0 放大），全成功的重采组也有正 advantage（B 组里 38% 的重采组全成功而无信号）。观测 `seed/resample/{adv_mean, adv_pos_frac}` |
+| `AGENTSTREAM_SEED_SIBLING_RESAMPLE_POOL_MAX_GROUPS` → `algorithm.seed.sibling_resample.pool_max_groups` | 0 | > 0（需 `SIBLING_RESAMPLE=True` 且 `GLOBAL_POOL_SOURCE=pool`）：全失败组没有兄弟可参考，改为向全局池检索一条跨任务 skill（排除同题条目，`min_sim` 生效），最多这么多组带着它（"General Skill" 节）再采一遍；该组有无成功记到 skill 上（`record_rescue`，`window` 淘汰按此续命）。池 skill 永不进主遍 prompt，gen OPD 通道可以同时关闭（`OPD_GEN_LOSS_COEF=0`） |
+| `AGENTSTREAM_SEED_GLOBAL_POOL_ADMISSION` → `algorithm.seed.global_pool.admission` | gap | `success`：候选不看 spec gap，成功轨迹的 skill 每题一条直接进 judge（`policy_vllm` judge 在分析后就地准入、此时尚无 gap，必须用它） |
+| `AGENTSTREAM_SEED_GLOBAL_POOL_JUDGE_BACKEND` → `algorithm.seed.global_pool.judge_backend` | openai | `policy_vllm`：策略自己用 vLLM 引擎在分析后同步给候选打 0–10 分（/10 与 `score_threshold` 比较），不需要 API key，需 `analysis_backend=policy_vllm` 与 `admission=success`；`none`：不评审，全部入池 |
+| `AGENTSTREAM_SEED_GLOBAL_POOL_REWRITE` → `algorithm.seed.global_pool.rewrite`（`rewrite_neighbors` / `rewrite_max_tokens` hydra-only，3 / 512） | none | 仅 `policy_vllm` judge：`deinstantiate` 把 skill 改写成去掉名字 / ID / 数值 / 清单、只留决策规则与动作顺序的任务族规则；`aggregate` 与池中最近 `rewrite_neighbors` 条（其他任务）合并成一条通用规则。改写文本入池，原文 id 记在 `source.raw_id` 上防止每步重提（`seed/skill_rewrite.py`） |
 
 为什么需要它们：
 
@@ -321,13 +326,19 @@ rows_pg_full_ratio, teacher_rows}`、`actor/pg_row_weight_mean`；`seed/analysis
 `actor/opd_mask_token_fraction`（掩码 token / response token）、`seed/traj_gate/{trajs_scored, pass_ratio,
 rows_before, rows_after, gap_mean_pass, gap_mean_fail}`；`seed/resample/{groups_mixed, groups_requested,
 rows, trajs, frac_rows, success_rate, uniform_group_ratio, ref_chars_mean, ref_steps_mean, prompt_clip_ratio}`、
-`timing_s/gen_resample`，重采样行在 rollout dump 里带 `resample_pass=1`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
-再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[9] 的同作业对照（B1 GRPO / B2 SEED / B3 GRPO+重采样）见
-`examples/agentstream_trainer/run_ours_debug.sh`。代码落点：`verl/trainer/ppo/core_algos.py`
+`timing_s/gen_resample`，重采样行在 rollout dump 里带 `resample_pass=1`（`baseline=source` 时另带 `baseline_uid`）；
+`seed/resample/{adv_mean, adv_pos_frac, pool_groups_allfail, pool_groups_requested, pool_hit_rate, pool_rescue_rate, pool_retrieval_failed}`、
+`seed/global_pool/{rescue_uses_total, rescue_rate, judge_parse_failed, rewrite_chars_mean}`；gen 通道过轨迹门时另有
+`seed/traj_gate/gen_{pass_ratio, gap_mean_pass, gap_mean_fail}`。建议启用顺序：先 `OPD_POSITIVE_ONLY`，
+再 `FAILED_SKILL_POSITIVE`，最后比较 `evict_policy`；[9] / [10] 的同作业对照分两族——A3 底座（E1 锚、E3 重采样+来源基线、
+E4–E6 池重采样 raw / deinst / agg、E2a–E2c 过门的 gen OPD raw / deinst / agg），A4 底座（不开门，两条 skill loss 都活着：
+E7 锚、E8a–E8c gen OPD raw / deinst / agg）——见 `examples/agentstream_trainer/run_ours_debug.sh` 与三个节点包装脚本
+`run_ours_debug_node{1,2,3}.sh`（每个节点带自己那族的锚）。代码落点：`verl/trainer/ppo/core_algos.py`
 （`compute_opd_loss(positive_only, norm_mode)`）、`seed/analysis.py`（failure 分支）、`seed/global_pool.py`
 （`select_admission_candidates` / `_evict_locked` / `expire`）、`seed/sibling.py`（骨架、参照选择、
 行权重）、`seed/gating.py`（`should_analyze_trajectory` / `compute_traj_gap_gate`）、`seed/resample.py`
-（重采样请求、列对齐、参照注入）、`seed/prompting.py`（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`
+（重采样请求、池请求、列对齐、参照注入）、`seed/skill_rewrite.py`（judge / 改写 prompt 与解析）、
+`gigpo/core_gigpo.py`（`foreign_baseline_stats`）、`seed/prompting.py`（"Reference Solution" 段）、`verl/trainer/ppo/ray_trainer.py`
 （开关装配与 `expire` 调用、`_build_seed_sibling_analysis` / `_apply_seed_sample_routing` /
 `_apply_seed_traj_gap_gate` / `_apply_seed_sibling_resample`）、`verl/workers/actor/dp_actor.py`（PG 项的行权重
 掩码、`opd_norm_mode` 透传）、`agent_system/environments/env_package/agentstream/{envs,manager}.py`

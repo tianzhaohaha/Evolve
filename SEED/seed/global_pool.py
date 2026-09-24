@@ -40,6 +40,12 @@ def _admitted_step(entry: dict) -> int:
     return int((entry.get("source") or {}).get("global_step", 0))
 
 
+def _activity_step(entry: dict) -> int:
+    """Admission step, renewed by the last resample rescue (window expiry / FIFO order)."""
+    last_rescue = (entry.get("stats") or {}).get("last_rescue_step")
+    return max(_admitted_step(entry), -1 if last_rescue is None else int(last_rescue))
+
+
 def _evict_key_gate_ema(entry: dict):
     # One utility scale for everyone: entries with a proven-bad gate EMA (below the
     # neutral prior) go before never-injected ones, proven-good entries outlive them,
@@ -56,13 +62,16 @@ def _evict_key_lru(entry: dict):
 
 
 def _evict_key_window(entry: dict):
-    # Oldest admission first (FIFO); age expiry itself runs in GlobalSkillPool.expire().
-    return (_admitted_step(entry), entry["stats"]["last_used_step"])
+    # Oldest admission (renewed by rescues) first; age expiry itself runs in GlobalSkillPool.expire().
+    return (_activity_step(entry), entry["stats"]["last_used_step"])
 
 
 # Eviction key per policy: the entry with the smallest key leaves when the pool is full.
 EVICT_KEYS = {"gate_ema": _evict_key_gate_ema, "lru": _evict_key_lru, "window": _evict_key_window}
 EVICT_POLICIES = tuple(EVICT_KEYS)
+ADMISSION_MODES = ("gap", "success")
+JUDGE_BACKENDS = ("openai", "policy_vllm", "none")
+REWRITE_MODES = ("none", "deinstantiate", "aggregate")
 
 
 @dataclass(frozen=True)
@@ -78,6 +87,12 @@ class GlobalPoolConfig:
     # Improvement switch; the default keeps the original semantics bit for bit.
     evict_policy: str = "gate_ema"  # gate_ema (original) | lru (least recently retrieved) | window (admission FIFO + age expiry)
     window_steps: int = 48  # window policy only: entries admitted more than this many steps ago expire
+    # Admission / content switches (defaults keep the original pipeline bit for bit).
+    admission: str = "gap"  # gap = spec-gap pre-filter (original) | success = every skill from a successful episode, no gap
+    judge_backend: str = "openai"  # openai = external SkillJudge (async) | policy_vllm = the policy scores/rewrites (sync) | none = accept all
+    rewrite: str = "none"  # none | deinstantiate (strip instance details, same task family) | aggregate (merge with nearest pool entries)
+    rewrite_neighbors: int = 3  # aggregate: nearest entries shown to the rewriter
+    rewrite_max_tokens: int = 512  # policy_vllm judge / rewrite generation budget
     judge_model: str = "z-ai/glm-5.2"
     judge_base_url: str = "https://openrouter.ai/api/v1"
     judge_api_key_env: str = "OPENROUTER_API_KEY"
@@ -100,6 +115,14 @@ class GlobalPoolConfig:
             raise ValueError(f"global_pool.evict_policy must be one of {EVICT_POLICIES}, got {self.evict_policy!r}.")
         if self.evict_policy == "window" and self.window_steps <= 0:
             raise ValueError("global_pool.window_steps must be positive when evict_policy='window'.")
+        if self.admission not in ADMISSION_MODES:
+            raise ValueError(f"global_pool.admission must be one of {ADMISSION_MODES}, got {self.admission!r}.")
+        if self.judge_backend not in JUDGE_BACKENDS:
+            raise ValueError(f"global_pool.judge_backend must be one of {JUDGE_BACKENDS}, got {self.judge_backend!r}.")
+        if self.rewrite not in REWRITE_MODES:
+            raise ValueError(f"global_pool.rewrite must be one of {REWRITE_MODES}, got {self.rewrite!r}.")
+        if self.rewrite_neighbors < 0 or self.rewrite_max_tokens <= 0:
+            raise ValueError("global_pool.rewrite_neighbors must be >= 0 and rewrite_max_tokens > 0.")
         return self
 
 
@@ -137,9 +160,14 @@ def compute_admission_utility(spec_gap: Optional[float], episode_success: Option
 
 
 def select_admission_candidates(
-    scored: Sequence[Tuple[dict, Optional[float]]], limit: int, failed_skill_positive: bool = False
+    scored: Sequence[Tuple[dict, Optional[float]]], limit: int, failed_skill_positive: bool = False,
+    admission: str = "gap",
 ) -> List[dict]:
     """Pick admission candidates from (candidate, spec_gap) pairs.
+
+    ``admission="success"`` ignores the spec gap (it carries no information: the teacher
+    re-scores its own samples lower whatever the context): every candidate from a successful
+    or unlabelled episode passes, first one per ``task_key`` in input order, capped at ``limit``.
 
     A GRPO group's same-task copies produce near-duplicate skills, so only the
     highest-utility candidate per ``task_key`` survives. Successful trajectories
@@ -154,6 +182,14 @@ def select_admission_candidates(
     every successful candidate — the judge is their only filter and the per-step
     cap truncates them first.
     """
+    if admission == "success":
+        kept: Dict[str, dict] = {}
+        for candidate, gap in scored:
+            task_key = str(candidate.get("task_key", ""))
+            if candidate.get("episode_success") is False or task_key in kept:
+                continue
+            kept[task_key] = dict(candidate, spec_gap=gap, admission_utility=None)
+        return list(kept.values())[: max(int(limit), 0)]
     best: Dict[str, Tuple[Tuple[int, float], dict]] = {}
     for candidate, gap in scored:
         episode_success = candidate.get("episode_success")
@@ -306,7 +342,9 @@ class GlobalSkillPool:
                 "text": str(text),
                 "source": dict(source),
                 "judge": dict(judge),
-                "stats": {"times_injected": 0, "gate_ema": None, "last_used_step": int(global_step)},
+                "stats": {
+                    "times_injected": 0, "gate_ema": None, "last_used_step": int(global_step),
+                },
                 "support": 1,
                 "status": "active",
             }
@@ -349,6 +387,36 @@ class GlobalSkillPool:
                 )
         return results
 
+    def has_raw(self, raw_id: str) -> bool:
+        """Whether a stored entry was admitted from the skill text with this id (rewritten
+        entries keep ``source.raw_id`` so the same raw skill is not proposed every step)."""
+        with self._lock:
+            return any((entry.get("source") or {}).get("raw_id") == raw_id for entry in self._entries.values())
+
+    def nearest_k(self, embedding: np.ndarray, k: int, exclude_task_key: Optional[str] = None) -> List[RetrievalHit]:
+        """The ``k`` most similar entries (cosine, descending); used by the aggregate rewriter."""
+        query = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        with self._lock:
+            scored = [
+                (float(np.dot(self._embeddings[sid], query)), sid)
+                for sid, entry in self._entries.items()
+                if exclude_task_key is None or entry["source"].get("task_key") != exclude_task_key
+            ]
+            scored.sort(reverse=True)
+            return [RetrievalHit(skill_id=sid, text=self._entries[sid]["text"], similarity=sim) for sim, sid in scored[: max(int(k), 0)]]
+
+    def record_rescue(self, skill_id: str, rescued: bool, global_step: int) -> None:
+        """Outcome of one resample group that used this skill (the sampling-level delta)."""
+        with self._lock:
+            entry = self._entries.get(skill_id)
+            if entry is None:
+                return
+            stats = entry["stats"]
+            stats["rescue_uses"] = int(stats.get("rescue_uses", 0)) + 1
+            if rescued:
+                stats["rescue_hits"] = int(stats.get("rescue_hits", 0)) + 1
+                stats["last_rescue_step"] = int(global_step)
+
     def record_usage(self, skill_id: str, gate_value: float, global_step: int) -> None:
         with self._lock:
             entry = self._entries.get(skill_id)
@@ -387,7 +455,7 @@ class GlobalSkillPool:
         if self.config.evict_policy != "window":
             return 0
         cutoff = int(current_step) - int(self.config.window_steps)
-        stale = [sid for sid, entry in self._entries.items() if _admitted_step(entry) < cutoff]
+        stale = [sid for sid, entry in self._entries.items() if _activity_step(entry) < cutoff]
         for skill_id in stale:
             self._entries.pop(skill_id)
             self._embeddings.pop(skill_id, None)
@@ -411,9 +479,13 @@ class GlobalSkillPool:
             emas = [e["stats"]["gate_ema"] for e in self._entries.values() if e["stats"]["gate_ema"] is not None]
             supports = [e["support"] for e in self._entries.values()]
             never_injected = sum(1 for e in self._entries.values() if e["stats"]["times_injected"] == 0)
+            rescue_uses = sum(int(e["stats"].get("rescue_uses", 0)) for e in self._entries.values())
+            rescue_hits = sum(int(e["stats"].get("rescue_hits", 0)) for e in self._entries.values())
             evicted_total = self._evicted_total
             expired_total = self._expired_total
         return {
+            "seed/global_pool/rescue_uses_total": float(rescue_uses),
+            "seed/global_pool/rescue_rate": rescue_hits / rescue_uses if rescue_uses else 0.0,
             "seed/global_pool/size": float(size),
             "seed/global_pool/gate_ema_mean": float(np.mean(emas)) if emas else 0.0,
             "seed/global_pool/support_mean": float(np.mean(supports)) if supports else 0.0,

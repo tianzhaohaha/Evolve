@@ -122,3 +122,32 @@ def test_summarize_resample_batch_counts_trajectories_groups_and_uniform_groups(
     m = summarize_resample_batch(uids, trajs, rewards, threshold=1.0)
     assert m == {"rows": 6.0, "trajs": 5.0, "groups": 2.0, "success_rate": pytest.approx(2 / 5), "uniform_group_ratio": 0.5}
     assert summarize_resample_batch([], [], [], threshold=1.0) == {"rows": 0.0, "trajs": 0.0, "groups": 0.0, "success_rate": 0.0, "uniform_group_ratio": 0.0}
+
+
+# ---- pool requests / request sections (global-skill channel 2) --------------------------------
+
+def test_build_pool_requests_orders_by_sample_id_caps_and_marks_the_section():
+    from seed.resample import POOL_SECTION, SIBLING_SECTION, build_pool_requests
+
+    hits = {"g7": ("id7", "skill 7"), "g2": ("id2", "skill 2"), "g9": ("id9", "skill 9")}
+    task_refs = {"g7": (7, "bfcl", "t7"), "g2": (2, "tau2", "t2"), "g5": (5, "bfcl", "t5")}
+    requests = build_pool_requests(["g7", "g5", "g2", "g9"], hits, task_refs, max_groups=5)  # g5: no hit; g9: no identity
+    assert [(r["uid"], r["sample_id"], r["task_slug"], r["section"], r[POOL_SECTION], r["skill_id"]) for r in requests] == [
+        ("g2", 2, "tau2", POOL_SECTION, "skill 2", "id2"), ("g7", 7, "bfcl", POOL_SECTION, "skill 7", "id7"),
+    ]
+    assert [r["uid"] for r in build_pool_requests(["g7", "g2"], hits, task_refs, max_groups=1)] == ["g2"]
+    assert build_pool_requests([], hits, task_refs, max_groups=3) == []
+    sibling = build_resample_requests({"g2": _ref("g2")}, task_refs, max_groups=1)[0]
+    assert sibling["section"] == SIBLING_SECTION == "reference_solution" and sibling[SIBLING_SECTION] == _ref("g2").text
+    for request in requests + [sibling]:  # every request carries its context under its section key
+        assert request[request["section"]]
+
+
+def test_augment_observations_routes_each_slot_to_its_section():
+    from seed.resample import POOL_SECTION, SIBLING_SECTION
+
+    out = augment_observations(["obs"] * 3, ["ref", "skill", ""], [SIBLING_SECTION, POOL_SECTION, POOL_SECTION])
+    assert out[0] == build_augmented_observation_text(observation="obs", reference_solution="ref")
+    assert out[1] == build_augmented_observation_text(observation="obs", global_skill="skill")
+    assert "Reference Solution" not in out[1] and "General Skill" in out[1] and out[2] == "obs"
+    assert augment_observations(["obs"], ["ref"]) == augment_observations(["obs"], ["ref"], [SIBLING_SECTION])

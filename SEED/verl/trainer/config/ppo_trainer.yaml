@@ -306,6 +306,11 @@ algorithm:
       judge_base_url: https://openrouter.ai/api/v1
       judge_api_key_env: OPENROUTER_API_KEY # missing key -> admission silently disabled (fail-open)
       judge_batch_size: 12
+      admission: gap # gap = original (best spec-gap candidate per task, ranked by gap); success = skills of successful episodes, one per task, no gap pre-filter (required by judge_backend=policy_vllm)
+      judge_backend: openai # openai = original async API judge; policy_vllm = the policy scores (and rewrites, see rewrite) candidates with its own vLLM engine right after the analysis (needs analysis_backend=policy_vllm); none = admit every kept candidate unjudged
+      rewrite: none # policy_vllm judge only: none = store the raw skill; deinstantiate = strip instance details (task-family rule); aggregate = merge with the rewrite_neighbors nearest pool entries into one rule (seed/skill_rewrite.py)
+      rewrite_neighbors: 3 # aggregate only: nearest pool entries (other tasks) shown to the rewriter
+      rewrite_max_tokens: 512 # policy_vllm judge: max completion tokens of the judge/rewrite generation
       embed_backend: local # "local" = frozen HF encoder on the trainer host; "http" = POST {"texts": [...]} to embed_url
       embed_model: sentence-transformers/all-MiniLM-L6-v2
       embed_url: null
@@ -332,6 +337,8 @@ algorithm:
       obs_chars: 160 # per-step observation excerpt in the reference solution
       response_chars: 1200 # per-step response cap (reasoning + action)
       max_chars: 6000 # whole reference cap; the final step is always kept
+      baseline: own # own = resample rows form their own GRPO groups (original); source = they are normalised with the main-pass statistics of the group they were spawned from (gigpo/core_gigpo.py foreign_baseline_stats), so an all-success second pass still carries signal
+      pool_max_groups: 0 # > 0 (needs enable=True and global_pool.source=pool): all-fail groups retrieve one pool skill each and up to this many are re-run with it in the "General Skill" section; the skill is credited with the group's outcome (record_rescue)
     route_mode: none # none = original; sample = per-row policy-gradient weight: successes 1.0, failed rows of mixed-outcome groups route_pg_failed_weight, all-fail/all-success groups 1.0 (KL / entropy / OPD unchanged)
     route_pg_failed_weight: 0.0 # route_mode=sample only, in [0, 1]; 0 = hard routing (those rows learn from the OPD teacher only)
     traj_gap_gate:
