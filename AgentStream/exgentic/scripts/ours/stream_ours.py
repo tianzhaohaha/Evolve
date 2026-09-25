@@ -209,9 +209,29 @@ def run_name(args) -> str:
     return args.run_name or f"as_{args.agent}_{model_short}_{args.mode}_s{args.seed}"
 
 
+def point_openai_provider_at(api_base: str, model: str) -> None:
+    """Route litellm's ``openai/<model>`` calls to a local OpenAI-compatible server. litellm reads
+    ``OPENAI_BASE_URL`` before ``OPENAI_API_BASE`` (an inherited .env may set either to a cloud
+    proxy), so both are overridden; the server must list the model, else fail before any task."""
+    import json as _json
+    import urllib.request
+
+    for key in ("OPENAI_API_BASE", "OPENAI_BASE_URL"):
+        os.environ[key] = api_base
+    os.environ.setdefault("OPENAI_API_KEY", "EMPTY")
+    try:
+        with urllib.request.urlopen(f"{api_base.rstrip('/')}/models", timeout=30) as resp:
+            served = [m.get("id") for m in _json.load(resp).get("data", [])]
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"policy endpoint {api_base} not reachable: {exc}") from exc
+    name = model.split("/", 1)[-1]
+    if name not in served:
+        raise SystemExit(f"policy endpoint {api_base} serves {served}, not {name!r} (check --served-model-name)")
+
+
 def setup(args):
     if args.api_base:
-        os.environ["OPENAI_API_BASE"] = args.api_base
+        point_openai_provider_at(args.api_base, args.model)
     benchmarks = [s.strip() for s in args.benchmarks.split(",")]
     configs = build_configs(args.judge_model, args.retriever_url, benchmarks)
     output_dir = Path(args.output_dir)

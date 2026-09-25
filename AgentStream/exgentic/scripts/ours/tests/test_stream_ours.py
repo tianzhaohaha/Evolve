@@ -156,3 +156,28 @@ def test_holdout_is_logged_one_step_after_the_last_online_task(tmp_path):
     stream.run = SimpleNamespace(log=lambda payload, step: logged.append((payload, step)), finish=lambda: None)
     stream.log_holdout({"val/success_rate": 0.5}, task_index=192)
     assert logged == [({"val/success_rate": 0.5, "online/task_index": 192}, 193)]
+
+
+def test_api_base_overrides_both_openai_env_names_and_checks_the_served_model(monkeypatch):
+    import io, json
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://openrouter.ai/api/v1")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    calls = []
+
+    class _Resp(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(url, timeout=0):
+        calls.append(url)
+        return _Resp(json.dumps({"data": [{"id": "Qwen3-4B-Instruct-2507"}]}).encode())
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    so.point_openai_provider_at("http://127.0.0.1:8000/v1", "openai/Qwen3-4B-Instruct-2507")
+    import os
+    assert os.environ["OPENAI_BASE_URL"] == os.environ["OPENAI_API_BASE"] == "http://127.0.0.1:8000/v1"
+    assert os.environ["OPENAI_API_KEY"] == "EMPTY" and calls == ["http://127.0.0.1:8000/v1/models"]
+    with pytest.raises(SystemExit, match="serves"):
+        so.point_openai_provider_at("http://127.0.0.1:8000/v1", "openai/other-model")
