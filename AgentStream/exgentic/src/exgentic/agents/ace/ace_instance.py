@@ -72,6 +72,7 @@ class ACEAgentInstance(AgentInstance):
         bulletpoint_analyzer_threshold: float = 0.90,
         enable_tool_shortlisting: bool = False,
         max_selected_tools: int = 30,
+        learning_enabled: bool = True,
     ) -> None:
         super().__init__(session_id)
 
@@ -88,6 +89,7 @@ class ACEAgentInstance(AgentInstance):
         self.bulletpoint_analyzer_threshold = bulletpoint_analyzer_threshold
         self.enable_tool_shortlisting = enable_tool_shortlisting
         self.max_selected_tools = max_selected_tools
+        self.learning_enabled = learning_enabled
 
         if model_settings is None:
             self._model_settings = ModelSettings()
@@ -305,6 +307,10 @@ class ACEAgentInstance(AgentInstance):
     def close(self) -> None:
         store = self._store
         if store is None:
+            return
+
+        if not self.learning_enabled:
+            self.logger.info("ACE close: learning disabled, playbook left unchanged.")
             return
 
         bullet_ids = _BULLET_ID_RE.findall(

@@ -1,0 +1,315 @@
+\section{Method}
+\label{sec:method}
+Effective parameter-based self-evolution in task streams requires three
+complementary capabilities: Experience Accumulation, Experience Transfer,
+and Experience Interference Suppression.
+Accordingly, we introduce \METHODNAME{}, a framework that accumulates
+successful interaction experience, reuses it to guide exploration, and
+selectively internalizes it into the policy.
+Our central distinction is between \emph{successful behavior} and
+\emph{transferable guidance}: an environment-verified trajectory provides
+evidence of task success, but neither its hindsight explanation nor its
+applicability to another task is automatically validated.
+
+Experience Accumulation combines experience-guided policy learning with
+local hindsight distillation (Sec.~\ref{sec:exp_accu}).
+Experience Transfer abstracts task-specific skills into reusable guidance
+and grounds their cross-task use in new environment feedback
+(Sec.~\ref{sec:exp_transfer}).
+Experience Interference Suppression restricts hindsight distillation to
+successful trajectories whose skill contexts provide additional evidence
+for the observed behavior (Sec.~\ref{sec:interference}).
+
+
+\subsection{Experience Accumulation}
+\label{sec:exp_accu}
+
+At evolution step $k$, the current policy $\pi_{\theta_k}$ receives a batch
+of tasks from the stream.
+For each task $q$, it collects a main-pass group $\mathcal{G}_q$ by
+sampling actions $a_i \sim \pi_{\theta_k}(\cdot \mid h_i)$, where $h_i$
+contains the task, observations, and interaction history.
+A completed trajectory $\tau$ comprises these interactions and terminal
+feedback $\mathcal{F}_\tau$; $S(\tau)\in\{0,1\}$ indicates verified
+success.
+The pool $\mathcal{P}_k$ contains global experience accumulated before
+this evolution step.
+
+
+\paragraph{Hierarchical Experience Learning.}
+\METHODNAME{} uses experience at two complementary scopes.
+\emph{Local experience} consists of successful trajectories within the
+current task and their hindsight skills.
+For a successful trajectory, the current policy extracts
+\begin{equation}
+    z_\tau^{\mathrm{local}}
+    =
+    \operatorname{Analyze}_{\theta_k}(\tau,\mathcal{F}_\tau),
+\end{equation}
+which summarizes decision rules and effective procedures in that
+interaction.
+Following SEED~\citep{wu2026seedselfevolvingonpolicydistillation}, a
+one-time skill-alignment initialization equips the policy with this
+analysis capability (Appendix~\ref{sec:implementation}).
+\emph{Global experience} consists of abstracted versions of successful
+local skills retained for reuse across tasks.
+The hierarchy concerns the scope of experience, rather than separate
+teacher models: a local skill may also contribute an abstracted version
+to the global pool.
+
+Experience enters learning through two mechanisms.
+First, a trajectory's own local skill provides a hindsight context for
+re-scoring its sampled actions and constructing a filtered OPD objective
+(Sec.~\ref{sec:interference}).
+Second, successful experience guides \emph{new} interactions.
+For a main-pass group containing both successes and failures, we use its
+shortest successful sibling trajectory as a reference for re-running the
+same task.
+For an all-failure group, we instead attempt to retrieve a global skill
+from $\mathcal{P}_k$ (Sec.~\ref{sec:exp_transfer}).
+Let $c_q$ denote either reference, and let $H(h,c)$ augment history $h$
+with experience $c$.
+The additional trajectories are sampled as
+\begin{equation}
+    \widetilde{\tau}
+    \sim
+    \operatorname{Rollout}(\pi_{\theta_k},q;c_q),
+    \qquad
+    \widetilde{a}_i
+    \sim
+    \pi_{\theta_k}(\cdot\mid H(\widetilde{h}_i,c_q)).
+\end{equation}
+No additional pass is made for all-success groups or when no eligible
+reference is available.
+When training on the new trajectories, we remove the extra reference
+while preserving their actual interaction histories.
+This transfers experience-conditioned behavior into the ordinary policy
+through outcome-driven learning, rather than treating the reference
+itself as a correct action target.
+
+
+\paragraph{Joint Training Objective.}
+The training batch combines the main pass with the two sources of
+experience-guided resampling:
+\begin{equation}
+    \mathcal{D}_k
+    =
+    \mathcal{D}_k^{\mathrm{main}}
+    \cup
+    \mathcal{D}_k^{\mathrm{sibling}}
+    \cup
+    \mathcal{D}_k^{\mathrm{pool}}.
+\end{equation}
+Main-pass trajectories use ordinary group-relative reward advantages.
+For resampled trajectories, we instead use a \emph{source-group baseline}:
+each decision's reward is centered against the main-pass statistics of
+the task that generated it, not the statistics of its new resampling
+group.
+The normalization scale is also computed from main-pass rewards;
+details are provided in Appendix~\ref{sec:implementation}.
+Consequently, an all-success resampling group can retain positive
+advantages relative to a mixed or all-failure source group, rather than
+losing the improvement signal through within-group centering.
+
+We optimize a clipped group-relative policy-gradient objective
+$\mathcal{L}_{\mathrm{PG}}$ on $\mathcal{D}_k$.
+Both old and updated policy probabilities are evaluated under ordinary
+contexts, including for trajectories sampled with additional experience;
+this is reference-guided data collection, not strictly on-policy sampling
+from the ordinary-context policy for the additional pass.
+The joint objective is
+\begin{equation}
+    \mathcal{L}_{\mathrm{evo}}
+    =
+    \mathcal{L}_{\mathrm{PG}}
+    +
+    \lambda_{\mathrm{OPD}}
+    \mathcal{L}_{\mathrm{OPD}}^{\mathrm{filtered}}
+    +
+    \lambda_{\mathrm{KL}}\mathcal{L}_{\mathrm{KL}},
+    \label{eq:evolution_objective}
+\end{equation}
+where the filtered local OPD term is defined in
+Sec.~\ref{sec:interference}, and $\mathcal{L}_{\mathrm{KL}}$ is standard
+regularization against the fixed initialization policy.
+Global skills affect learning through resampled behavior, not a separate
+global OPD loss.
+Successful trajectories from either pass can produce local skills for
+distillation and pool curation.
+After the update, $\pi_{\theta_{k+1}}$ acts and analyzes subsequent
+interactions, while newly admitted skills become available in
+$\mathcal{P}_{k+1}$.
+Thus, experience accumulates both in explicit memory and in policy
+parameters; the following section specifies which experience is retained
+for cross-task reuse.
+
+
+\subsection{Experience Transfer}
+\label{sec:exp_transfer}
+
+Success on one task does not establish that its experience applies to
+another.
+\METHODNAME{} therefore separates the construction of potentially
+transferable guidance from the environment feedback used to learn from
+its application.
+
+
+\paragraph{Boundary-Aware Experience Curation.}
+We use \emph{boundary} to refer to the distinction between
+instance-specific details and reusable decision rules, rather than an
+observed task-switch boundary.
+A successful local skill may mix a useful procedure with names, object
+identifiers, or values that are valid only in its originating task.
+Transferring the whole description risks carrying these incidental
+details into a different interaction.
+
+For each candidate skill extracted from a successful trajectory, the
+current policy assesses the raw skill's transferability and constructs a
+\emph{de-instantiated} version:
+\begin{equation}
+    (v_\tau,g_\tau)
+    =
+    \operatorname{JudgeRewrite}_{\theta_k}
+    (z_\tau^{\mathrm{local}}).
+\end{equation}
+Here $v_\tau\in[0,1]$ scores the candidate's reuse potential, while
+$g_\tau$ is instructed to retain decision rules and action order but
+remove instance-specific entities, values, and item lists.
+Candidates are accepted for storage when $v_\tau\geq\eta$, where $\eta$
+is the admission threshold.
+The bounded pool stores the resulting skill text, a frozen text-encoder
+embedding, and its task provenance.
+Abstracting a global version does not replace the original local skill
+used for hindsight distillation.
+This procedure controls the scope of retained experience through
+abstraction and screening; it does not assume an explicitly known
+applicability region for each skill.
+Pool maintenance and admission budgets are detailed in
+Appendix~\ref{sec:implementation}.
+
+
+\paragraph{Outcome-Grounded Cross-Task Transfer.}
+When all trajectories in $\mathcal{G}_q$ fail, no successful sibling is
+available to guide further exploration.
+We form a retrieval query $x_q$ from the task description and initial
+observation, and select
+\begin{equation}
+    g_q^\star
+    =
+    \operatorname*{arg\,max}_{\substack{g\in\mathcal{P}_k\\
+                                      \operatorname{src}(g)\neq q}}
+    \operatorname{sim}\!\left(E(x_q),E(g)\right),
+\end{equation}
+where $E$ is a frozen text encoder, $\operatorname{sim}$ is cosine
+similarity, and $\operatorname{src}(g)$ identifies the originating task.
+We use $g_q^\star$ only if its similarity meets a relevance threshold;
+an empty candidate set or a below-threshold match yields no pool-guided
+resampling.
+This excludes same-task reuse without imposing hard domain partitions.
+
+The retrieved skill supplies $c_q$ for the resampling procedure in
+Sec.~\ref{sec:exp_accu}.
+Unlike a same-task successful trajectory, it provides no direct evidence
+that its suggested procedure succeeds on $q$.
+We therefore treat retrieval as a proposal for exploration rather than a
+distillation target: the environment evaluates the newly generated
+behavior, and source-referenced rewards determine its policy-gradient
+signal.
+In particular, rescuing an all-failure source group yields positive
+reward differences relative to its unsuccessful main pass.
+The skill is removed from the training context, so these outcomes train
+the ordinary policy rather than a policy dependent on retrieved prompts.
+This grounds cross-task transfer in observed behavior, while the next
+section addresses a separate risk: reinforcing an uninformative
+hindsight explanation of behavior that has already succeeded.
+
+
+
+\subsection{Experience Interference Suppression}
+\label{sec:interference}
+
+Experience can interfere with learning when hindsight supervision
+reinforces unsuccessful behavior or adds imitation pressure without
+informative guidance.
+We address these two sources of interference in the local OPD term;
+the outcome-based updates on main-pass and resampled trajectories remain
+active independently of these filters.
+
+\paragraph{Success-Conditioned Distillation.}
+For trajectory $\tau$, let $\mathcal{T}_\tau$ index its valid response
+tokens, with token $y_{\tau,j}$ and ordinary context $h_{\tau,j}$,
+including the preceding response tokens.
+For trajectories with a local skill, define the teacher and student
+log-probabilities
+\begin{equation}
+    \begin{aligned}
+        u_{\tau,j}
+        &= \log\pi_{\theta_k}
+        (y_{\tau,j}\mid H(h_{\tau,j},z_\tau^{\mathrm{local}})),\\
+        s_{\tau,j}(\theta)
+        &= \log\pi_{\theta}(y_{\tau,j}\mid h_{\tau,j}).
+    \end{aligned}
+\end{equation}
+Following hindsight OPD, a token receives loss
+$\ell_{\tau,j}=w_{\tau,j}(u_{\tau,j}-s_{\tau,j}(\theta))$, with
+\begin{equation}
+    w_{\tau,j}
+    =
+    \operatorname{sg}\!\left[
+        \sigma\!\left(\beta
+        (u_{\tau,j}-s_{\tau,j}(\theta))\right)
+    \right],
+\end{equation}
+where $\sigma$ is the sigmoid, $\beta$ controls its sharpness, and
+$\operatorname{sg}$ stops gradients.
+Teacher log-probabilities are fixed during the update.
+Since $\partial\ell_{\tau,j}/\partial s_{\tau,j}=-w_{\tau,j}$, this
+term increases the probability of sampled tokens even when the teacher
+gap is negative.
+On failed trajectories, that pressure can oppose reward-driven learning.
+We therefore analyze and distill only verified successful trajectories.
+Let $\mathcal{V}_k\subseteq\mathcal{D}_k$ contain those successful
+trajectories for which a valid local skill is obtained.
+Failures remain in $\mathcal{D}_k$ for policy-gradient learning, but
+receive no OPD supervision.
+
+
+\paragraph{Trajectory-Level Evidence Gating.}
+A successful outcome validates the behavior, not necessarily its
+hindsight explanation.
+We retain a skill's distillation signal only when its context increases
+the mean log-likelihood of the successful trajectory:
+\begin{equation}
+    \Delta_\tau
+    =
+    \frac{1}{|\mathcal{T}_\tau|}
+    \sum_{j\in\mathcal{T}_\tau}
+    \left[u_{\tau,j}-s_{\tau,j}(\theta_k)\right],
+    \qquad
+    m_\tau=\mathbf{1}[\Delta_\tau>0].
+\end{equation}
+The gate is computed before optimization using the same policy weights
+under both contexts, and applies to the trajectory as a whole rather
+than selecting isolated positive-gap tokens.
+It is an evidence criterion for hindsight supervision, not a guarantee
+of skill correctness or transferability.
+The filtered term in Eq.~\ref{eq:evolution_objective} is
+\begin{equation}
+    \mathcal{L}_{\mathrm{OPD}}^{\mathrm{filtered}}
+    =
+    \frac{1}{N_k}
+    \sum_{\tau\in\mathcal{V}_k}
+    m_\tau
+    \sum_{j\in\mathcal{T}_\tau}
+    w_{\tau,j}\left[u_{\tau,j}-s_{\tau,j}(\theta)\right],
+\end{equation}
+where $N_k=\sum_{\tau\in\mathcal{D}_k}|\mathcal{T}_\tau|$ counts all
+valid response tokens, not only those retained for distillation.
+This normalization avoids amplifying the remaining supervision as the
+filters reduce its coverage.
+Together, success conditioning and trajectory-level gating restrict
+hindsight reinforcement to verified behavior with a positive contextual
+likelihood gain, while experience-guided exploration continues to learn
+from environment outcomes.
+
+

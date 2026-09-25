@@ -65,6 +65,7 @@ class ReasoningBankAgentInstance(AgentInstance):
         benchmark_id: Optional[str] = None,
         enable_tool_shortlisting: bool = False,
         max_selected_tools: int = 30,
+        learning_enabled: bool = True,
     ) -> None:
         super().__init__(session_id)
 
@@ -78,6 +79,7 @@ class ReasoningBankAgentInstance(AgentInstance):
         self.benchmark_id = benchmark_id
         self.enable_tool_shortlisting = enable_tool_shortlisting
         self.max_selected_tools = max_selected_tools
+        self.learning_enabled = learning_enabled
 
         if model_settings is None:
             self._model_settings = ModelSettings()
@@ -266,6 +268,10 @@ class ReasoningBankAgentInstance(AgentInstance):
 
     def close(self) -> None:
         if not self._store:
+            return
+
+        if not self.learning_enabled:
+            logger.info("ReasoningBank close: learning disabled, store left unchanged.")
             return
 
         if not self._action_list:

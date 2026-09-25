@@ -248,8 +248,15 @@ if (( real_train_batch_size % N_GPUS_PER_NODE != 0 )); then
     exit 1
 fi
 
+# Placeholder parquet files per experiment: a shared $HOME path was rewritten by every concurrent launch,
+# and the validation row count differs by stream mode (isolated 32 vs interleaved 96 = the env's holdout
+# slots), so a run that started next to a different-mode launch read the wrong size and failed at its
+# first validation with "gen_batch size 32 does not match obs size 96".
+AS_DATA_DIR=${AS_DATA_DIR:-$DEFAULT_LOCAL_DIR/data}
+mkdir -p "$AS_DATA_DIR/text"
 python3 -m examples.data_preprocess.prepare \
     --mode text \
+    --local_dir "$AS_DATA_DIR" \
     --train_data_size "$TRAIN_DATA_SIZE" \
     --val_data_size "$VAL_DATA_SIZE"
 
@@ -270,8 +277,8 @@ fi
 python3 -m verl.trainer.main_ppo \
     +ray_init.include_dashboard=False \
     algorithm.adv_estimator=seed \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=$AS_DATA_DIR/text/train.parquet \
+    data.val_files=$AS_DATA_DIR/text/test.parquet \
     data.train_batch_size=$TRAIN_DATA_SIZE \
     data.val_batch_size=$VAL_DATA_SIZE \
     data.max_prompt_length=$MAX_PROMPT_LENGTH \

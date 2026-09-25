@@ -1,0 +1,289 @@
+#!/bin/bash
+
+## =============================================================================
+## PBS Resources
+## =============================================================================
+
+## Job name
+#PBS -N as_baseline_matrix
+
+## Project funding code
+#PBS -P gs_ccds_wangwy
+
+## Queue
+#PBS -q gpu_as
+
+## Maximum walltime for the ENTIRE job (18 runs in parallel: ~15 h; margin for retries)
+#PBS -l walltime=72:00:00
+
+## 1 node, 48 CPUs, 4 GPUs (GPU 0 = vLLM policy server, GPU 1 = browsecomp retriever, 2-3 idle)
+#PBS -l select=1:ncpus=48:ngpus=4
+
+## Merge stderr into stdout
+#PBS -j oe
+#PBS -k oed
+
+## PBS output directory (must exist before qsub)
+#PBS -o /home/qingyuan.liu/projects/Evolve/SEED/.pbs_logs/
+
+
+## Exit on unexpected errors and propagate pipeline errors.
+## No `set -u`: Conda activation scripts reference unset variables.
+set -eo pipefail
+
+
+## =============================================================================
+## Paths
+## =============================================================================
+
+WORKDIR="/home/qingyuan.liu/projects/Evolve/SEED"
+EXGENTIC="/home/qingyuan.liu/projects/Evolve/AgentStream/exgentic"
+QWEN_PATH="/home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507"
+VLLM_PORT=8000
+
+cd "${WORKDIR}" || exit 1
+
+export PYTHONUNBUFFERED=1
+
+mkdir -p .pbs_logs
+mkdir -p logs/agentstream
+
+## Save the complete PBS wrapper output.
+exec > >(tee -a ".pbs_logs/${PBS_JOBID}.run.log") 2>&1
+
+
+## =============================================================================
+## Debug Info
+## =============================================================================
+
+echo "======================================================================"
+echo "PBS Job Information"
+echo "======================================================================"
+echo "Job ID        : ${PBS_JOBID}"
+echo "Hostname      : $(hostname)"
+echo "Working dir   : $(pwd)"
+echo "Start time    : $(date)"
+echo "======================================================================"
+
+echo ""
+echo "PBS_NODEFILE:"
+cat "${PBS_NODEFILE}"
+
+echo ""
+echo "Initial CUDA_VISIBLE_DEVICES:"
+echo "${CUDA_VISIBLE_DEVICES:-NOT_SET}"
+
+echo ""
+echo "nvidia-smi -L:"
+nvidia-smi -L || {
+    echo "ERROR: nvidia-smi failed."
+    exit 1
+}
+
+echo ""
+
+
+## =============================================================================
+## Fix CUDA_VISIBLE_DEVICES
+## =============================================================================
+##
+## PBS may expose GPUs as UUIDs (GPU-xxxx,GPU-yyyy); vLLM and the retriever
+## select devices by integer index, so convert to contiguous indices.
+
+if echo "${CUDA_VISIBLE_DEVICES:-}" | grep -q "GPU-"; then
+
+    GPU_COUNT=$(echo "${CUDA_VISIBLE_DEVICES}" | tr ',' '\n' | wc -l)
+
+    CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((GPU_COUNT - 1)))
+
+    export CUDA_VISIBLE_DEVICES
+
+    echo "Converted CUDA_VISIBLE_DEVICES to integer indices:"
+    echo "${CUDA_VISIBLE_DEVICES}"
+fi
+
+## Fallback if PBS does not set CUDA_VISIBLE_DEVICES.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+
+echo ""
+echo "Final CUDA_VISIBLE_DEVICES:"
+echo "${CUDA_VISIBLE_DEVICES}"
+
+
+## =============================================================================
+## GPU Monitor
+## =============================================================================
+
+GPU_MONITOR_LOG=".pbs_logs/${PBS_JOBID}.gpu.log"
+
+(
+    while true; do
+        echo "=================================================================="
+        echo "$(date)"
+        echo "=================================================================="
+
+        gpustat -cp || nvidia-smi
+
+        echo ""
+        sleep 300
+    done
+) > "${GPU_MONITOR_LOG}" 2>&1 &
+
+GPU_MONITOR_PID=$!
+VLLM_PID=""
+
+## Stop the monitor and the vLLM server when the PBS script exits (the
+## retriever is a shared service and is left running on purpose).
+cleanup() {
+    [[ -n "${VLLM_PID}" ]] && kill "${VLLM_PID}" 2>/dev/null || true
+    kill "${GPU_MONITOR_PID}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+echo ""
+echo "GPU monitor log:"
+echo "${GPU_MONITOR_LOG}"
+
+
+## =============================================================================
+## Prepare Conda Environment (vLLM lives here)
+## =============================================================================
+##
+## Do NOT use `module load anaconda/2025`: it pulls in system CUDA 13.1.
+
+eval "$(/usr/local/anaconda2025/bin/conda shell.bash hook)"
+
+conda activate seed-as
+
+echo ""
+echo "======================================================================"
+echo "Environment Information"
+echo "======================================================================"
+
+echo "CONDA_PREFIX : ${CONDA_PREFIX}"
+echo "Python       : $(which python)"
+echo "Python ver   : $(python --version)"
+echo "vllm         : $(which vllm || true)"
+echo "CUDA_HOME    : ${CUDA_HOME:-NOT_SET}"
+echo ""
+
+
+## =============================================================================
+## PyTorch / GPU Sanity Check
+## =============================================================================
+
+python - <<'PY'
+import torch
+
+print("PyTorch       :", torch.__version__)
+print("Torch CUDA    :", torch.version.cuda)
+print("CUDA usable   :", torch.cuda.is_available())
+print("GPU count     :", torch.cuda.device_count())
+
+for i in range(torch.cuda.device_count()):
+    print(f"GPU {i}         :", torch.cuda.get_device_name(i))
+
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA is not available.")
+
+if torch.cuda.device_count() < 2:
+    raise RuntimeError(
+        f"Need at least 2 GPUs (policy server + retriever), PyTorch sees {torch.cuda.device_count()}."
+    )
+PY
+
+
+## =============================================================================
+## Credentials, stream settings, interpreters
+## =============================================================================
+##
+## SEED/.env carries OPENROUTER_API_KEY (GLM judges + API policies), WANDB_API_KEY
+## and the AGENTSTREAM_* settings (retriever URL, API model) the registry reads.
+
+set -a
+# shellcheck disable=SC1090
+source "${WORKDIR}/.env"
+set +a
+
+export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}"          # litellm needs a value for the local openai/ endpoint
+export EMBED_MODEL_PATH="${EMBED_MODEL_PATH:-/home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-Embedding-8B}"  # retriever encoder (local copy, not the hub id)
+export AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus     # ensure_browsecomp_retriever.sh keys off this
+export EXGENTIC_PYTHON="${EXGENTIC}/.venv/bin/python"     # the uv venv (litellm, sentence-transformers, wandb)
+export QWEN_API_BASE="http://127.0.0.1:${VLLM_PORT}/v1"
+
+echo "======================================================================"
+echo "Preflight"
+echo "======================================================================"
+[[ -x "${EXGENTIC_PYTHON}" ]] || {
+    echo "ERROR: ${EXGENTIC_PYTHON} missing. In ${EXGENTIC}: uv sync --extra amem && uv pip install wandb"
+    exit 1
+}
+"${EXGENTIC_PYTHON}" -c "import litellm, sentence_transformers, wandb; print('exgentic venv ok')"
+[[ -f "${QWEN_PATH}/config.json" ]] || { echo "ERROR: base model missing at ${QWEN_PATH}"; exit 1; }
+[[ -f "${EMBED_MODEL_PATH}/config.json" ]] || { echo "ERROR: retriever encoder missing at ${EMBED_MODEL_PATH}"; exit 1; }
+[[ -n "${OPENROUTER_API_KEY:-}" ]] || { echo "ERROR: OPENROUTER_API_KEY not set (SEED/.env)"; exit 1; }
+[[ -n "${WANDB_API_KEY:-}" || -f "${HOME}/.netrc" ]] || echo "WARNING: no wandb credentials; runs will fail to log"
+
+
+## =============================================================================
+## Shared services
+## =============================================================================
+
+## BrowseComp-Plus retriever on GPU 1 (reused if already healthy; waits until ready).
+echo ""
+echo "Starting browsecomp retriever on GPU 1 ..."
+AGENTSTREAM_RETRIEVER_DEVICE=1 AGENTSTREAM_RETRIEVER_THREADS=12 \
+    bash examples/agentstream_trainer/ensure_browsecomp_retriever.sh
+
+## vLLM OpenAI-compatible server for the base policy on GPU 0.
+echo ""
+echo "Starting vLLM policy server on GPU 0 ..."
+MODEL_PATH="${QWEN_PATH}" GPU=0 PORT="${VLLM_PORT}" \
+    bash "${EXGENTIC}/scripts/ours/serve_policy_vllm.sh" > ".pbs_logs/${PBS_JOBID}.vllm.log" 2>&1 &
+VLLM_PID=$!
+
+for i in $(seq 1 120); do
+    if curl -fsS "${QWEN_API_BASE}/models" >/dev/null 2>&1; then
+        break
+    fi
+    kill -0 "${VLLM_PID}" 2>/dev/null || {
+        echo "ERROR: vLLM exited early, see .pbs_logs/${PBS_JOBID}.vllm.log"
+        exit 1
+    }
+    sleep 10
+done
+curl -fsS "${QWEN_API_BASE}/models" >/dev/null || {
+    echo "ERROR: vLLM not ready after 20 min, see .pbs_logs/${PBS_JOBID}.vllm.log"
+    exit 1
+}
+echo "Services ready: $(date)"
+
+
+## =============================================================================
+## Stage-3: AgentStream baselines on the SEED stream
+## =============================================================================
+
+cd "${EXGENTIC}"
+
+## 1. The task order / holdout split must equal the SEED RL stream.
+"${EXGENTIC_PYTHON}" scripts/ours/check_stream_alignment.py
+
+## 2. Smoke: one local (Qwen) and one API run, 2 stream tasks + 1 holdout task each.
+##    Also warms the sentence-transformers cache before 18 processes start at once.
+NUM_TASKS=2 NUM_HOLDOUT=1 PARALLEL=2 OUTPUT_BASE=outputs_ours_smoke RUN_NAME_PREFIX=smoke_ \
+    ONLY=tool_calling:qwen:interleaved,reasoning_bank:luna:interleaved \
+    bash scripts/ours/run_matrix_ours.sh
+
+## 3. Full matrix: {tool_calling, reasoning_bank, ace} x {qwen, luna, dsflash} x {interleaved, isolated},
+##    each run = online pass then frozen holdout, all 18 in parallel, streamed to wandb.
+MATRIX_RC=0
+PARALLEL=18 bash scripts/ours/run_matrix_ours.sh || MATRIX_RC=$?
+
+## 4. Table of whatever finished (also on wandb as as_<agent>_<model>_<mode>_s44), then the matrix exit code.
+"${EXGENTIC_PYTHON}" scripts/ours/summarize_matrix.py outputs_ours --csv outputs_ours/matrix.csv || true
+
+echo ""
+echo "======================================================================"
+echo "Done: $(date)  (matrix exit code ${MATRIX_RC}; 0 = all 18 runs finished)"
+echo "======================================================================"
+exit "${MATRIX_RC}"

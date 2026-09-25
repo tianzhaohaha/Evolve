@@ -39,6 +39,7 @@ class ACEAgent(Agent):
 
     enable_tool_shortlisting: bool = False
     max_selected_tools: int = 30
+    learning_enabled: bool = True  # False = retrieve from the store but never write to it (frozen evaluation)
 
     use_bulletpoint_analyzer: bool = False
     bulletpoint_analyzer_threshold: float = 0.90
@@ -74,6 +75,7 @@ class ACEAgent(Agent):
             "bulletpoint_analyzer_threshold": self.bulletpoint_analyzer_threshold,
             "enable_tool_shortlisting": self.enable_tool_shortlisting,
             "max_selected_tools": self.max_selected_tools,
+            "learning_enabled": self.learning_enabled,
         }
 
     @property

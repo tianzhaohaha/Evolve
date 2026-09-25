@@ -33,6 +33,7 @@ class ReasoningBankAgent(Agent):
 
     enable_tool_shortlisting: bool = False
     max_selected_tools: int = 30
+    learning_enabled: bool = True  # False = retrieve from the store but never write to it (frozen evaluation)
 
     runner: RunnerName | None = None
     model_settings: ModelSettings | None = None
@@ -60,6 +61,7 @@ class ReasoningBankAgent(Agent):
             "benchmark_id": self.benchmark_id,
             "enable_tool_shortlisting": self.enable_tool_shortlisting,
             "max_selected_tools": self.max_selected_tools,
+            "learning_enabled": self.learning_enabled,
         }
 
     @property
