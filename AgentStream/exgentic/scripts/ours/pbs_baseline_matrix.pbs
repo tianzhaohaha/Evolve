@@ -206,19 +206,42 @@ source "${WORKDIR}/.env"
 set +a
 
 export OPENAI_API_KEY="${OPENAI_API_KEY:-EMPTY}"          # litellm needs a value for the local openai/ endpoint
+export EXGENTIC_LITELLM_CACHING=false                      # exgentic caches LLM calls in an NFS SQLite by default: corrupts under 18 writers and replays sampled responses
 export EMBED_MODEL_PATH="${EMBED_MODEL_PATH:-/home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-Embedding-8B}"  # retriever encoder (local copy, not the hub id)
 export AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus     # ensure_browsecomp_retriever.sh keys off this
-export EXGENTIC_PYTHON="${EXGENTIC}/.venv/bin/python"     # the uv venv (litellm, sentence-transformers, wandb)
+## Interpreter for the baseline runners: the exgentic uv venv if one was built, otherwise the
+## active conda env (seed-as with litellm + sentence-transformers<5 installed). EXGENTIC_PYTHON overrides.
+if [[ -z "${EXGENTIC_PYTHON:-}" ]]; then
+    if [[ -x "${EXGENTIC}/.venv/bin/python" ]]; then
+        EXGENTIC_PYTHON="${EXGENTIC}/.venv/bin/python"
+    else
+        EXGENTIC_PYTHON="${CONDA_PREFIX}/bin/python"
+    fi
+fi
+export EXGENTIC_PYTHON
 export QWEN_API_BASE="http://127.0.0.1:${VLLM_PORT}/v1"
 
 echo "======================================================================"
 echo "Preflight"
 echo "======================================================================"
-[[ -x "${EXGENTIC_PYTHON}" ]] || {
-    echo "ERROR: ${EXGENTIC_PYTHON} missing. In ${EXGENTIC}: uv sync --extra amem && uv pip install wandb"
+echo "runner interpreter: ${EXGENTIC_PYTHON}"
+"${EXGENTIC_PYTHON}" - "${EXGENTIC}/src" <<'PY' || {
+import sys, importlib
+sys.path.insert(0, sys.argv[1])
+import litellm, sentence_transformers, wandb, transformers
+from exgentic.interfaces.lib.api import evaluate
+from exgentic.interfaces.registry import load_agent, load_benchmark
+for slug in ("tool_calling", "reasoning_bank", "ace"):
+    load_agent(slug)                      # imports the agent module and its runtime deps
+for slug in ("bfcl", "tau2", "browsecompplus"):
+    load_benchmark(slug)                  # host-side benchmark classes
+print("runner deps ok: transformers", transformers.__version__, "| sentence-transformers", sentence_transformers.__version__)
+PY
+    echo "ERROR: ${EXGENTIC_PYTHON} lacks the runner deps. Either build the uv venv in ${EXGENTIC}"
+    echo "       (uv sync --extra amem && uv pip install wandb) or pip install into the conda env:"
+    echo "       pip install \"litellm>=1.65,<2,!=1.82.7,!=1.82.8\" \"sentence-transformers>=3,<5\" \"transformers<=4.57.3\""
     exit 1
 }
-"${EXGENTIC_PYTHON}" -c "import litellm, sentence_transformers, wandb; print('exgentic venv ok')"
 [[ -f "${QWEN_PATH}/config.json" ]] || { echo "ERROR: base model missing at ${QWEN_PATH}"; exit 1; }
 [[ -f "${EMBED_MODEL_PATH}/config.json" ]] || { echo "ERROR: retriever encoder missing at ${EMBED_MODEL_PATH}"; exit 1; }
 [[ -n "${OPENROUTER_API_KEY:-}" ]] || { echo "ERROR: OPENROUTER_API_KEY not set (SEED/.env)"; exit 1; }

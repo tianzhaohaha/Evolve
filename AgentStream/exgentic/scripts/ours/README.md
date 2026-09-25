@@ -14,12 +14,19 @@ Files: `registry_ours.py` (benchmark settings + holdout split), `stream_ours.py`
 `ACEAgent` (frozen evaluation); everything else in `src/` is untouched.
 
 ## Setup (cluster)
+Either a dedicated uv venv (`cd AgentStream/exgentic && uv sync --extra amem && uv pip install wandb`)
+or the training conda env with the runner deps added; the second must keep verl's transformers pin:
 ```bash
-cd AgentStream/exgentic && uv sync
-uv sync --extra amem && uv pip install wandb      # sentence-transformers (memory embeddings) + wandb
+conda activate seed-as
+pip install "litellm>=1.65,<2,!=1.82.7,!=1.82.8" "sentence-transformers>=3,<5" "transformers<=4.57.3"
+pip check   # only the pre-existing decord note may remain
 export OPENROUTER_API_KEY=... WANDB_API_KEY=...  # GLM judges + API policies; wandb
 export OPENAI_API_KEY=EMPTY                      # litellm needs a value for the local openai/ endpoint
 ```
+`run_matrix_ours.sh` runs with `EXGENTIC_PYTHON` (default `uv run python`); the PBS script picks the
+venv if present, else the active conda env. `EXGENTIC_LITELLM_CACHING=false` must be exported for the
+runners (the PBS script does): exgentic's default litellm disk cache is an NFS SQLite that corrupts
+under concurrent writers and replays sampled responses across runs.
 Shared services (one node, 2 GPUs):
 ```bash
 # GPU 1: browsecomp retriever (all runs share it)
