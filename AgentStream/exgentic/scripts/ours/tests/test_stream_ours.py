@@ -181,3 +181,34 @@ def test_api_base_overrides_both_openai_env_names_and_checks_the_served_model(mo
     assert os.environ["OPENAI_API_KEY"] == "EMPTY" and calls == ["http://127.0.0.1:8000/v1/models"]
     with pytest.raises(SystemExit, match="serves"):
         so.point_openai_provider_at("http://127.0.0.1:8000/v1", "openai/other-model")
+
+
+def test_wandb_stream_falls_back_to_a_fresh_run_when_the_stored_id_is_gone(tmp_path, monkeypatch):
+    import sys, json
+    (tmp_path / "wandb_run.json").write_text(json.dumps({"id": "deleted1", "name": "x"}))
+    calls, logged = [], []
+
+    class FakeRun:
+        id = "fresh42"
+        def define_metric(self, *a, **k): pass
+        def log(self, payload, step): logged.append((payload["online/task_index"], step))
+        def finish(self): pass
+
+    def fake_init(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("id") == "deleted1":
+            raise RuntimeError("run deleted")
+        return FakeRun()
+
+    monkeypatch.setitem(sys.modules, "wandb", SimpleNamespace(init=fake_init))
+    stream = WandbStream("x", {}, tmp_path, enabled=True)
+    assert [c.get("id") for c in calls] == ["deleted1", None] and stream.resumed is False
+    assert json.loads((tmp_path / "wandb_run.json").read_text())["id"] == "fresh42"
+    tally = OnlineTally()
+    for i in range(3):  # replay of finished tasks keeps the steps monotonic
+        tally.add("bfcl", 1.0, True)
+        stream.log_task({"session_index": i, "score": 1.0, "success": True}, tally)
+    assert logged == [(1, 1), (2, 2), (3, 3)]
+
+    stream_ok = WandbStream("x", {}, tmp_path, enabled=True)  # stored id valid now -> resumed
+    assert stream_ok.resumed is True and calls[-1]["id"] == "fresh42"

@@ -261,8 +261,10 @@ def run_online(args) -> None:
     progress = Progress(output_dir, "online_metrics")
     done = progress.load()
     tally = OnlineTally()
-    for rec in done:
+    for rec in done:  # rebuild the running totals; a fresh wandb run also gets the finished tasks replayed
         tally.add(rec["benchmark_slug"], rec["score"], rec["success"])
+        if not stream.resumed:
+            stream.log_task(rec, tally)
     load_stores(spec, args.mode, benchmarks, output_dir, required=False)
     print(f"[online] {run_name(args)}: {len(task_order)} tasks, resuming at {len(done)}")
     settings = model_settings(args, ONLINE_TEMPERATURE)

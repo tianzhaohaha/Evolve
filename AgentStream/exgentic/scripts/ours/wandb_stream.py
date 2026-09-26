@@ -71,6 +71,7 @@ class WandbStream:
     def __init__(self, run_name: str, config: Dict[str, Any], output_dir: Path, *, enabled: bool = True,
                  project: str = "agentic_agentstream", entity: Optional[str] = None) -> None:
         self.run = None
+        self.resumed = False  # True when the stored run id was picked up again (its history is intact)
         if not enabled:
             return
         try:
@@ -80,10 +81,19 @@ class WandbStream:
             return
         id_path = Path(output_dir) / "wandb_run.json"
         run_id = json.loads(id_path.read_text())["id"] if id_path.exists() else None
-        self.run = wandb.init(
-            project=project, entity=entity, name=run_name, config=config, dir=str(output_dir),
-            id=run_id, resume="allow" if run_id else None,
-        )
+        common = dict(project=project, entity=entity, name=run_name, config=config, dir=str(output_dir))
+        if run_id:
+            try:
+                self.run = wandb.init(id=run_id, resume="allow", **common)
+                self.resumed = True
+            except Exception as exc:  # noqa: BLE001 - e.g. the run was deleted on wandb
+                print(f"wandb run {run_id} cannot be resumed ({exc}); starting a fresh run and replaying the local history.")
+        if self.run is None:
+            try:
+                self.run = wandb.init(**common)
+            except Exception as exc:  # noqa: BLE001
+                print(f"wandb unavailable ({exc}); metrics stay in the local jsonl files only.")
+                return
         id_path.write_text(json.dumps({"id": self.run.id, "name": run_name}))
         self.run.define_metric("online/*", step_metric="online/task_index")
         self.run.define_metric("val/*", step_metric="online/task_index")
