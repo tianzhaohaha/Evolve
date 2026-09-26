@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import base64
+import io
 import os
+import pickle
 import threading
 import time
 from typing import Any, Optional
@@ -52,8 +54,38 @@ def _encode(obj: Any) -> str:
     return base64.b64encode(cp.dumps(obj)).decode("ascii")
 
 
+class _Unavailable:
+    """Placeholder for an object whose class lives only in the service's environment (e.g. a
+    benchmark venv's package embedded in a score payload); keeps the surrounding structure."""
+
+    __slots__ = ("qualname", "args", "state")
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.args = args
+        self.state = kwargs or None
+
+    def __setstate__(self, state: Any) -> None:
+        self.state = state
+
+    def __repr__(self) -> str:
+        return f"<unavailable {self.qualname}>"
+
+
+class _TolerantUnpickler(pickle.Unpickler):
+    """cloudpickle-compatible unpickler that substitutes ``_Unavailable`` for classes and
+    functions whose module cannot be imported here, instead of failing the whole RPC result."""
+
+    def find_class(self, module: str, name: str) -> Any:
+        try:
+            return super().find_class(module, name)
+        except (ImportError, AttributeError):
+            placeholder = type(name, (_Unavailable,), {"__module__": module, "__slots__": ()})
+            placeholder.qualname = f"{module}.{name}"
+            return placeholder
+
+
 def _decode(data: str) -> Any:
-    return cp.loads(base64.b64decode(data))
+    return _TolerantUnpickler(io.BytesIO(base64.b64decode(data))).load()
 
 
 def _error_response(exc: Exception) -> RPCResponse:

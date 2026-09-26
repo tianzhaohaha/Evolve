@@ -145,11 +145,17 @@ def run_task(spec: AgentSpec, configs, bm_slug: str, task_id: str, *, model: str
 
     benchmark = load_benchmark(bm_slug)(**configs[bm_slug]["bm_kwargs"])
     agent = spec.build(model, mode, bm_slug, settings, learning_enabled, **configs[bm_slug].get("agent_kwargs", {}))
-    results = evaluate(
-        benchmark=benchmark, agent=agent, task_ids=[task_id], max_workers=1, max_steps=MAX_STEPS,
-        max_actions=MAX_STEPS * 10,  # steps are the only cap, as in the SEED environment (parallel tool calls count as actions)
-        output_dir=str(sessions_dir), overwrite_sessions=True,
-    )
+    try:
+        results = evaluate(
+            benchmark=benchmark, agent=agent, task_ids=[task_id], max_workers=1, max_steps=MAX_STEPS,
+            max_actions=MAX_STEPS * 10,  # steps are the only cap, as in the SEED environment (parallel tool calls count as actions)
+            output_dir=str(sessions_dir), overwrite_sessions=True,
+        )
+    except RuntimeError as exc:
+        # exgentic swallows session-level exceptions and leaves the run without results; the real
+        # traceback is in the newest run log, so point at it instead of the generic message.
+        logs = sorted(sessions_dir.glob("*/run/run.log"), key=lambda path: path.stat().st_mtime)
+        raise RuntimeError(f"{exc} (task {bm_slug}::{task_id}; see {logs[-1] if logs else sessions_dir})") from exc
     return results.session_results[0]
 
 
