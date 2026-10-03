@@ -61,6 +61,10 @@ fi
 export CONDA_ENV="${SEED_CONDA_ENV:-seed}"
 export PYTHONUNBUFFERED=1
 
+# prepare_data.sh binds its policy vLLM server to $HOST, but activating a conda env that ships
+# compilers exports HOST=x86_64-conda-linux-gnu, which vLLM cannot bind to. Pin it explicitly.
+export HOST="${POLICY_HOST:-127.0.0.1}"
+
 STAGE="${STAGE:-all}"
 N_GPUS="${N_GPUS:-2}"
 : "${MODELS_ROOT:?Please set MODELS_ROOT in .env}"
