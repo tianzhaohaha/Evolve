@@ -54,7 +54,7 @@ export AGENTSTREAM_BENCHMARKS=bfcl,tau2,browsecompplus
 # Stage 1/2 use the first STAGE12_NGPUS GPUs (default 4: PBS ngpus=4). STAGE12_NGPUS=2 halves the
 # vLLM replicas and SFT ranks (about twice the wall time) when only two GPUs are free.
 # Stage 3 keeps its own two-GPU setting from .env.
-STAGE12_NGPUS="${STAGE12_NGPUS:-4}"
+STAGE12_NGPUS="${STAGE12_NGPUS:-2}"
 _gpus="$(seq -s, 0 $((STAGE12_NGPUS - 1)))"
 export AGENTSTREAM_POLICY_GPU="$_gpus" AGENTSTREAM_SFT_GPUS="$_gpus" AGENTSTREAM_SFT_NPROC="$STAGE12_NGPUS"
 export CONDA_ENV="${CONDA_ENV:-${CONDA_DEFAULT_ENV:-seed}}"   # vLLM + SFT run in the active env
