@@ -214,7 +214,7 @@ import alfworld, vllm, verl
 print("alfworld OK, vllm", vllm.__version__)
 PY
 
-if [ ! -d "${HOME}/.cache/alfworld/json_2.1.1" ]; then
+if [ ! -d "${ALFWORLD_DATA:-${HOME}/.cache/alfworld}/json_2.1.1" ]; then
     echo "ERROR: ALFWorld data missing; run 'alfworld-download -f' once on a login node."
     exit 1
 fi

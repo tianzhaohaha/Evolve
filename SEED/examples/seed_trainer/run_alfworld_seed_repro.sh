@@ -40,7 +40,7 @@ if [[ -f "$SRC_ENV_FILE" ]]; then
         set +a
         for v in MODELS_ROOT CHECKPOINTS_ROOT TMPDIR RAY_TMPDIR \
                  OPENAI_BASE_URL OPENAI_API_KEY OPENAI_MODEL OPENAI_API_RETRIES OPENAI_API_RETRY_DELAY \
-                 WANDB_API_KEY WANDB_MODE HF_TOKEN; do
+                 WANDB_API_KEY WANDB_MODE HF_TOKEN ALFWORLD_DATA; do
             if [[ -n "${!v:-}" ]]; then printf '%s=%q\n' "$v" "${!v}"; fi
         done
     ) > "$SEED_ENV_FILE"
@@ -49,6 +49,14 @@ chmod 600 "$SEED_ENV_FILE"
 export ENV_FILE="$SEED_ENV_FILE"
 # shellcheck disable=SC1090
 set -a; source "$SEED_ENV_FILE"; set +a
+
+# ALFWorld game files: `alfworld-download -f` puts them in ~/.cache/alfworld, which is also what the
+# configs (config_tw.yaml: $ALFWORLD_DATA/json_2.1.1/...) and prepare_data.sh expect.
+export ALFWORLD_DATA="${ALFWORLD_DATA:-$HOME/.cache/alfworld}"
+if [[ ! -d "$ALFWORLD_DATA/json_2.1.1/train" ]]; then
+    echo "ALFWorld data not found: $ALFWORLD_DATA/json_2.1.1/train (run 'alfworld-download -f' or set ALFWORLD_DATA)" >&2
+    exit 1
+fi
 
 export CONDA_ENV="${SEED_CONDA_ENV:-seed}"
 export PYTHONUNBUFFERED=1
@@ -77,6 +85,7 @@ echo "  conda env:  $CONDA_ENV"
 echo "  GPUs:       $N_GPUS (CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES)"
 echo "  base model: $BASE_MODEL"
 echo "  SFT model:  $SFT_MODEL"
+echo "  alfworld:   $ALFWORLD_DATA"
 
 case "$STAGE" in all|sft|rl) ;; *) echo "Unknown STAGE '$STAGE' (use all | sft | rl)" >&2; exit 2 ;; esac
 
