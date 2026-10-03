@@ -1,0 +1,150 @@
+======================================================================
+PBS Job Information
+======================================================================
+Job ID        : 67762.gaas
+Hostname      : hpc-gaas-g09
+Working dir   : /home/qingyuan.liu/projects/Evolve/SEED
+Start time    : Fri Sep 18 02:30:13 AM +08 2026
+CPUs (cgroup) : 48
+======================================================================
+
+PBS_NODEFILE:
+hpc-gaas-g09
+
+Initial CUDA_VISIBLE_DEVICES:
+GPU-33d21e4b-cc1a-d219-a80b-3865154dc210,GPU-c8a90321-8a11-86bc-699f-64da9e6fbf4c,GPU-613513ed-ed89-1810-bb69-41c0f4b3a999,GPU-2b8d68cb-aace-3293-9a74-63cbabad8584
+
+nvidia-smi -L:
+GPU 0: NVIDIA H200 (UUID: GPU-2b8d68cb-aace-3293-9a74-63cbabad8584)
+GPU 1: NVIDIA H200 (UUID: GPU-613513ed-ed89-1810-bb69-41c0f4b3a999)
+GPU 2: NVIDIA H200 (UUID: GPU-c8a90321-8a11-86bc-699f-64da9e6fbf4c)
+GPU 3: NVIDIA H200 (UUID: GPU-33d21e4b-cc1a-d219-a80b-3865154dc210)
+
+Converted CUDA_VISIBLE_DEVICES to integer indices:
+0,1,2,3
+
+Final CUDA_VISIBLE_DEVICES:
+0,1,2,3
+
+GPU monitor log:
+.pbs_logs/67762.gaas.gpu.log
+
+======================================================================
+Environment Information
+======================================================================
+CONDA_PREFIX : /home/qingyuan.liu/.conda/envs/seed-as
+Python       : /home/qingyuan.liu/.conda/envs/seed-as/bin/python
+Python ver   : Python 3.12.0
+CUDA_HOME    : NOT_SET
+NVCC         : /home/qingyuan.liu/.conda/envs/seed-as/bin/nvcc
+
+nvcc version:
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Wed_Jan_15_19:20:09_PST_2025
+Cuda compilation tools, release 12.8, V12.8.61
+Build cuda_12.8.r12.8/compiler.35404655_0
+
+PyTorch       : 2.8.0+cu128
+Torch CUDA    : 12.8
+CUDA usable   : True
+GPU count     : 4
+GPU 0         : NVIDIA H200
+GPU 1         : NVIDIA H200
+GPU 2         : NVIDIA H200
+GPU 3         : NVIDIA H200
+======================================================================
+AgentStream Stage 1/2 (sft)   start Fri Sep 18 02:30:20 AM +08 2026
+  benchmarks : bfcl,appworld,tau2,hle,browsecompplus  (SFT tasks/domain=100 minus RL holdout ids[50:82], rollouts/task=8)
+  base model : /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507
+  SFT data   : /home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4
+  SFT export : /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507-agentstream-episode-skill-sft-v4  (epochs=3)
+  conda env  : seed-as    policy GPUs: 0,1,2,3    SFT GPUs: 0,1,2,3 (nproc=4, batch=12)
+  log        : /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/stage12_sft_67762.gaas.log
+======================================================================
+Stage 2/3: training AgentStream hindsight-skill SFT model
+Running AgentStream episode-skill SFT
+  conda env:      seed-as
+  model:          /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507
+  train data:     /home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4/sft_episode_skill_train.parquet
+  val data:       /home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4/sft_episode_skill_val.parquet
+  output dir:     /home/qingyuan.liu/projects/Evolve/LLMs/outputs/sft/agentstream_episode_skill_sft_qwen3_4b_2507_glm_self_ep3_20260918_023020
+  epochs:         3
+  learning rate:  5e-6
+  max length:     65536
+  nproc:          4
+  multimodal:     false
+  export model:   true
+  export dir:     /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507-agentstream-episode-skill-sft-v4
+Normalize batch size by dp 4
+Using sequence parallel size: 1
+Using remove padding: True
+Using FSDP rank 0 and size 4 for data distribution
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3Model is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3Model is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3Model is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen3Model is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]Loading checkpoint shards:  33%|███▎      | 1/3 [00:05<00:10,  5.30s/it]Loading checkpoint shards:  33%|███▎      | 1/3 [00:05<00:10,  5.30s/it]Loading checkpoint shards:  33%|███▎      | 1/3 [00:05<00:10,  5.32s/it]Loading checkpoint shards:  33%|███▎      | 1/3 [00:05<00:10,  5.33s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:10<00:05,  5.20s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  2.89s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.53s/it]
+Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+Skipping monkey patch for Qwen3ForCausalLM as use_fused_kernels is False or fused_kernels_backend is None
+Loading checkpoint shards:  67%|██████▋   | 2/3 [00:10<00:05,  5.49s/it]Loading checkpoint shards:  67%|██████▋   | 2/3 [00:10<00:05,  5.51s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:10<00:00,  3.66s/it]
+Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+Skipping monkey patch for Qwen3ForCausalLM as use_fused_kernels is False or fused_kernels_backend is None
+Loading checkpoint shards: 100%|██████████| 3/3 [00:11<00:00,  3.67s/it]
+Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+Skipping monkey patch for Qwen3ForCausalLM as use_fused_kernels is False or fused_kernels_backend is None
+Loading checkpoint shards:  67%|██████▋   | 2/3 [00:11<00:05,  5.59s/it]Loading checkpoint shards: 100%|██████████| 3/3 [00:11<00:00,  3.71s/it]
+Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+Skipping monkey patch for Qwen3ForCausalLM as use_fused_kernels is False or fused_kernels_backend is None
+functools.partial(<function _or_policy at 0x14c6b4836020>, policies=[functools.partial(<function transformer_auto_wrap_policy at 0x14c6b4835ee0>, transformer_layer_cls={<class 'transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer'>})])
+NCCL version 2.27.3+cuda12.9
+Total training steps: 801
+Total training steps: 801
+Total training steps: 801
+Number of steps/epoch 267, number of epochs 3, total number of steps 801
+{'data': {'train_batch_size': 3, 'micro_batch_size': None, 'micro_batch_size_per_gpu': 1, 'train_files': '/home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4/sft_episode_skill_train.parquet', 'val_files': '/home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4/sft_episode_skill_val.parquet', 'prompt_key': 'prompt', 'response_key': 'response', 'image_key': None, 'prompt_dict_keys': [], 'response_dict_keys': [], 'multiturn': {'enable': False, 'messages_key': 'messages'}, 'max_length': 65536, 'truncation': 'error', 'balance_dp_token': False, 'chat_template': None, 'apply_chat_template_kwargs': {}, 'custom_cls': {'path': None, 'name': None}, 'use_shm': False}, 'model': {'partial_pretrain': '/home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507', 'use_shm': False, 'fsdp_config': {'wrap_policy': {'min_num_params': 0}, 'cpu_offload': False, 'offload_params': False}, 'external_lib': None, 'enable_gradient_checkpointing': True, 'trust_remote_code': False, 'lora_rank': 0, 'lora_alpha': 16, 'target_modules': 'all-linear', 'use_liger': False, 'strategy': 'fsdp2'}, 'optim': {'lr': 5e-06, 'betas': [0.9, 0.95], 'weight_decay': 0.01, 'warmup_steps_ratio': 0.1, 'clip_grad': 1.0, 'lr_scheduler': 'cosine'}, 'ulysses_sequence_parallel_size': 1, 'use_remove_padding': True, 'trainer': {'default_local_dir': '/home/qingyuan.liu/projects/Evolve/LLMs/outputs/sft/agentstream_episode_skill_sft_qwen3_4b_2507_glm_self_ep3_20260918_023020', 'default_hdfs_dir': None, 'resume_path': None, 'project_name': 'agentstream-episode-skill-sft', 'experiment_name': 'qwen3_4b_2507-agentstream-episode-skill-sft-glm-self-ep3', 'total_epochs': 3, 'total_training_steps': None, 'logger': ['console', 'wandb'], 'log_data_samples': 3, 'log_data_samples_freq': 10, 'log_data_samples_max_chars': 4000, 'seed': 1}}
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: ql2505 (ql2505-columbia-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run 4qrulfz3
+wandb: Tracking run with wandb version 0.30.0
+wandb: Run data is saved locally in /home/qingyuan.liu/projects/Evolve/SEED/wandb/run-20260918_023056-4qrulfz3
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run qwen3_4b_2507-agentstream-episode-skill-sft-glm-self-ep3
+wandb: ⭐️ View project at https://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft
+wandb: 🚀 View run at https://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft/runs/4qrulfz3
+Using LocalLogger is deprecated. The constructor API will change 
+Total training steps: 801
+Epoch 1/3:   0%|          | 0/267 [00:00<?, ?it/s]Epoch 1/3:   0%|          | 0/267 [00:14<?, ?it/s]
+Error executing job with overrides: ['data.train_files=/home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4/sft_episode_skill_train.parquet', 'data.val_files=/home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen3_4b_2507_v4/sft_episode_skill_val.parquet', 'data.train_batch_size=12', 'data.micro_batch_size_per_gpu=1', 'data.prompt_key=prompt', 'data.response_key=response', 'data.prompt_dict_keys=[]', 'data.response_dict_keys=[]', 'data.max_length=65536', 'data.truncation=error', 'model.partial_pretrain=/home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507', 'model.enable_gradient_checkpointing=True', 'optim.lr=5e-6', 'trainer.default_local_dir=/home/qingyuan.liu/projects/Evolve/LLMs/outputs/sft/agentstream_episode_skill_sft_qwen3_4b_2507_glm_self_ep3_20260918_023020', 'trainer.project_name=agentstream-episode-skill-sft', 'trainer.experiment_name=qwen3_4b_2507-agentstream-episode-skill-sft-glm-self-ep3', "trainer.logger=['console','wandb']", 'trainer.log_data_samples=3', 'trainer.log_data_samples_freq=10', 'trainer.log_data_samples_max_chars=4000', 'trainer.total_epochs=3', 'trainer.default_hdfs_dir=null', 'ulysses_sequence_parallel_size=1', 'use_remove_padding=true']
+Traceback (most recent call last):
+  File "/home/qingyuan.liu/projects/Evolve/SEED/verl/trainer/fsdp_sft_trainer.py", line 651, in main
+    trainer.fit()
+  File "/home/qingyuan.liu/projects/Evolve/SEED/verl/trainer/fsdp_sft_trainer.py", line 583, in fit
+    metric = self.training_step(data)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/qingyuan.liu/projects/Evolve/SEED/verl/trainer/fsdp_sft_trainer.py", line 433, in training_step
+    loss = self._compute_loss_and_backward(batch=micro_batch) / n_micro_batches
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/qingyuan.liu/projects/Evolve/SEED/verl/trainer/fsdp_sft_trainer.py", line 417, in _compute_loss_and_backward
+    loss.backward()
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/torch/_tensor.py", line 647, in backward
+    torch.autograd.backward(
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/torch/autograd/graph.py", line 829, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 37.09 GiB. GPU 0 has a total capacity of 139.80 GiB of which 5.02 GiB is free. Including non-PyTorch memory, this process has 134.77 GiB memory in use. Of the allocated memory 94.31 GiB is allocated by PyTorch, and 38.87 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mqwen3_4b_2507-agentstream-episode-skill-sft-glm-self-ep3[0m at: [34mhttps://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft/runs/4qrulfz3[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20260918_023056-4qrulfz3/logs[0m

@@ -1,0 +1,334 @@
+#!/bin/bash
+
+## =============================================================================
+## PBS Resources
+## =============================================================================
+
+## Job name
+#PBS -N as_global_ablation
+
+## Project funding code
+#PBS -P gs_ccds_wangwy
+
+## Queue
+#PBS -q gpu_as
+
+## Maximum walltime for the ENTIRE job
+#PBS -l walltime=48:00:00
+
+## 1 node, 24 CPUs, 2 GPUs
+#PBS -l select=1:ncpus=24:ngpus=2
+
+## Merge stderr into stdout
+#PBS -j oe
+#PBS -k oed
+
+## PBS output directory
+## NOTE: this directory must already exist before qsub.
+#PBS -o /home/qingyuan.liu/projects/Evolve/SEED/.pbs_logs/
+
+
+## Exit on unexpected errors and propagate pipeline errors.
+##
+## We intentionally DO NOT use `set -u`, because Conda activation scripts
+## may reference unset variables.
+set -eo pipefail
+
+
+## =============================================================================
+## Paths
+## =============================================================================
+
+WORKDIR="/home/qingyuan.liu/projects/Evolve/SEED"
+
+cd "${WORKDIR}" || exit 1
+
+export PYTHONUNBUFFERED=1
+
+mkdir -p .pbs_logs
+mkdir -p logs/agentstream
+
+## Save the complete PBS wrapper output.
+exec > >(tee -a ".pbs_logs/${PBS_JOBID}.run.log") 2>&1
+
+
+## =============================================================================
+## Debug Info
+## =============================================================================
+
+echo "======================================================================"
+echo "PBS Job Information"
+echo "======================================================================"
+echo "Job ID        : ${PBS_JOBID}"
+echo "Hostname      : $(hostname)"
+echo "Working dir   : $(pwd)"
+echo "Start time    : $(date)"
+echo "======================================================================"
+
+echo ""
+echo "PBS_NODEFILE:"
+cat "${PBS_NODEFILE}"
+
+echo ""
+echo "Initial CUDA_VISIBLE_DEVICES:"
+echo "${CUDA_VISIBLE_DEVICES:-NOT_SET}"
+
+echo ""
+echo "nvidia-smi -L:"
+nvidia-smi -L || {
+    echo "ERROR: nvidia-smi failed."
+    exit 1
+}
+
+echo ""
+
+
+## =============================================================================
+## Fix CUDA_VISIBLE_DEVICES
+## =============================================================================
+##
+## PBS may expose GPUs using UUIDs:
+##
+##   GPU-xxxx,GPU-yyyy
+##
+## Some of our training / torchrun code expects integer indices:
+##
+##   0,1
+##
+## Therefore convert the PBS-provided UUID list into contiguous indices.
+##
+
+if echo "${CUDA_VISIBLE_DEVICES:-}" | grep -q "GPU-"; then
+
+    GPU_COUNT=$(echo "${CUDA_VISIBLE_DEVICES}" | tr ',' '\n' | wc -l)
+
+    CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((GPU_COUNT - 1)))
+
+    export CUDA_VISIBLE_DEVICES
+
+    echo "Converted CUDA_VISIBLE_DEVICES to integer indices:"
+    echo "${CUDA_VISIBLE_DEVICES}"
+fi
+
+## Fallback if PBS does not set CUDA_VISIBLE_DEVICES.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+
+echo ""
+echo "Final CUDA_VISIBLE_DEVICES:"
+echo "${CUDA_VISIBLE_DEVICES}"
+
+
+## =============================================================================
+## GPU Monitor
+## =============================================================================
+
+GPU_MONITOR_LOG=".pbs_logs/${PBS_JOBID}.gpu.log"
+
+(
+    while true; do
+        echo "=================================================================="
+        echo "$(date)"
+        echo "=================================================================="
+
+        gpustat -cp || nvidia-smi
+
+        echo ""
+        sleep 300
+    done
+) > "${GPU_MONITOR_LOG}" 2>&1 &
+
+GPU_MONITOR_PID=$!
+
+## Stop GPU monitor when PBS script exits.
+trap 'kill "${GPU_MONITOR_PID}" 2>/dev/null || true' EXIT
+
+echo ""
+echo "GPU monitor log:"
+echo "${GPU_MONITOR_LOG}"
+
+
+## =============================================================================
+## Prepare Conda Environment
+## =============================================================================
+##
+## Do NOT use:
+##
+##   module load anaconda/2025
+##
+## because on this cluster it pulled in system CUDA 13.1.
+##
+
+eval "$(/usr/local/anaconda2025/bin/conda shell.bash hook)"
+
+conda activate seed-as
+
+echo ""
+echo "======================================================================"
+echo "Environment Information"
+echo "======================================================================"
+
+echo "CONDA_PREFIX : ${CONDA_PREFIX}"
+echo "Python       : $(which python)"
+echo "Python ver   : $(python --version)"
+echo "CUDA_HOME    : ${CUDA_HOME:-NOT_SET}"
+echo "NVCC         : $(which nvcc || true)"
+
+echo ""
+echo "nvcc version:"
+nvcc --version || true
+
+echo ""
+
+
+## =============================================================================
+## PyTorch / GPU Sanity Check
+## =============================================================================
+
+python - <<'PY'
+import torch
+
+print("PyTorch       :", torch.__version__)
+print("Torch CUDA    :", torch.version.cuda)
+print("CUDA usable   :", torch.cuda.is_available())
+print("GPU count     :", torch.cuda.device_count())
+
+for i in range(torch.cuda.device_count()):
+    print(f"GPU {i}         :", torch.cuda.get_device_name(i))
+
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA is not available.")
+
+if torch.cuda.device_count() != 2:
+    raise RuntimeError(
+        f"Expected 2 GPUs, but PyTorch sees {torch.cuda.device_count()}."
+    )
+PY
+
+
+## =============================================================================
+## Stage-3 Experiments
+## =============================================================================
+
+echo ""
+echo "======================================================================"
+echo "Starting AgentStream Stage-3 Experiments"
+echo "Job ID     : ${PBS_JOBID}"
+echo "Start time : $(date)"
+echo "======================================================================"
+
+FAILED_EXPERIMENTS=()
+declare -A EXP_STATUS EXP_LOG
+
+## Shared across all three runs: stream profile, batch, and every SEED switch
+## that is NOT the object of the comparison, pinned so env defaults cannot leak in.
+COMMON_ENV=(
+  AGENTSTREAM_RL_STREAM_PROFILE=single_pass
+  AGENTSTREAM_RL_TRAIN_DATA_SIZE=6
+  AGENTSTREAM_RL_EPOCHS=20
+  AGENTSTREAM_SEED_SKILL_MODE=episode_only
+  AGENTSTREAM_SEED_OPD_GEN_DOMINANCE=none
+  AGENTSTREAM_SEED_GLOBAL_POOL_EVICT_POLICY=gate_ema
+  AGENTSTREAM_SEED_GLOBAL_POOL_ADMIT_FAILED=True
+  AGENTSTREAM_SEED_FAILED_SKILL_POSITIVE=False
+  AGENTSTREAM_SEED_EMA_TAU=0.9
+  AGENTSTREAM_SEED_REPLAY_GROUPS_PER_STEP=2
+  AGENTSTREAM_SEED_REPLAY_CAPACITY=32
+)
+
+## run_exp <name> <tag> <extra env assignments...>
+run_exp() {
+    local name="$1" tag="$2"; shift 2
+    local log="logs/agentstream/stage3_interleaved_b6_steps24_${tag}_${PBS_JOBID}.log"
+    EXP_LOG["$name"]="$log"
+
+    echo ""
+    echo "======================================================================"
+    echo "[Experiment] ${name}"
+    echo "Start time : $(date)"
+    echo "Log        : ${log}"
+    echo "======================================================================"
+
+    set +e
+    env "${COMMON_ENV[@]}" "$@" \
+      AGENTSTREAM_EXPERIMENT_PREFIX="seed_qwen3_4b_2507_agentstream_v3_n96_single_pass_b6_steps24_${tag}" \
+      bash examples/agentstream_trainer/run_agentstream_sft_glm_self.sh interleaved \
+      2>&1 | tee "${log}"
+    local ps=("${PIPESTATUS[@]}")
+    set -e
+
+    EXP_STATUS["$name"]=${ps[0]}
+    if [[ ${ps[0]} -eq 0 && ${ps[1]} -eq 0 ]]; then
+        echo "[SUCCESS] ${name}"
+    else
+        echo "[FAILED] ${name}  (training exit ${ps[0]}, tee exit ${ps[1]})"
+        FAILED_EXPERIMENTS+=("$name")
+    fi
+    echo "End time: $(date)"
+}
+
+## 1/4  Pure SEED: single-track OPD at the original 0.01, no global pool,
+##      no EMA shadow, no replay.
+run_exp "SEED" "seed_only" \
+  AGENTSTREAM_SEED_OPD_LOSS_COEF=0.01 \
+  AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF=0 \
+  AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=copy \
+  AGENTSTREAM_SEED_OPD_GATE_EPS=0 \
+  AGENTSTREAM_SEED_OPD_POSITIVE_ONLY=False \
+  AGENTSTREAM_SEED_EMA_MODE=off \
+  AGENTSTREAM_SEED_REPLAY_ENABLE=False
+
+## 2/4  SEED + clean global: dual-track OPD (0.005 + 0.005, same total pressure),
+##      gen skills retrieved from the pool, every optimisation switch off.
+run_exp "SEED+Global" "global_clean" \
+  AGENTSTREAM_SEED_OPD_LOSS_COEF=0.005 \
+  AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF=0.005 \
+  AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=pool \
+  AGENTSTREAM_SEED_OPD_GATE_EPS=0 \
+  AGENTSTREAM_SEED_OPD_POSITIVE_ONLY=False \
+  AGENTSTREAM_SEED_EMA_MODE=off \
+  AGENTSTREAM_SEED_REPLAY_ENABLE=False
+
+
+## 3/4  SEED + global + replay only (gate eps kept, no positive-only, no EMA)
+##      EMA-shadow teacher, experience replay.
+run_exp "SEED+Global+Replay" "global_replay" \
+  AGENTSTREAM_SEED_OPD_LOSS_COEF=0.005 \
+  AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF=0.005 \
+  AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=pool \
+  AGENTSTREAM_SEED_OPD_GATE_EPS=0 \
+  AGENTSTREAM_SEED_OPD_POSITIVE_ONLY=False \
+  AGENTSTREAM_SEED_EMA_MODE=off \
+  AGENTSTREAM_SEED_REPLAY_ENABLE=True
+
+
+## 4/4  SEED + global + all core optimisations
+##      EMA-shadow teacher, experience replay.
+run_exp "SEED+Global+Opt" "global_opt" \
+  AGENTSTREAM_SEED_OPD_LOSS_COEF=0.005 \
+  AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF=0.005 \
+  AGENTSTREAM_SEED_GLOBAL_POOL_SOURCE=pool \
+  AGENTSTREAM_SEED_OPD_GATE_EPS=0.05 \
+  AGENTSTREAM_SEED_OPD_POSITIVE_ONLY=True \
+  AGENTSTREAM_SEED_EMA_MODE=ref \
+  AGENTSTREAM_SEED_REPLAY_ENABLE=True
+
+
+## =============================================================================
+## Final Summary
+## =============================================================================
+
+echo ""
+echo "======================================================================"
+echo "Stage-3 Experiment Summary   (job ${PBS_JOBID}, end $(date))"
+echo "======================================================================"
+for name in "SEED" "SEED+Global" "SEED+Global+Replay" "SEED+Global+Opt"; do
+    printf '  %-18s exit=%s  log=%s\n' "$name" "${EXP_STATUS[$name]:-n/a}" "${EXP_LOG[$name]:-n/a}"
+done
+echo "======================================================================"
+
+if [[ ${#FAILED_EXPERIMENTS[@]} -eq 0 ]]; then
+    echo "All Stage-3 experiments finished successfully."
+    exit 0
+fi
+echo "Failed experiments:"; printf '  - %s\n' "${FAILED_EXPERIMENTS[@]}"
+exit 1

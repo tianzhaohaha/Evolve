@@ -1,0 +1,722 @@
+======================================================================
+PBS Job Information
+======================================================================
+Job ID        : 68876.gaas
+Hostname      : hpc-gaas-g12
+Working dir   : /home/qingyuan.liu/projects/Evolve/SEED
+Start time    : Sun Sep 20 04:34:56 AM +08 2026
+CPUs (cgroup) : 24
+======================================================================
+
+PBS_NODEFILE:
+hpc-gaas-g12
+
+Initial CUDA_VISIBLE_DEVICES:
+GPU-ebf5710a-8500-0cc9-dfea-3e490b9a08be,GPU-65a1999a-fda7-77e1-81c7-9d68e4d75044
+
+nvidia-smi -L:
+GPU 0: NVIDIA H200 (UUID: GPU-65a1999a-fda7-77e1-81c7-9d68e4d75044)
+GPU 1: NVIDIA H200 (UUID: GPU-ebf5710a-8500-0cc9-dfea-3e490b9a08be)
+
+Converted CUDA_VISIBLE_DEVICES to integer indices:
+0,1
+
+Final CUDA_VISIBLE_DEVICES:
+0,1
+
+GPU monitor log:
+.pbs_logs/68876.gaas.gpu.log
+
+======================================================================
+Environment Information
+======================================================================
+CONDA_PREFIX : /home/qingyuan.liu/.conda/envs/seed-as
+Python       : /home/qingyuan.liu/.conda/envs/seed-as/bin/python
+Python ver   : Python 3.12.0
+CUDA_HOME    : NOT_SET
+NVCC         : /home/qingyuan.liu/.conda/envs/seed-as/bin/nvcc
+
+nvcc version:
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Wed_Jan_15_19:20:09_PST_2025
+Cuda compilation tools, release 12.8, V12.8.61
+Build cuda_12.8.r12.8/compiler.35404655_0
+
+PyTorch       : 2.8.0+cu128
+Torch CUDA    : 12.8
+CUDA usable   : True
+GPU count     : 2
+GPU 0         : NVIDIA H200
+GPU 1         : NVIDIA H200
+======================================================================
+AgentStream Stage 1/2 (sft)   start Sun Sep 20 04:35:01 AM +08 2026
+  benchmarks : bfcl,tau2,browsecompplus  (SFT tasks/domain=100 minus RL holdout ids[64:96], rollouts/task=8)
+  base model : /home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct
+  skill mode : episode_only  (step skills <= 5, analysis tokens 1024)
+  SFT data   : /home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen25_7b_v5
+  SFT export : /home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct-agentstream-episode-skill-sft-v5  (epochs=3)
+  conda env  : seed-as    policy GPUs: 0,1    SFT GPUs: 0,1 (nproc=2, batch=12)
+  log        : /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/stage12_sft_68876.gaas.log
+======================================================================
+Stage 2/3: training AgentStream hindsight-skill SFT model
+Running AgentStream episode-skill SFT
+  conda env:      seed-as
+  model:          /home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct
+  train data:     /home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen25_7b_v5/sft_episode_skill_train.parquet
+  val data:       /home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen25_7b_v5/sft_episode_skill_val.parquet
+  output dir:     /home/qingyuan.liu/projects/Evolve/LLMs/outputs/sft/agentstream_episode_skill_sft_qwen25_7b_glm_self_ep3_20260920_043501
+  epochs:         3
+  learning rate:  5e-6
+  max length:     65536
+  nproc:          2
+  multimodal:     false
+  export model:   true
+  export dir:     /home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct-agentstream-episode-skill-sft-v5
+Normalize batch size by dp 1
+Using sequence parallel size: 2
+Using remove padding: True
+Using SP rank 0 and size 1 for data distribution
+Each SP rank gets different data, but the same data WITHIN the same rank
+Using FSDP rank 0 and size 1 for data distribution
+`torch_dtype` is deprecated! Use `dtype` instead!
+`torch_dtype` is deprecated! Use `dtype` instead!
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen2ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen2ForCausalLM is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen2Model is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Flash Attention 2 only supports torch.float16 and torch.bfloat16 dtypes, but the current dype in Qwen2Model is torch.float32. You should run training or inference using Automatic Mixed-Precision via the `with torch.autocast(device_type='torch_device'):` decorator, or load the model with the `dtype` argument. Example: `model = AutoModel.from_pretrained("openai/whisper-tiny", attn_implementation="flash_attention_2", dtype=torch.float16)`
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.51s/it]Loading checkpoint shards:  25%|██▌       | 1/4 [00:01<00:04,  1.55s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.59s/it]Loading checkpoint shards:  50%|█████     | 2/4 [00:03<00:03,  1.60s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.67s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:04<00:01,  1.69s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.56s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.58s/it]
+Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+Skipping monkey patch for Qwen2ForCausalLM as use_fused_kernels is False or fused_kernels_backend is None
+functools.partial(<function _or_policy at 0x1530415ea020>, policies=[functools.partial(<function transformer_auto_wrap_policy at 0x1530415e9ee0>, transformer_layer_cls={<class 'transformers.models.qwen2.modeling_qwen2.Qwen2DecoderLayer'>})])
+Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.65s/it]Loading checkpoint shards: 100%|██████████| 4/4 [00:06<00:00,  1.64s/it]
+Monkey patch _flash_attention_forward in transformers.integrations.flash_attention
+Skipping monkey patch for Qwen2ForCausalLM as use_fused_kernels is False or fused_kernels_backend is None
+NCCL version 2.27.3+cuda12.9
+
+[2026-09-20 04:35:24] hpc-gaas-g12:928799:958538 [0] ras/client_support.cc:160 NCCL WARN Call to bind failed: Address already in use
+
+[2026-09-20 04:35:24] hpc-gaas-g12:928800:958539 [1] ras/client_support.cc:160 NCCL WARN Call to bind failed: Address already in use
+Total training steps: 504
+Number of steps/epoch 168, number of epochs 3, total number of steps 504
+{'data': {'train_batch_size': 12, 'micro_batch_size': None, 'micro_batch_size_per_gpu': 1, 'train_files': '/home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen25_7b_v5/sft_episode_skill_train.parquet', 'val_files': '/home/qingyuan.liu/projects/Evolve/SEED/outputs/agentstream_episode_skill_pipeline_qwen25_7b_v5/sft_episode_skill_val.parquet', 'prompt_key': 'prompt', 'response_key': 'response', 'image_key': None, 'prompt_dict_keys': [], 'response_dict_keys': [], 'multiturn': {'enable': False, 'messages_key': 'messages'}, 'max_length': 65536, 'truncation': 'error', 'balance_dp_token': False, 'chat_template': None, 'apply_chat_template_kwargs': {}, 'custom_cls': {'path': None, 'name': None}, 'use_shm': False}, 'model': {'partial_pretrain': '/home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct', 'use_shm': False, 'fsdp_config': {'wrap_policy': {'min_num_params': 0}, 'cpu_offload': False, 'offload_params': False}, 'external_lib': None, 'enable_gradient_checkpointing': True, 'trust_remote_code': False, 'lora_rank': 0, 'lora_alpha': 16, 'target_modules': 'all-linear', 'use_liger': False, 'strategy': 'fsdp2'}, 'optim': {'lr': 5e-06, 'betas': [0.9, 0.95], 'weight_decay': 0.01, 'warmup_steps_ratio': 0.1, 'clip_grad': 1.0, 'lr_scheduler': 'cosine'}, 'ulysses_sequence_parallel_size': 2, 'use_remove_padding': True, 'trainer': {'default_local_dir': '/home/qingyuan.liu/projects/Evolve/LLMs/outputs/sft/agentstream_episode_skill_sft_qwen25_7b_glm_self_ep3_20260920_043501', 'default_hdfs_dir': None, 'resume_path': None, 'project_name': 'agentstream-episode-skill-sft', 'experiment_name': 'qwen25_7b-agentstream-episode-skill-sft-glm-self-ep3', 'total_epochs': 3, 'total_training_steps': None, 'logger': ['console', 'wandb'], 'log_data_samples': 3, 'log_data_samples_freq': 10, 'log_data_samples_max_chars': 4000, 'seed': 1}}
+/home/qingyuan.liu/projects/Evolve/SEED/verl/utils/ulysses.py:130: UserWarning: Using a non-tuple sequence for multidimensional indexing is deprecated and will be changed in pytorch 2.9; use x[tuple(seq)] instead of x[seq]. In pytorch 2.9 this will be interpreted as tensor index, x[torch.tensor(seq)], which will result either in an error or a different result (Triggered internally at /pytorch/torch/csrc/autograd/python_variable_indexing.cpp:306.)
+  return x[slc].contiguous()
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: ql2505 (ql2505-columbia-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run ozi2xoeo
+wandb: Tracking run with wandb version 0.30.0
+wandb: Run data is saved locally in /home/qingyuan.liu/projects/Evolve/SEED/wandb/run-20260920_043532-ozi2xoeo
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run qwen25_7b-agentstream-episode-skill-sft-glm-self-ep3
+wandb: ⭐️ View project at https://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft
+wandb: 🚀 View run at https://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft/runs/ozi2xoeo
+Using LocalLogger is deprecated. The constructor API will change 
+Total training steps: 504
+Epoch 1/3:   0%|          | 0/168 [00:00<?, ?it/s]/home/qingyuan.liu/projects/Evolve/SEED/verl/utils/ulysses.py:130: UserWarning: Using a non-tuple sequence for multidimensional indexing is deprecated and will be changed in pytorch 2.9; use x[tuple(seq)] instead of x[seq]. In pytorch 2.9 this will be interpreted as tensor index, x[torch.tensor(seq)], which will result either in an error or a different result (Triggered internally at /pytorch/torch/csrc/autograd/python_variable_indexing.cpp:306.)
+  return x[slc].contiguous()
+/home/qingyuan.liu/projects/Evolve/SEED/verl/utils/ulysses.py:114: UserWarning: Using a non-tuple sequence for multidimensional indexing is deprecated and will be changed in pytorch 2.9; use x[tuple(seq)] instead of x[seq]. In pytorch 2.9 this will be interpreted as tensor index, x[torch.tensor(seq)], which will result either in an error or a different result (Triggered internally at /pytorch/torch/csrc/autograd/python_variable_indexing.cpp:306.)
+  return x[slc]
+/home/qingyuan.liu/projects/Evolve/SEED/verl/utils/ulysses.py:114: UserWarning: Using a non-tuple sequence for multidimensional indexing is deprecated and will be changed in pytorch 2.9; use x[tuple(seq)] instead of x[seq]. In pytorch 2.9 this will be interpreted as tensor index, x[torch.tensor(seq)], which will result either in an error or a different result (Triggered internally at /pytorch/torch/csrc/autograd/python_variable_indexing.cpp:306.)
+  return x[slc]
+step:1 - train/loss:2.200 - train/lr(1e-3):0.000
+Epoch 1/3:   1%|          | 1/168 [00:10<30:26, 10.93s/it]step:2 - train/loss:2.251 - train/lr(1e-3):0.000
+Epoch 1/3:   1%|          | 2/168 [00:17<23:27,  8.48s/it]step:3 - train/loss:2.173 - train/lr(1e-3):0.000
+Epoch 1/3:   2%|▏         | 3/168 [00:24<21:10,  7.70s/it]step:4 - train/loss:2.307 - train/lr(1e-3):0.000
+Epoch 1/3:   2%|▏         | 4/168 [00:31<20:35,  7.53s/it]step:5 - train/loss:2.208 - train/lr(1e-3):0.001
+Epoch 1/3:   3%|▎         | 5/168 [00:38<19:48,  7.29s/it]step:6 - train/loss:2.241 - train/lr(1e-3):0.001
+Epoch 1/3:   4%|▎         | 6/168 [00:46<20:00,  7.41s/it]step:7 - train/loss:2.164 - train/lr(1e-3):0.001
+Epoch 1/3:   4%|▍         | 7/168 [00:53<19:41,  7.34s/it]step:8 - train/loss:2.242 - train/lr(1e-3):0.001
+Epoch 1/3:   5%|▍         | 8/168 [01:01<19:59,  7.50s/it]step:9 - train/loss:2.099 - train/lr(1e-3):0.001
+Epoch 1/3:   5%|▌         | 9/168 [01:08<19:41,  7.43s/it]step:10 - train/loss:2.104 - train/lr(1e-3):0.001
+Epoch 1/3:   6%|▌         | 10/168 [01:16<19:51,  7.54s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:11 - train/loss:1.894 - train/lr(1e-3):0.001
+Epoch 1/3:   7%|▋         | 11/168 [01:23<19:39,  7.51s/it]step:12 - train/loss:1.882 - train/lr(1e-3):0.001
+Epoch 1/3:   7%|▋         | 12/168 [01:31<19:27,  7.48s/it]step:13 - train/loss:1.827 - train/lr(1e-3):0.001
+Epoch 1/3:   8%|▊         | 13/168 [01:38<19:10,  7.42s/it]step:14 - train/loss:1.612 - train/lr(1e-3):0.001
+Epoch 1/3:   8%|▊         | 14/168 [01:45<18:35,  7.25s/it]step:15 - train/loss:1.477 - train/lr(1e-3):0.002
+Epoch 1/3:   9%|▉         | 15/168 [01:52<18:27,  7.24s/it]step:16 - train/loss:1.465 - train/lr(1e-3):0.002
+Epoch 1/3:  10%|▉         | 16/168 [01:59<18:09,  7.17s/it]step:17 - train/loss:1.421 - train/lr(1e-3):0.002
+Epoch 1/3:  10%|█         | 17/168 [02:06<17:42,  7.04s/it]step:18 - train/loss:1.425 - train/lr(1e-3):0.002
+Epoch 1/3:  11%|█         | 18/168 [02:13<17:57,  7.18s/it]step:19 - train/loss:1.400 - train/lr(1e-3):0.002
+Epoch 1/3:  11%|█▏        | 19/168 [02:20<17:25,  7.02s/it]step:20 - train/loss:1.321 - train/lr(1e-3):0.002
+Epoch 1/3:  12%|█▏        | 20/168 [02:28<17:43,  7.19s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:21 - train/loss:1.293 - train/lr(1e-3):0.002
+Epoch 1/3:  12%|█▎        | 21/168 [02:35<17:39,  7.21s/it]step:22 - train/loss:1.304 - train/lr(1e-3):0.002
+Epoch 1/3:  13%|█▎        | 22/168 [02:43<18:09,  7.46s/it]step:23 - train/loss:1.280 - train/lr(1e-3):0.002
+Epoch 1/3:  14%|█▎        | 23/168 [02:50<17:32,  7.26s/it]step:24 - train/loss:1.226 - train/lr(1e-3):0.002
+Epoch 1/3:  14%|█▍        | 24/168 [02:57<17:19,  7.22s/it]step:25 - train/loss:1.072 - train/lr(1e-3):0.003
+Epoch 1/3:  15%|█▍        | 25/168 [03:04<17:20,  7.28s/it]step:26 - train/loss:1.099 - train/lr(1e-3):0.003
+Epoch 1/3:  15%|█▌        | 26/168 [03:11<16:58,  7.17s/it]step:27 - train/loss:1.096 - train/lr(1e-3):0.003
+Epoch 1/3:  16%|█▌        | 27/168 [03:18<16:38,  7.08s/it]step:28 - train/loss:0.971 - train/lr(1e-3):0.003
+Epoch 1/3:  17%|█▋        | 28/168 [03:25<16:25,  7.04s/it]step:29 - train/loss:1.048 - train/lr(1e-3):0.003
+Epoch 1/3:  17%|█▋        | 29/168 [03:32<16:39,  7.19s/it]step:30 - train/loss:1.040 - train/lr(1e-3):0.003
+Epoch 1/3:  18%|█▊        | 30/168 [03:40<17:01,  7.40s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:31 - train/loss:0.898 - train/lr(1e-3):0.003
+Epoch 1/3:  18%|█▊        | 31/168 [03:47<16:43,  7.33s/it]step:32 - train/loss:1.040 - train/lr(1e-3):0.003
+Epoch 1/3:  19%|█▉        | 32/168 [03:55<16:36,  7.33s/it]step:33 - train/loss:0.892 - train/lr(1e-3):0.003
+Epoch 1/3:  20%|█▉        | 33/168 [04:02<16:18,  7.25s/it]step:34 - train/loss:1.008 - train/lr(1e-3):0.003
+Epoch 1/3:  20%|██        | 34/168 [04:09<16:14,  7.27s/it]step:35 - train/loss:0.902 - train/lr(1e-3):0.004
+Epoch 1/3:  21%|██        | 35/168 [04:16<15:46,  7.12s/it]step:36 - train/loss:0.923 - train/lr(1e-3):0.004
+Epoch 1/3:  21%|██▏       | 36/168 [04:24<16:27,  7.48s/it]step:37 - train/loss:0.916 - train/lr(1e-3):0.004
+Epoch 1/3:  22%|██▏       | 37/168 [04:31<16:05,  7.37s/it]step:38 - train/loss:0.808 - train/lr(1e-3):0.004
+Epoch 1/3:  23%|██▎       | 38/168 [04:38<15:32,  7.17s/it]step:39 - train/loss:0.867 - train/lr(1e-3):0.004
+Epoch 1/3:  23%|██▎       | 39/168 [04:45<15:27,  7.19s/it]step:40 - train/loss:0.896 - train/lr(1e-3):0.004
+Epoch 1/3:  24%|██▍       | 40/168 [04:54<15:59,  7.50s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:41 - train/loss:0.769 - train/lr(1e-3):0.004
+Epoch 1/3:  24%|██▍       | 41/168 [05:01<15:49,  7.47s/it]step:42 - train/loss:0.764 - train/lr(1e-3):0.004
+Epoch 1/3:  25%|██▌       | 42/168 [05:08<15:32,  7.40s/it]step:43 - train/loss:0.740 - train/lr(1e-3):0.004
+Epoch 1/3:  26%|██▌       | 43/168 [05:16<15:41,  7.53s/it]step:44 - train/loss:0.805 - train/lr(1e-3):0.004
+Epoch 1/3:  26%|██▌       | 44/168 [05:23<15:24,  7.46s/it]step:45 - train/loss:0.767 - train/lr(1e-3):0.005
+Epoch 1/3:  27%|██▋       | 45/168 [05:31<15:16,  7.45s/it]step:46 - train/loss:0.910 - train/lr(1e-3):0.005
+Epoch 1/3:  27%|██▋       | 46/168 [05:38<15:03,  7.41s/it]step:47 - train/loss:0.768 - train/lr(1e-3):0.005
+Epoch 1/3:  28%|██▊       | 47/168 [05:46<14:57,  7.42s/it]step:48 - train/loss:0.925 - train/lr(1e-3):0.005
+Epoch 1/3:  29%|██▊       | 48/168 [05:52<14:32,  7.27s/it]step:49 - train/loss:0.773 - train/lr(1e-3):0.005
+Epoch 1/3:  29%|██▉       | 49/168 [05:59<13:54,  7.01s/it]step:50 - train/loss:0.784 - train/lr(1e-3):0.005
+Epoch 1/3:  30%|██▉       | 50/168 [06:07<14:10,  7.21s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:51 - train/loss:0.803 - train/lr(1e-3):0.005
+Epoch 1/3:  30%|███       | 51/168 [06:13<13:50,  7.10s/it]step:52 - train/loss:0.742 - train/lr(1e-3):0.005
+Epoch 1/3:  31%|███       | 52/168 [06:21<13:49,  7.15s/it]step:53 - train/loss:0.771 - train/lr(1e-3):0.005
+Epoch 1/3:  32%|███▏      | 53/168 [06:28<13:35,  7.09s/it]step:54 - train/loss:0.654 - train/lr(1e-3):0.005
+Epoch 1/3:  32%|███▏      | 54/168 [06:35<13:34,  7.14s/it]step:55 - train/loss:0.706 - train/lr(1e-3):0.005
+Epoch 1/3:  33%|███▎      | 55/168 [06:42<13:25,  7.13s/it]step:56 - train/loss:0.805 - train/lr(1e-3):0.005
+Epoch 1/3:  33%|███▎      | 56/168 [06:49<13:11,  7.06s/it]step:57 - train/loss:0.660 - train/lr(1e-3):0.005
+Epoch 1/3:  34%|███▍      | 57/168 [06:56<12:54,  6.98s/it]step:58 - train/loss:0.762 - train/lr(1e-3):0.005
+Epoch 1/3:  35%|███▍      | 58/168 [07:02<12:42,  6.93s/it]step:59 - train/loss:0.802 - train/lr(1e-3):0.005
+Epoch 1/3:  35%|███▌      | 59/168 [07:10<12:43,  7.01s/it]step:60 - train/loss:0.773 - train/lr(1e-3):0.005
+Epoch 1/3:  36%|███▌      | 60/168 [07:18<13:23,  7.44s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:61 - train/loss:0.737 - train/lr(1e-3):0.005
+Epoch 1/3:  36%|███▋      | 61/168 [07:25<12:49,  7.19s/it]step:62 - train/loss:0.730 - train/lr(1e-3):0.005
+Epoch 1/3:  37%|███▋      | 62/168 [07:32<12:57,  7.33s/it]step:63 - train/loss:0.672 - train/lr(1e-3):0.005
+Epoch 1/3:  38%|███▊      | 63/168 [07:40<13:00,  7.43s/it]step:64 - train/loss:0.855 - train/lr(1e-3):0.005
+Epoch 1/3:  38%|███▊      | 64/168 [07:48<13:06,  7.56s/it]step:65 - train/loss:0.708 - train/lr(1e-3):0.005
+Epoch 1/3:  39%|███▊      | 65/168 [07:55<12:43,  7.41s/it]step:66 - train/loss:0.763 - train/lr(1e-3):0.005
+Epoch 1/3:  39%|███▉      | 66/168 [08:02<12:32,  7.38s/it]step:67 - train/loss:0.792 - train/lr(1e-3):0.005
+Epoch 1/3:  40%|███▉      | 67/168 [08:10<12:32,  7.45s/it]step:68 - train/loss:0.719 - train/lr(1e-3):0.005
+Epoch 1/3:  40%|████      | 68/168 [08:18<12:38,  7.58s/it]step:69 - train/loss:0.668 - train/lr(1e-3):0.005
+Epoch 1/3:  41%|████      | 69/168 [08:25<12:21,  7.49s/it]step:70 - train/loss:0.762 - train/lr(1e-3):0.005
+Epoch 1/3:  42%|████▏     | 70/168 [08:33<12:32,  7.68s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:71 - train/loss:0.684 - train/lr(1e-3):0.005
+Epoch 1/3:  42%|████▏     | 71/168 [08:40<11:51,  7.33s/it]step:72 - train/loss:0.637 - train/lr(1e-3):0.005
+Epoch 1/3:  43%|████▎     | 72/168 [08:47<11:56,  7.46s/it]step:73 - train/loss:0.707 - train/lr(1e-3):0.005
+Epoch 1/3:  43%|████▎     | 73/168 [08:56<12:06,  7.65s/it]step:74 - train/loss:0.691 - train/lr(1e-3):0.005
+Epoch 1/3:  44%|████▍     | 74/168 [09:04<12:18,  7.85s/it]step:75 - train/loss:0.649 - train/lr(1e-3):0.005
+Epoch 1/3:  45%|████▍     | 75/168 [09:11<11:48,  7.62s/it]step:76 - train/loss:0.725 - train/lr(1e-3):0.005
+Epoch 1/3:  45%|████▌     | 76/168 [09:18<11:17,  7.36s/it]step:77 - train/loss:0.564 - train/lr(1e-3):0.005
+Epoch 1/3:  46%|████▌     | 77/168 [09:25<10:59,  7.25s/it]step:78 - train/loss:0.756 - train/lr(1e-3):0.005
+Epoch 1/3:  46%|████▋     | 78/168 [09:32<10:43,  7.15s/it]step:79 - train/loss:0.698 - train/lr(1e-3):0.005
+Epoch 1/3:  47%|████▋     | 79/168 [09:39<10:36,  7.15s/it]step:80 - train/loss:0.706 - train/lr(1e-3):0.005
+Epoch 1/3:  48%|████▊     | 80/168 [09:48<11:28,  7.82s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:81 - train/loss:0.629 - train/lr(1e-3):0.005
+Epoch 1/3:  48%|████▊     | 81/168 [09:56<11:24,  7.87s/it]step:82 - train/loss:0.693 - train/lr(1e-3):0.005
+Epoch 1/3:  49%|████▉     | 82/168 [10:04<11:06,  7.75s/it]step:83 - train/loss:0.676 - train/lr(1e-3):0.005
+Epoch 1/3:  49%|████▉     | 83/168 [10:11<10:47,  7.62s/it]step:84 - train/loss:0.685 - train/lr(1e-3):0.005
+Epoch 1/3:  50%|█████     | 84/168 [10:18<10:24,  7.43s/it]step:85 - train/loss:0.720 - train/lr(1e-3):0.005
+Epoch 1/3:  51%|█████     | 85/168 [10:25<10:19,  7.46s/it]step:86 - train/loss:0.619 - train/lr(1e-3):0.005
+Epoch 1/3:  51%|█████     | 86/168 [10:33<10:14,  7.50s/it]step:87 - train/loss:0.652 - train/lr(1e-3):0.005
+Epoch 1/3:  52%|█████▏    | 87/168 [10:41<10:18,  7.64s/it]step:88 - train/loss:0.596 - train/lr(1e-3):0.005
+Epoch 1/3:  52%|█████▏    | 88/168 [10:48<10:03,  7.54s/it]step:89 - train/loss:0.617 - train/lr(1e-3):0.005
+Epoch 1/3:  53%|█████▎    | 89/168 [10:56<09:53,  7.51s/it]step:90 - train/loss:0.611 - train/lr(1e-3):0.005
+Epoch 1/3:  54%|█████▎    | 90/168 [11:03<09:41,  7.46s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:91 - train/loss:0.708 - train/lr(1e-3):0.005
+Epoch 1/3:  54%|█████▍    | 91/168 [11:10<09:28,  7.39s/it]step:92 - train/loss:0.634 - train/lr(1e-3):0.005
+Epoch 1/3:  55%|█████▍    | 92/168 [11:17<09:17,  7.33s/it]step:93 - train/loss:0.653 - train/lr(1e-3):0.005
+Epoch 1/3:  55%|█████▌    | 93/168 [11:25<09:24,  7.53s/it]step:94 - train/loss:0.671 - train/lr(1e-3):0.005
+Epoch 1/3:  56%|█████▌    | 94/168 [11:33<09:07,  7.40s/it]step:95 - train/loss:0.720 - train/lr(1e-3):0.005
+Epoch 1/3:  57%|█████▋    | 95/168 [11:39<08:48,  7.24s/it]step:96 - train/loss:0.718 - train/lr(1e-3):0.005
+Epoch 1/3:  57%|█████▋    | 96/168 [11:47<08:41,  7.24s/it]step:97 - train/loss:0.628 - train/lr(1e-3):0.005
+Epoch 1/3:  58%|█████▊    | 97/168 [11:55<08:55,  7.54s/it]step:98 - train/loss:0.735 - train/lr(1e-3):0.005
+Epoch 1/3:  58%|█████▊    | 98/168 [12:02<08:29,  7.28s/it]step:99 - train/loss:0.659 - train/lr(1e-3):0.005
+Epoch 1/3:  59%|█████▉    | 99/168 [12:10<08:37,  7.50s/it]step:100 - train/loss:0.688 - train/lr(1e-3):0.005
+Epoch 1/3:  60%|█████▉    | 100/168 [12:17<08:24,  7.42s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:101 - train/loss:0.636 - train/lr(1e-3):0.005
+Epoch 1/3:  60%|██████    | 101/168 [12:24<08:12,  7.35s/it]step:102 - train/loss:0.561 - train/lr(1e-3):0.005
+Epoch 1/3:  61%|██████    | 102/168 [12:32<08:12,  7.46s/it]step:103 - train/loss:0.684 - train/lr(1e-3):0.005
+Epoch 1/3:  61%|██████▏   | 103/168 [12:38<07:50,  7.24s/it]step:104 - train/loss:0.601 - train/lr(1e-3):0.005
+Epoch 1/3:  62%|██████▏   | 104/168 [12:45<07:36,  7.13s/it]step:105 - train/loss:0.676 - train/lr(1e-3):0.005
+Epoch 1/3:  62%|██████▎   | 105/168 [12:52<07:27,  7.11s/it]step:106 - train/loss:0.626 - train/lr(1e-3):0.005
+Epoch 1/3:  63%|██████▎   | 106/168 [12:59<07:20,  7.10s/it]step:107 - train/loss:0.634 - train/lr(1e-3):0.005
+Epoch 1/3:  64%|██████▎   | 107/168 [13:06<07:08,  7.03s/it]step:108 - train/loss:0.654 - train/lr(1e-3):0.005
+Epoch 1/3:  64%|██████▍   | 108/168 [13:15<07:28,  7.47s/it]step:109 - train/loss:0.717 - train/lr(1e-3):0.005
+Epoch 1/3:  65%|██████▍   | 109/168 [13:22<07:12,  7.33s/it]step:110 - train/loss:0.623 - train/lr(1e-3):0.005
+Epoch 1/3:  65%|██████▌   | 110/168 [13:29<07:08,  7.38s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:111 - train/loss:0.636 - train/lr(1e-3):0.005
+Epoch 1/3:  66%|██████▌   | 111/168 [13:37<07:07,  7.50s/it]step:112 - train/loss:0.729 - train/lr(1e-3):0.005
+Epoch 1/3:  67%|██████▋   | 112/168 [13:44<06:53,  7.39s/it]step:113 - train/loss:0.560 - train/lr(1e-3):0.005
+Epoch 1/3:  67%|██████▋   | 113/168 [13:52<06:50,  7.46s/it]step:114 - train/loss:0.565 - train/lr(1e-3):0.005
+Epoch 1/3:  68%|██████▊   | 114/168 [13:59<06:38,  7.37s/it]step:115 - train/loss:0.553 - train/lr(1e-3):0.005
+Epoch 1/3:  68%|██████▊   | 115/168 [14:06<06:31,  7.39s/it]step:116 - train/loss:0.562 - train/lr(1e-3):0.005
+Epoch 1/3:  69%|██████▉   | 116/168 [14:14<06:20,  7.33s/it]step:117 - train/loss:0.702 - train/lr(1e-3):0.005
+Epoch 1/3:  70%|██████▉   | 117/168 [14:21<06:12,  7.31s/it]step:118 - train/loss:0.556 - train/lr(1e-3):0.005
+Epoch 1/3:  70%|███████   | 118/168 [14:28<05:58,  7.16s/it]step:119 - train/loss:0.574 - train/lr(1e-3):0.005
+Epoch 1/3:  71%|███████   | 119/168 [14:35<05:51,  7.18s/it]step:120 - train/loss:0.564 - train/lr(1e-3):0.005
+Epoch 1/3:  71%|███████▏  | 120/168 [14:42<05:49,  7.29s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:121 - train/loss:0.670 - train/lr(1e-3):0.005
+Epoch 1/3:  72%|███████▏  | 121/168 [14:49<05:35,  7.13s/it]step:122 - train/loss:0.577 - train/lr(1e-3):0.005
+Epoch 1/3:  73%|███████▎  | 122/168 [14:57<05:40,  7.40s/it]step:123 - train/loss:0.710 - train/lr(1e-3):0.005
+Epoch 1/3:  73%|███████▎  | 123/168 [15:04<05:23,  7.18s/it]step:124 - train/loss:0.669 - train/lr(1e-3):0.005
+Epoch 1/3:  74%|███████▍  | 124/168 [15:11<05:14,  7.15s/it]step:125 - train/loss:0.608 - train/lr(1e-3):0.005
+Epoch 1/3:  74%|███████▍  | 125/168 [15:19<05:17,  7.38s/it]step:126 - train/loss:0.603 - train/lr(1e-3):0.005
+Epoch 1/3:  75%|███████▌  | 126/168 [15:26<05:02,  7.21s/it]step:127 - train/loss:0.600 - train/lr(1e-3):0.005
+Epoch 1/3:  76%|███████▌  | 127/168 [15:32<04:45,  6.96s/it]step:128 - train/loss:0.647 - train/lr(1e-3):0.005
+Epoch 1/3:  76%|███████▌  | 128/168 [15:42<05:12,  7.81s/it]step:129 - train/loss:0.642 - train/lr(1e-3):0.005
+Epoch 1/3:  77%|███████▋  | 129/168 [15:48<04:49,  7.43s/it]step:130 - train/loss:0.607 - train/lr(1e-3):0.005
+Epoch 1/3:  77%|███████▋  | 130/168 [15:56<04:40,  7.37s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:131 - train/loss:0.583 - train/lr(1e-3):0.005
+Epoch 1/3:  78%|███████▊  | 131/168 [16:03<04:32,  7.36s/it]step:132 - train/loss:0.582 - train/lr(1e-3):0.005
+Epoch 1/3:  79%|███████▊  | 132/168 [16:10<04:22,  7.28s/it]step:133 - train/loss:0.646 - train/lr(1e-3):0.005
+Epoch 1/3:  79%|███████▉  | 133/168 [16:17<04:09,  7.13s/it]step:134 - train/loss:0.624 - train/lr(1e-3):0.005
+Epoch 1/3:  80%|███████▉  | 134/168 [16:25<04:07,  7.28s/it]step:135 - train/loss:0.720 - train/lr(1e-3):0.005
+Epoch 1/3:  80%|████████  | 135/168 [16:31<03:56,  7.17s/it]step:136 - train/loss:0.576 - train/lr(1e-3):0.005
+Epoch 1/3:  81%|████████  | 136/168 [16:39<03:52,  7.28s/it]step:137 - train/loss:0.684 - train/lr(1e-3):0.005
+Epoch 1/3:  82%|████████▏ | 137/168 [16:46<03:47,  7.34s/it]step:138 - train/loss:0.659 - train/lr(1e-3):0.005
+Epoch 1/3:  82%|████████▏ | 138/168 [16:54<03:39,  7.31s/it]step:139 - train/loss:0.589 - train/lr(1e-3):0.005
+Epoch 1/3:  83%|████████▎ | 139/168 [17:01<03:31,  7.29s/it]step:140 - train/loss:0.683 - train/lr(1e-3):0.005
+Epoch 1/3:  83%|████████▎ | 140/168 [17:09<03:27,  7.42s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:141 - train/loss:0.644 - train/lr(1e-3):0.005
+Epoch 1/3:  84%|████████▍ | 141/168 [17:16<03:22,  7.50s/it]step:142 - train/loss:0.647 - train/lr(1e-3):0.005
+Epoch 1/3:  85%|████████▍ | 142/168 [17:24<03:14,  7.48s/it]step:143 - train/loss:0.664 - train/lr(1e-3):0.004
+Epoch 1/3:  85%|████████▌ | 143/168 [17:32<03:13,  7.74s/it]step:144 - train/loss:0.676 - train/lr(1e-3):0.004
+Epoch 1/3:  86%|████████▌ | 144/168 [17:40<03:03,  7.63s/it]step:145 - train/loss:0.602 - train/lr(1e-3):0.004
+Epoch 1/3:  86%|████████▋ | 145/168 [17:47<02:56,  7.67s/it]step:146 - train/loss:0.629 - train/lr(1e-3):0.004
+Epoch 1/3:  87%|████████▋ | 146/168 [17:55<02:47,  7.59s/it]step:147 - train/loss:0.630 - train/lr(1e-3):0.004
+Epoch 1/3:  88%|████████▊ | 147/168 [18:02<02:36,  7.43s/it]step:148 - train/loss:0.675 - train/lr(1e-3):0.004
+Epoch 1/3:  88%|████████▊ | 148/168 [18:09<02:26,  7.32s/it]step:149 - train/loss:0.566 - train/lr(1e-3):0.004
+Epoch 1/3:  89%|████████▊ | 149/168 [18:15<02:14,  7.08s/it]step:150 - train/loss:0.574 - train/lr(1e-3):0.004
+Epoch 1/3:  89%|████████▉ | 150/168 [18:24<02:14,  7.49s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:151 - train/loss:0.632 - train/lr(1e-3):0.004
+Epoch 1/3:  90%|████████▉ | 151/168 [18:31<02:03,  7.27s/it]step:152 - train/loss:0.612 - train/lr(1e-3):0.004
+Epoch 1/3:  90%|█████████ | 152/168 [18:37<01:53,  7.12s/it]step:153 - train/loss:0.652 - train/lr(1e-3):0.004
+Epoch 1/3:  91%|█████████ | 153/168 [18:45<01:50,  7.34s/it]step:154 - train/loss:0.618 - train/lr(1e-3):0.004
+Epoch 1/3:  92%|█████████▏| 154/168 [18:52<01:42,  7.34s/it]step:155 - train/loss:0.610 - train/lr(1e-3):0.004
+Epoch 1/3:  92%|█████████▏| 155/168 [18:59<01:32,  7.15s/it]step:156 - train/loss:0.574 - train/lr(1e-3):0.004
+Epoch 1/3:  93%|█████████▎| 156/168 [19:06<01:25,  7.14s/it]step:157 - train/loss:0.631 - train/lr(1e-3):0.004
+Epoch 1/3:  93%|█████████▎| 157/168 [19:14<01:19,  7.23s/it]step:158 - train/loss:0.575 - train/lr(1e-3):0.004
+Epoch 1/3:  94%|█████████▍| 158/168 [19:21<01:12,  7.21s/it]step:159 - train/loss:0.592 - train/lr(1e-3):0.004
+Epoch 1/3:  95%|█████████▍| 159/168 [19:28<01:05,  7.26s/it]step:160 - train/loss:0.658 - train/lr(1e-3):0.004
+Epoch 1/3:  95%|█████████▌| 160/168 [19:35<00:57,  7.20s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:161 - train/loss:0.604 - train/lr(1e-3):0.004
+Epoch 1/3:  96%|█████████▌| 161/168 [19:42<00:49,  7.04s/it]step:162 - train/loss:0.565 - train/lr(1e-3):0.004
+Epoch 1/3:  96%|█████████▋| 162/168 [19:49<00:42,  7.10s/it]step:163 - train/loss:0.585 - train/lr(1e-3):0.004
+Epoch 1/3:  97%|█████████▋| 163/168 [19:57<00:36,  7.36s/it]step:164 - train/loss:0.572 - train/lr(1e-3):0.004
+Epoch 1/3:  98%|█████████▊| 164/168 [20:04<00:28,  7.23s/it]step:165 - train/loss:0.688 - train/lr(1e-3):0.004
+Epoch 1/3:  98%|█████████▊| 165/168 [20:10<00:20,  6.96s/it]step:166 - train/loss:0.606 - train/lr(1e-3):0.004
+Epoch 1/3:  99%|█████████▉| 166/168 [20:18<00:14,  7.03s/it]step:167 - train/loss:0.676 - train/lr(1e-3):0.004
+Epoch 1/3:  99%|█████████▉| 167/168 [20:27<00:07,  7.62s/it]step:168 - train/loss:0.585 - train/lr(1e-3):0.004
+Epoch 1/3: 100%|██████████| 168/168 [20:34<00:00,  7.45s/it]Epoch 1/3: 100%|██████████| 168/168 [20:34<00:00,  7.35s/it]
+/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+step:168 - val/loss:0.597
+/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+Epoch 2/3:   0%|          | 0/168 [00:00<?, ?it/s]step:169 - train/loss:0.522 - train/lr(1e-3):0.004
+Epoch 2/3:   1%|          | 1/168 [00:08<23:44,  8.53s/it]step:170 - train/loss:0.471 - train/lr(1e-3):0.004
+Epoch 2/3:   1%|          | 2/168 [00:15<21:01,  7.60s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:171 - train/loss:0.511 - train/lr(1e-3):0.004
+Epoch 2/3:   2%|▏         | 3/168 [00:23<21:18,  7.75s/it]step:172 - train/loss:0.430 - train/lr(1e-3):0.004
+Epoch 2/3:   2%|▏         | 4/168 [00:30<20:48,  7.61s/it]step:173 - train/loss:0.442 - train/lr(1e-3):0.004
+Epoch 2/3:   3%|▎         | 5/168 [00:37<19:57,  7.35s/it]step:174 - train/loss:0.567 - train/lr(1e-3):0.004
+Epoch 2/3:   4%|▎         | 6/168 [00:44<19:39,  7.28s/it]step:175 - train/loss:0.461 - train/lr(1e-3):0.004
+Epoch 2/3:   4%|▍         | 7/168 [00:51<19:07,  7.13s/it]step:176 - train/loss:0.491 - train/lr(1e-3):0.004
+Epoch 2/3:   5%|▍         | 8/168 [00:58<19:00,  7.13s/it]step:177 - train/loss:0.445 - train/lr(1e-3):0.004
+Epoch 2/3:   5%|▌         | 9/168 [01:05<18:56,  7.15s/it]step:178 - train/loss:0.518 - train/lr(1e-3):0.004
+Epoch 2/3:   6%|▌         | 10/168 [01:13<18:48,  7.14s/it]step:179 - train/loss:0.450 - train/lr(1e-3):0.004
+Epoch 2/3:   7%|▋         | 11/168 [01:20<18:50,  7.20s/it]step:180 - train/loss:0.455 - train/lr(1e-3):0.004
+Epoch 2/3:   7%|▋         | 12/168 [01:28<19:00,  7.31s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:181 - train/loss:0.464 - train/lr(1e-3):0.004
+Epoch 2/3:   8%|▊         | 13/168 [01:35<18:50,  7.29s/it]step:182 - train/loss:0.476 - train/lr(1e-3):0.004
+Epoch 2/3:   8%|▊         | 14/168 [01:42<18:36,  7.25s/it]step:183 - train/loss:0.603 - train/lr(1e-3):0.004
+Epoch 2/3:   9%|▉         | 15/168 [01:48<17:57,  7.05s/it]step:184 - train/loss:0.458 - train/lr(1e-3):0.004
+Epoch 2/3:  10%|▉         | 16/168 [01:58<19:22,  7.65s/it]step:185 - train/loss:0.492 - train/lr(1e-3):0.004
+Epoch 2/3:  10%|█         | 17/168 [02:05<19:05,  7.59s/it]step:186 - train/loss:0.468 - train/lr(1e-3):0.004
+Epoch 2/3:  11%|█         | 18/168 [02:12<18:41,  7.48s/it]step:187 - train/loss:0.496 - train/lr(1e-3):0.004
+Epoch 2/3:  11%|█▏        | 19/168 [02:19<18:04,  7.28s/it]step:188 - train/loss:0.473 - train/lr(1e-3):0.004
+Epoch 2/3:  12%|█▏        | 20/168 [02:27<18:22,  7.45s/it]step:189 - train/loss:0.501 - train/lr(1e-3):0.004
+Epoch 2/3:  12%|█▎        | 21/168 [02:34<17:42,  7.23s/it]step:190 - train/loss:0.486 - train/lr(1e-3):0.004
+Epoch 2/3:  13%|█▎        | 22/168 [02:41<17:49,  7.32s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:191 - train/loss:0.472 - train/lr(1e-3):0.004
+Epoch 2/3:  14%|█▎        | 23/168 [02:48<17:40,  7.31s/it]step:192 - train/loss:0.485 - train/lr(1e-3):0.004
+Epoch 2/3:  14%|█▍        | 24/168 [02:56<17:29,  7.29s/it]step:193 - train/loss:0.427 - train/lr(1e-3):0.004
+Epoch 2/3:  15%|█▍        | 25/168 [03:03<17:28,  7.33s/it]step:194 - train/loss:0.518 - train/lr(1e-3):0.004
+Epoch 2/3:  15%|█▌        | 26/168 [03:10<17:15,  7.29s/it]step:195 - train/loss:0.459 - train/lr(1e-3):0.004
+Epoch 2/3:  16%|█▌        | 27/168 [03:18<17:09,  7.30s/it]step:196 - train/loss:0.458 - train/lr(1e-3):0.004
+Epoch 2/3:  17%|█▋        | 28/168 [03:25<16:59,  7.29s/it]step:197 - train/loss:0.444 - train/lr(1e-3):0.004
+Epoch 2/3:  17%|█▋        | 29/168 [03:32<16:37,  7.18s/it]step:198 - train/loss:0.541 - train/lr(1e-3):0.004
+Epoch 2/3:  18%|█▊        | 30/168 [03:39<16:53,  7.34s/it]step:199 - train/loss:0.452 - train/lr(1e-3):0.004
+Epoch 2/3:  18%|█▊        | 31/168 [03:46<16:22,  7.17s/it]step:200 - train/loss:0.510 - train/lr(1e-3):0.004
+Epoch 2/3:  19%|█▉        | 32/168 [03:54<16:56,  7.47s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:201 - train/loss:0.489 - train/lr(1e-3):0.004
+Epoch 2/3:  20%|█▉        | 33/168 [04:03<17:24,  7.74s/it]step:202 - train/loss:0.496 - train/lr(1e-3):0.004
+Epoch 2/3:  20%|██        | 34/168 [04:10<16:41,  7.47s/it]step:203 - train/loss:0.466 - train/lr(1e-3):0.004
+Epoch 2/3:  21%|██        | 35/168 [04:17<16:16,  7.34s/it]step:204 - train/loss:0.517 - train/lr(1e-3):0.004
+Epoch 2/3:  21%|██▏       | 36/168 [04:25<16:30,  7.51s/it]step:205 - train/loss:0.452 - train/lr(1e-3):0.004
+Epoch 2/3:  22%|██▏       | 37/168 [04:32<16:15,  7.45s/it]step:206 - train/loss:0.940 - train/lr(1e-3):0.004
+Epoch 2/3:  23%|██▎       | 38/168 [04:39<16:07,  7.44s/it]step:207 - train/loss:0.492 - train/lr(1e-3):0.004
+Epoch 2/3:  23%|██▎       | 39/168 [04:47<16:21,  7.61s/it]step:208 - train/loss:0.548 - train/lr(1e-3):0.004
+Epoch 2/3:  24%|██▍       | 40/168 [04:54<15:42,  7.36s/it]step:209 - train/loss:0.426 - train/lr(1e-3):0.004
+Epoch 2/3:  24%|██▍       | 41/168 [05:02<15:40,  7.41s/it]step:210 - train/loss:0.446 - train/lr(1e-3):0.004
+Epoch 2/3:  25%|██▌       | 42/168 [05:08<15:06,  7.20s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:211 - train/loss:0.444 - train/lr(1e-3):0.004
+Epoch 2/3:  26%|██▌       | 43/168 [05:16<15:06,  7.25s/it]step:212 - train/loss:0.559 - train/lr(1e-3):0.004
+Epoch 2/3:  26%|██▌       | 44/168 [05:22<14:38,  7.08s/it]step:213 - train/loss:0.507 - train/lr(1e-3):0.004
+Epoch 2/3:  27%|██▋       | 45/168 [05:29<14:03,  6.86s/it]step:214 - train/loss:0.455 - train/lr(1e-3):0.004
+Epoch 2/3:  27%|██▋       | 46/168 [05:36<14:19,  7.04s/it]step:215 - train/loss:0.504 - train/lr(1e-3):0.004
+Epoch 2/3:  28%|██▊       | 47/168 [05:44<14:32,  7.21s/it]step:216 - train/loss:0.489 - train/lr(1e-3):0.004
+Epoch 2/3:  29%|██▊       | 48/168 [05:51<14:25,  7.22s/it]step:217 - train/loss:0.474 - train/lr(1e-3):0.004
+Epoch 2/3:  29%|██▉       | 49/168 [05:58<14:04,  7.09s/it]step:218 - train/loss:0.476 - train/lr(1e-3):0.003
+Epoch 2/3:  30%|██▉       | 50/168 [06:05<14:09,  7.20s/it]step:219 - train/loss:0.504 - train/lr(1e-3):0.003
+Epoch 2/3:  30%|███       | 51/168 [06:12<13:54,  7.13s/it]step:220 - train/loss:0.478 - train/lr(1e-3):0.003
+Epoch 2/3:  31%|███       | 52/168 [06:22<15:25,  7.97s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:221 - train/loss:0.568 - train/lr(1e-3):0.003
+Epoch 2/3:  32%|███▏      | 53/168 [06:30<14:58,  7.81s/it]step:222 - train/loss:0.486 - train/lr(1e-3):0.003
+Epoch 2/3:  32%|███▏      | 54/168 [06:36<14:11,  7.47s/it]step:223 - train/loss:0.495 - train/lr(1e-3):0.003
+Epoch 2/3:  33%|███▎      | 55/168 [06:44<14:22,  7.64s/it]step:224 - train/loss:0.473 - train/lr(1e-3):0.003
+Epoch 2/3:  33%|███▎      | 56/168 [06:52<14:06,  7.56s/it]step:225 - train/loss:0.447 - train/lr(1e-3):0.003
+Epoch 2/3:  34%|███▍      | 57/168 [06:58<13:25,  7.25s/it]step:226 - train/loss:0.488 - train/lr(1e-3):0.003
+Epoch 2/3:  35%|███▍      | 58/168 [07:05<13:17,  7.25s/it]step:227 - train/loss:0.472 - train/lr(1e-3):0.003
+Epoch 2/3:  35%|███▌      | 59/168 [07:14<13:39,  7.52s/it]step:228 - train/loss:0.504 - train/lr(1e-3):0.003
+Epoch 2/3:  36%|███▌      | 60/168 [07:21<13:17,  7.39s/it]step:229 - train/loss:0.476 - train/lr(1e-3):0.003
+Epoch 2/3:  36%|███▋      | 61/168 [07:28<12:51,  7.21s/it]step:230 - train/loss:0.467 - train/lr(1e-3):0.003
+Epoch 2/3:  37%|███▋      | 62/168 [07:35<12:56,  7.33s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:231 - train/loss:0.475 - train/lr(1e-3):0.003
+Epoch 2/3:  38%|███▊      | 63/168 [07:42<12:41,  7.25s/it]step:232 - train/loss:0.460 - train/lr(1e-3):0.003
+Epoch 2/3:  38%|███▊      | 64/168 [07:49<12:16,  7.09s/it]step:233 - train/loss:0.463 - train/lr(1e-3):0.003
+Epoch 2/3:  39%|███▊      | 65/168 [07:56<12:14,  7.13s/it]step:234 - train/loss:0.466 - train/lr(1e-3):0.003
+Epoch 2/3:  39%|███▉      | 66/168 [08:03<11:46,  6.93s/it]step:235 - train/loss:0.593 - train/lr(1e-3):0.003
+Epoch 2/3:  40%|███▉      | 67/168 [08:10<11:49,  7.03s/it]step:236 - train/loss:0.460 - train/lr(1e-3):0.003
+Epoch 2/3:  40%|████      | 68/168 [08:17<11:50,  7.11s/it]step:237 - train/loss:0.492 - train/lr(1e-3):0.003
+Epoch 2/3:  41%|████      | 69/168 [08:24<11:50,  7.18s/it]step:238 - train/loss:0.451 - train/lr(1e-3):0.003
+Epoch 2/3:  42%|████▏     | 70/168 [08:32<11:43,  7.18s/it]step:239 - train/loss:0.448 - train/lr(1e-3):0.003
+Epoch 2/3:  42%|████▏     | 71/168 [08:38<11:25,  7.06s/it]step:240 - train/loss:0.512 - train/lr(1e-3):0.003
+Epoch 2/3:  43%|████▎     | 72/168 [08:45<11:17,  7.06s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:241 - train/loss:0.508 - train/lr(1e-3):0.003
+Epoch 2/3:  43%|████▎     | 73/168 [08:52<11:03,  6.98s/it]step:242 - train/loss:0.488 - train/lr(1e-3):0.003
+Epoch 2/3:  44%|████▍     | 74/168 [09:00<11:17,  7.20s/it]step:243 - train/loss:0.491 - train/lr(1e-3):0.003
+Epoch 2/3:  45%|████▍     | 75/168 [09:07<11:11,  7.22s/it]step:244 - train/loss:0.490 - train/lr(1e-3):0.003
+Epoch 2/3:  45%|████▌     | 76/168 [09:15<11:14,  7.33s/it]step:245 - train/loss:0.492 - train/lr(1e-3):0.003
+Epoch 2/3:  46%|████▌     | 77/168 [09:22<11:02,  7.28s/it]step:246 - train/loss:0.454 - train/lr(1e-3):0.003
+Epoch 2/3:  46%|████▋     | 78/168 [09:29<10:50,  7.23s/it]step:247 - train/loss:0.503 - train/lr(1e-3):0.003
+Epoch 2/3:  47%|████▋     | 79/168 [09:36<10:42,  7.22s/it]step:248 - train/loss:0.534 - train/lr(1e-3):0.003
+Epoch 2/3:  48%|████▊     | 80/168 [09:43<10:30,  7.17s/it]step:249 - train/loss:0.442 - train/lr(1e-3):0.003
+Epoch 2/3:  48%|████▊     | 81/168 [09:50<10:12,  7.04s/it]step:250 - train/loss:0.514 - train/lr(1e-3):0.003
+Epoch 2/3:  49%|████▉     | 82/168 [09:58<10:24,  7.27s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:251 - train/loss:0.493 - train/lr(1e-3):0.003
+Epoch 2/3:  49%|████▉     | 83/168 [10:05<10:12,  7.21s/it]step:252 - train/loss:0.527 - train/lr(1e-3):0.003
+Epoch 2/3:  50%|█████     | 84/168 [10:12<10:02,  7.18s/it]step:253 - train/loss:1.095 - train/lr(1e-3):0.003
+Epoch 2/3:  51%|█████     | 85/168 [10:19<10:01,  7.24s/it]step:254 - train/loss:0.495 - train/lr(1e-3):0.003
+Epoch 2/3:  51%|█████     | 86/168 [10:27<09:52,  7.23s/it]step:255 - train/loss:0.449 - train/lr(1e-3):0.003
+Epoch 2/3:  52%|█████▏    | 87/168 [10:34<09:47,  7.26s/it]step:256 - train/loss:0.471 - train/lr(1e-3):0.003
+Epoch 2/3:  52%|█████▏    | 88/168 [10:42<09:52,  7.41s/it]step:257 - train/loss:0.444 - train/lr(1e-3):0.003
+Epoch 2/3:  53%|█████▎    | 89/168 [10:49<09:48,  7.45s/it]step:258 - train/loss:0.481 - train/lr(1e-3):0.003
+Epoch 2/3:  54%|█████▎    | 90/168 [10:56<09:22,  7.21s/it]step:259 - train/loss:0.596 - train/lr(1e-3):0.003
+Epoch 2/3:  54%|█████▍    | 91/168 [11:03<09:11,  7.16s/it]step:260 - train/loss:0.437 - train/lr(1e-3):0.003
+Epoch 2/3:  55%|█████▍    | 92/168 [11:12<09:35,  7.58s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:261 - train/loss:0.490 - train/lr(1e-3):0.003
+Epoch 2/3:  55%|█████▌    | 93/168 [11:19<09:29,  7.59s/it]step:262 - train/loss:0.439 - train/lr(1e-3):0.003
+Epoch 2/3:  56%|█████▌    | 94/168 [11:27<09:16,  7.52s/it]step:263 - train/loss:0.470 - train/lr(1e-3):0.003
+Epoch 2/3:  57%|█████▋    | 95/168 [11:34<09:09,  7.53s/it]step:264 - train/loss:0.493 - train/lr(1e-3):0.003
+Epoch 2/3:  57%|█████▋    | 96/168 [11:41<08:47,  7.33s/it]step:265 - train/loss:0.461 - train/lr(1e-3):0.003
+Epoch 2/3:  58%|█████▊    | 97/168 [11:48<08:30,  7.18s/it]step:266 - train/loss:0.476 - train/lr(1e-3):0.003
+Epoch 2/3:  58%|█████▊    | 98/168 [11:54<08:11,  7.02s/it]step:267 - train/loss:0.377 - train/lr(1e-3):0.003
+Epoch 2/3:  59%|█████▉    | 99/168 [12:02<08:10,  7.10s/it]step:268 - train/loss:0.457 - train/lr(1e-3):0.003
+Epoch 2/3:  60%|█████▉    | 100/168 [12:09<08:04,  7.12s/it]step:269 - train/loss:0.450 - train/lr(1e-3):0.003
+Epoch 2/3:  60%|██████    | 101/168 [12:16<07:48,  7.00s/it]step:270 - train/loss:0.431 - train/lr(1e-3):0.003
+Epoch 2/3:  61%|██████    | 102/168 [12:23<07:59,  7.27s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:271 - train/loss:0.463 - train/lr(1e-3):0.003
+Epoch 2/3:  61%|██████▏   | 103/168 [12:30<07:45,  7.16s/it]step:272 - train/loss:0.504 - train/lr(1e-3):0.003
+Epoch 2/3:  62%|██████▏   | 104/168 [12:38<07:45,  7.28s/it]step:273 - train/loss:0.455 - train/lr(1e-3):0.003
+Epoch 2/3:  62%|██████▎   | 105/168 [12:45<07:37,  7.27s/it]step:274 - train/loss:0.469 - train/lr(1e-3):0.003
+Epoch 2/3:  63%|██████▎   | 106/168 [12:53<07:33,  7.31s/it]step:275 - train/loss:0.430 - train/lr(1e-3):0.003
+Epoch 2/3:  64%|██████▎   | 107/168 [12:59<07:12,  7.09s/it]step:276 - train/loss:0.456 - train/lr(1e-3):0.003
+Epoch 2/3:  64%|██████▍   | 108/168 [13:07<07:19,  7.32s/it]step:277 - train/loss:0.483 - train/lr(1e-3):0.003
+Epoch 2/3:  65%|██████▍   | 109/168 [13:15<07:18,  7.43s/it]step:278 - train/loss:0.432 - train/lr(1e-3):0.002
+Epoch 2/3:  65%|██████▌   | 110/168 [13:22<07:02,  7.28s/it]step:279 - train/loss:0.445 - train/lr(1e-3):0.002
+Epoch 2/3:  66%|██████▌   | 111/168 [13:29<06:59,  7.37s/it]step:280 - train/loss:0.472 - train/lr(1e-3):0.002
+Epoch 2/3:  67%|██████▋   | 112/168 [13:37<07:00,  7.51s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:281 - train/loss:0.457 - train/lr(1e-3):0.002
+Epoch 2/3:  67%|██████▋   | 113/168 [13:45<07:01,  7.67s/it]step:282 - train/loss:0.441 - train/lr(1e-3):0.002
+Epoch 2/3:  68%|██████▊   | 114/168 [13:52<06:38,  7.37s/it]step:283 - train/loss:0.495 - train/lr(1e-3):0.002
+Epoch 2/3:  68%|██████▊   | 115/168 [13:59<06:29,  7.35s/it]step:284 - train/loss:0.426 - train/lr(1e-3):0.002
+Epoch 2/3:  69%|██████▉   | 116/168 [14:07<06:26,  7.44s/it]step:285 - train/loss:0.519 - train/lr(1e-3):0.002
+Epoch 2/3:  70%|██████▉   | 117/168 [14:14<06:23,  7.51s/it]step:286 - train/loss:0.515 - train/lr(1e-3):0.002
+Epoch 2/3:  70%|███████   | 118/168 [14:22<06:10,  7.42s/it]step:287 - train/loss:0.509 - train/lr(1e-3):0.002
+Epoch 2/3:  71%|███████   | 119/168 [14:28<05:52,  7.19s/it]step:288 - train/loss:0.440 - train/lr(1e-3):0.002
+Epoch 2/3:  71%|███████▏  | 120/168 [14:35<05:41,  7.12s/it]step:289 - train/loss:0.539 - train/lr(1e-3):0.002
+Epoch 2/3:  72%|███████▏  | 121/168 [14:43<05:39,  7.22s/it]step:290 - train/loss:0.519 - train/lr(1e-3):0.002
+Epoch 2/3:  73%|███████▎  | 122/168 [14:50<05:34,  7.27s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:291 - train/loss:0.439 - train/lr(1e-3):0.002
+Epoch 2/3:  73%|███████▎  | 123/168 [14:57<05:22,  7.16s/it]step:292 - train/loss:0.525 - train/lr(1e-3):0.002
+Epoch 2/3:  74%|███████▍  | 124/168 [15:04<05:15,  7.17s/it]step:293 - train/loss:0.455 - train/lr(1e-3):0.002
+Epoch 2/3:  74%|███████▍  | 125/168 [15:12<05:11,  7.26s/it]step:294 - train/loss:0.404 - train/lr(1e-3):0.002
+Epoch 2/3:  75%|███████▌  | 126/168 [15:19<05:09,  7.38s/it]step:295 - train/loss:0.421 - train/lr(1e-3):0.002
+Epoch 2/3:  76%|███████▌  | 127/168 [15:29<05:27,  7.99s/it]step:296 - train/loss:0.493 - train/lr(1e-3):0.002
+Epoch 2/3:  76%|███████▌  | 128/168 [15:36<05:09,  7.74s/it]step:297 - train/loss:0.518 - train/lr(1e-3):0.002
+Epoch 2/3:  77%|███████▋  | 129/168 [15:43<04:49,  7.43s/it]step:298 - train/loss:0.458 - train/lr(1e-3):0.002
+Epoch 2/3:  77%|███████▋  | 130/168 [15:50<04:37,  7.30s/it]step:299 - train/loss:0.453 - train/lr(1e-3):0.002
+Epoch 2/3:  78%|███████▊  | 131/168 [15:56<04:25,  7.18s/it]step:300 - train/loss:0.421 - train/lr(1e-3):0.002
+Epoch 2/3:  79%|███████▊  | 132/168 [16:04<04:22,  7.28s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:301 - train/loss:0.467 - train/lr(1e-3):0.002
+Epoch 2/3:  79%|███████▉  | 133/168 [16:12<04:26,  7.60s/it]step:302 - train/loss:0.473 - train/lr(1e-3):0.002
+Epoch 2/3:  80%|███████▉  | 134/168 [16:20<04:19,  7.63s/it]step:303 - train/loss:0.472 - train/lr(1e-3):0.002
+Epoch 2/3:  80%|████████  | 135/168 [16:28<04:13,  7.68s/it]step:304 - train/loss:0.419 - train/lr(1e-3):0.002
+Epoch 2/3:  81%|████████  | 136/168 [16:35<04:00,  7.52s/it]step:305 - train/loss:0.459 - train/lr(1e-3):0.002
+Epoch 2/3:  82%|████████▏ | 137/168 [16:42<03:50,  7.44s/it]step:306 - train/loss:0.439 - train/lr(1e-3):0.002
+Epoch 2/3:  82%|████████▏ | 138/168 [16:49<03:41,  7.38s/it]step:307 - train/loss:0.453 - train/lr(1e-3):0.002
+Epoch 2/3:  83%|████████▎ | 139/168 [16:57<03:33,  7.35s/it]step:308 - train/loss:0.452 - train/lr(1e-3):0.002
+Epoch 2/3:  83%|████████▎ | 140/168 [17:04<03:24,  7.31s/it]step:309 - train/loss:0.454 - train/lr(1e-3):0.002
+Epoch 2/3:  84%|████████▍ | 141/168 [17:11<03:16,  7.26s/it]step:310 - train/loss:0.483 - train/lr(1e-3):0.002
+Epoch 2/3:  85%|████████▍ | 142/168 [17:18<03:08,  7.25s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:311 - train/loss:0.536 - train/lr(1e-3):0.002
+Epoch 2/3:  85%|████████▌ | 143/168 [17:26<03:05,  7.44s/it]step:312 - train/loss:0.508 - train/lr(1e-3):0.002
+Epoch 2/3:  86%|████████▌ | 144/168 [17:33<02:56,  7.36s/it]step:313 - train/loss:0.518 - train/lr(1e-3):0.002
+Epoch 2/3:  86%|████████▋ | 145/168 [17:41<02:52,  7.51s/it]step:314 - train/loss:0.424 - train/lr(1e-3):0.002
+Epoch 2/3:  87%|████████▋ | 146/168 [17:48<02:41,  7.35s/it]step:315 - train/loss:0.410 - train/lr(1e-3):0.002
+Epoch 2/3:  88%|████████▊ | 147/168 [17:55<02:32,  7.25s/it]step:316 - train/loss:0.523 - train/lr(1e-3):0.002
+Epoch 2/3:  88%|████████▊ | 148/168 [18:03<02:29,  7.49s/it]step:317 - train/loss:0.432 - train/lr(1e-3):0.002
+Epoch 2/3:  89%|████████▊ | 149/168 [18:10<02:20,  7.41s/it]step:318 - train/loss:0.396 - train/lr(1e-3):0.002
+Epoch 2/3:  89%|████████▉ | 150/168 [18:17<02:09,  7.21s/it]step:319 - train/loss:0.452 - train/lr(1e-3):0.002
+Epoch 2/3:  90%|████████▉ | 151/168 [18:24<02:02,  7.21s/it]step:320 - train/loss:0.466 - train/lr(1e-3):0.002
+Epoch 2/3:  90%|█████████ | 152/168 [18:32<01:55,  7.23s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:321 - train/loss:0.492 - train/lr(1e-3):0.002
+Epoch 2/3:  91%|█████████ | 153/168 [18:39<01:49,  7.29s/it]step:322 - train/loss:0.427 - train/lr(1e-3):0.002
+Epoch 2/3:  92%|█████████▏| 154/168 [18:47<01:43,  7.37s/it]step:323 - train/loss:0.432 - train/lr(1e-3):0.002
+Epoch 2/3:  92%|█████████▏| 155/168 [18:53<01:32,  7.13s/it]step:324 - train/loss:0.452 - train/lr(1e-3):0.002
+Epoch 2/3:  93%|█████████▎| 156/168 [19:01<01:28,  7.35s/it]step:325 - train/loss:0.537 - train/lr(1e-3):0.002
+Epoch 2/3:  93%|█████████▎| 157/168 [19:09<01:21,  7.38s/it]step:326 - train/loss:0.385 - train/lr(1e-3):0.002
+Epoch 2/3:  94%|█████████▍| 158/168 [19:15<01:12,  7.24s/it]step:327 - train/loss:0.504 - train/lr(1e-3):0.002
+Epoch 2/3:  95%|█████████▍| 159/168 [19:23<01:06,  7.39s/it]step:328 - train/loss:0.462 - train/lr(1e-3):0.002
+Epoch 2/3:  95%|█████████▌| 160/168 [19:30<00:56,  7.10s/it]step:329 - train/loss:0.457 - train/lr(1e-3):0.002
+Epoch 2/3:  96%|█████████▌| 161/168 [19:36<00:48,  6.97s/it]step:330 - train/loss:0.486 - train/lr(1e-3):0.002
+Epoch 2/3:  96%|█████████▋| 162/168 [19:44<00:43,  7.21s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:331 - train/loss:0.481 - train/lr(1e-3):0.002
+Epoch 2/3:  97%|█████████▋| 163/168 [19:53<00:38,  7.69s/it]step:332 - train/loss:0.431 - train/lr(1e-3):0.002
+Epoch 2/3:  98%|█████████▊| 164/168 [20:00<00:30,  7.57s/it]step:333 - train/loss:0.462 - train/lr(1e-3):0.002
+Epoch 2/3:  98%|█████████▊| 165/168 [20:08<00:22,  7.63s/it]step:334 - train/loss:0.433 - train/lr(1e-3):0.002
+Epoch 2/3:  99%|█████████▉| 166/168 [20:15<00:14,  7.42s/it]step:335 - train/loss:0.454 - train/lr(1e-3):0.002
+Epoch 2/3:  99%|█████████▉| 167/168 [20:21<00:07,  7.13s/it]step:336 - train/loss:0.452 - train/lr(1e-3):0.002
+Epoch 2/3: 100%|██████████| 168/168 [20:27<00:00,  6.82s/it]Epoch 2/3: 100%|██████████| 168/168 [20:28<00:00,  7.31s/it]
+step:336 - val/loss:0.547
+Epoch 3/3:   0%|          | 0/168 [00:00<?, ?it/s]step:337 - train/loss:0.343 - train/lr(1e-3):0.001
+Epoch 3/3:   1%|          | 1/168 [00:09<26:05,  9.37s/it]step:338 - train/loss:0.376 - train/lr(1e-3):0.001
+Epoch 3/3:   1%|          | 2/168 [00:17<23:52,  8.63s/it]step:339 - train/loss:0.341 - train/lr(1e-3):0.001
+Epoch 3/3:   2%|▏         | 3/168 [00:25<22:20,  8.12s/it]step:340 - train/loss:0.334 - train/lr(1e-3):0.001
+Epoch 3/3:   2%|▏         | 4/168 [00:32<21:40,  7.93s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:341 - train/loss:0.338 - train/lr(1e-3):0.001
+Epoch 3/3:   3%|▎         | 5/168 [00:39<20:58,  7.72s/it]step:342 - train/loss:0.389 - train/lr(1e-3):0.001
+Epoch 3/3:   4%|▎         | 6/168 [00:50<22:57,  8.50s/it]step:343 - train/loss:0.362 - train/lr(1e-3):0.001
+Epoch 3/3:   4%|▍         | 7/168 [00:57<21:46,  8.12s/it]step:344 - train/loss:0.297 - train/lr(1e-3):0.001
+Epoch 3/3:   5%|▍         | 8/168 [01:04<20:59,  7.87s/it]step:345 - train/loss:0.336 - train/lr(1e-3):0.001
+Epoch 3/3:   5%|▌         | 9/168 [01:12<20:32,  7.75s/it]step:346 - train/loss:0.307 - train/lr(1e-3):0.001
+Epoch 3/3:   6%|▌         | 10/168 [01:19<20:10,  7.66s/it]step:347 - train/loss:0.379 - train/lr(1e-3):0.001
+Epoch 3/3:   7%|▋         | 11/168 [01:27<20:06,  7.69s/it]step:348 - train/loss:0.366 - train/lr(1e-3):0.001
+Epoch 3/3:   7%|▋         | 12/168 [01:34<19:51,  7.64s/it]step:349 - train/loss:0.342 - train/lr(1e-3):0.001
+Epoch 3/3:   8%|▊         | 13/168 [01:42<19:29,  7.54s/it]step:350 - train/loss:0.310 - train/lr(1e-3):0.001
+Epoch 3/3:   8%|▊         | 14/168 [01:49<19:09,  7.46s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:351 - train/loss:0.313 - train/lr(1e-3):0.001
+Epoch 3/3:   9%|▉         | 15/168 [01:56<18:18,  7.18s/it]step:352 - train/loss:0.291 - train/lr(1e-3):0.001
+Epoch 3/3:  10%|▉         | 16/168 [02:02<17:51,  7.05s/it]step:353 - train/loss:0.381 - train/lr(1e-3):0.001
+Epoch 3/3:  10%|█         | 17/168 [02:09<17:33,  6.98s/it]step:354 - train/loss:0.343 - train/lr(1e-3):0.001
+Epoch 3/3:  11%|█         | 18/168 [02:16<17:41,  7.08s/it]step:355 - train/loss:0.349 - train/lr(1e-3):0.001
+Epoch 3/3:  11%|█▏        | 19/168 [02:23<17:26,  7.02s/it]step:356 - train/loss:0.347 - train/lr(1e-3):0.001
+Epoch 3/3:  12%|█▏        | 20/168 [02:30<16:59,  6.89s/it]step:357 - train/loss:0.324 - train/lr(1e-3):0.001
+Epoch 3/3:  12%|█▎        | 21/168 [02:38<17:48,  7.27s/it]step:358 - train/loss:0.303 - train/lr(1e-3):0.001
+Epoch 3/3:  13%|█▎        | 22/168 [02:45<17:32,  7.21s/it]step:359 - train/loss:0.337 - train/lr(1e-3):0.001
+Epoch 3/3:  14%|█▎        | 23/168 [02:52<17:16,  7.15s/it]step:360 - train/loss:0.305 - train/lr(1e-3):0.001
+Epoch 3/3:  14%|█▍        | 24/168 [03:01<18:10,  7.57s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:361 - train/loss:0.361 - train/lr(1e-3):0.001
+Epoch 3/3:  15%|█▍        | 25/168 [03:08<18:11,  7.63s/it]step:362 - train/loss:0.384 - train/lr(1e-3):0.001
+Epoch 3/3:  15%|█▌        | 26/168 [03:15<17:31,  7.40s/it]step:363 - train/loss:0.289 - train/lr(1e-3):0.001
+Epoch 3/3:  16%|█▌        | 27/168 [03:23<17:34,  7.48s/it]step:364 - train/loss:0.353 - train/lr(1e-3):0.001
+Epoch 3/3:  17%|█▋        | 28/168 [03:30<17:20,  7.43s/it]step:365 - train/loss:0.331 - train/lr(1e-3):0.001
+Epoch 3/3:  17%|█▋        | 29/168 [03:37<16:30,  7.12s/it]step:366 - train/loss:0.320 - train/lr(1e-3):0.001
+Epoch 3/3:  18%|█▊        | 30/168 [03:45<16:55,  7.36s/it]step:367 - train/loss:0.282 - train/lr(1e-3):0.001
+Epoch 3/3:  18%|█▊        | 31/168 [03:51<16:24,  7.19s/it]step:368 - train/loss:0.375 - train/lr(1e-3):0.001
+Epoch 3/3:  19%|█▉        | 32/168 [04:00<16:58,  7.49s/it]step:369 - train/loss:0.324 - train/lr(1e-3):0.001
+Epoch 3/3:  20%|█▉        | 33/168 [04:07<16:38,  7.40s/it]step:370 - train/loss:0.348 - train/lr(1e-3):0.001
+Epoch 3/3:  20%|██        | 34/168 [04:16<17:28,  7.82s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:371 - train/loss:0.347 - train/lr(1e-3):0.001
+Epoch 3/3:  21%|██        | 35/168 [04:23<17:15,  7.79s/it]step:372 - train/loss:0.352 - train/lr(1e-3):0.001
+Epoch 3/3:  21%|██▏       | 36/168 [04:31<17:21,  7.89s/it]step:373 - train/loss:0.415 - train/lr(1e-3):0.001
+Epoch 3/3:  22%|██▏       | 37/168 [04:39<16:45,  7.67s/it]step:374 - train/loss:0.342 - train/lr(1e-3):0.001
+Epoch 3/3:  23%|██▎       | 38/168 [04:46<16:21,  7.55s/it]step:375 - train/loss:0.323 - train/lr(1e-3):0.001
+Epoch 3/3:  23%|██▎       | 39/168 [04:53<15:48,  7.35s/it]step:376 - train/loss:0.327 - train/lr(1e-3):0.001
+Epoch 3/3:  24%|██▍       | 40/168 [05:00<15:45,  7.39s/it]step:377 - train/loss:0.323 - train/lr(1e-3):0.001
+Epoch 3/3:  24%|██▍       | 41/168 [05:07<15:09,  7.16s/it]step:378 - train/loss:0.292 - train/lr(1e-3):0.001
+Epoch 3/3:  25%|██▌       | 42/168 [05:14<15:07,  7.20s/it]step:379 - train/loss:0.316 - train/lr(1e-3):0.001
+Epoch 3/3:  26%|██▌       | 43/168 [05:22<15:22,  7.38s/it]step:380 - train/loss:0.310 - train/lr(1e-3):0.001
+Epoch 3/3:  26%|██▌       | 44/168 [05:30<15:42,  7.60s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:381 - train/loss:0.309 - train/lr(1e-3):0.001
+Epoch 3/3:  27%|██▋       | 45/168 [05:38<15:51,  7.73s/it]step:382 - train/loss:0.334 - train/lr(1e-3):0.001
+Epoch 3/3:  27%|██▋       | 46/168 [05:45<15:14,  7.50s/it]step:383 - train/loss:0.338 - train/lr(1e-3):0.001
+Epoch 3/3:  28%|██▊       | 47/168 [05:53<15:08,  7.51s/it]step:384 - train/loss:0.361 - train/lr(1e-3):0.001
+Epoch 3/3:  29%|██▊       | 48/168 [05:59<14:35,  7.30s/it]step:385 - train/loss:0.309 - train/lr(1e-3):0.001
+Epoch 3/3:  29%|██▉       | 49/168 [06:06<14:12,  7.16s/it]step:386 - train/loss:0.345 - train/lr(1e-3):0.001
+Epoch 3/3:  30%|██▉       | 50/168 [06:13<14:07,  7.19s/it]step:387 - train/loss:0.324 - train/lr(1e-3):0.001
+Epoch 3/3:  30%|███       | 51/168 [06:21<14:23,  7.38s/it]step:388 - train/loss:0.298 - train/lr(1e-3):0.001
+Epoch 3/3:  31%|███       | 52/168 [06:29<14:18,  7.40s/it]step:389 - train/loss:0.326 - train/lr(1e-3):0.001
+Epoch 3/3:  32%|███▏      | 53/168 [06:36<14:06,  7.36s/it]step:390 - train/loss:0.282 - train/lr(1e-3):0.001
+Epoch 3/3:  32%|███▏      | 54/168 [06:44<14:08,  7.44s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:391 - train/loss:0.347 - train/lr(1e-3):0.001
+Epoch 3/3:  33%|███▎      | 55/168 [06:50<13:33,  7.20s/it]step:392 - train/loss:0.321 - train/lr(1e-3):0.001
+Epoch 3/3:  33%|███▎      | 56/168 [06:57<13:26,  7.20s/it]step:393 - train/loss:0.316 - train/lr(1e-3):0.001
+Epoch 3/3:  34%|███▍      | 57/168 [07:05<13:46,  7.44s/it]step:394 - train/loss:0.298 - train/lr(1e-3):0.001
+Epoch 3/3:  35%|███▍      | 58/168 [07:13<13:34,  7.41s/it]step:395 - train/loss:0.314 - train/lr(1e-3):0.001
+Epoch 3/3:  35%|███▌      | 59/168 [07:20<13:25,  7.39s/it]step:396 - train/loss:0.352 - train/lr(1e-3):0.001
+Epoch 3/3:  36%|███▌      | 60/168 [07:27<13:00,  7.23s/it]step:397 - train/loss:0.311 - train/lr(1e-3):0.001
+Epoch 3/3:  36%|███▋      | 61/168 [07:34<12:49,  7.19s/it]step:398 - train/loss:0.286 - train/lr(1e-3):0.001
+Epoch 3/3:  37%|███▋      | 62/168 [07:41<12:44,  7.22s/it]step:399 - train/loss:0.310 - train/lr(1e-3):0.001
+Epoch 3/3:  38%|███▊      | 63/168 [07:49<12:43,  7.28s/it]step:400 - train/loss:0.320 - train/lr(1e-3):0.001
+Epoch 3/3:  38%|███▊      | 64/168 [07:57<13:03,  7.53s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:401 - train/loss:0.334 - train/lr(1e-3):0.001
+Epoch 3/3:  39%|███▊      | 65/168 [08:04<12:34,  7.33s/it]step:402 - train/loss:0.323 - train/lr(1e-3):0.001
+Epoch 3/3:  39%|███▉      | 66/168 [08:11<12:18,  7.24s/it]step:403 - train/loss:0.299 - train/lr(1e-3):0.001
+Epoch 3/3:  40%|███▉      | 67/168 [08:19<12:46,  7.59s/it]step:404 - train/loss:0.280 - train/lr(1e-3):0.001
+Epoch 3/3:  40%|████      | 68/168 [08:26<12:21,  7.41s/it]step:405 - train/loss:0.338 - train/lr(1e-3):0.001
+Epoch 3/3:  41%|████      | 69/168 [08:33<11:47,  7.15s/it]step:406 - train/loss:0.283 - train/lr(1e-3):0.001
+Epoch 3/3:  42%|████▏     | 70/168 [08:40<11:29,  7.04s/it]step:407 - train/loss:0.321 - train/lr(1e-3):0.001
+Epoch 3/3:  42%|████▏     | 71/168 [08:46<11:12,  6.93s/it]step:408 - train/loss:0.307 - train/lr(1e-3):0.001
+Epoch 3/3:  43%|████▎     | 72/168 [08:53<11:09,  6.97s/it]step:409 - train/loss:0.345 - train/lr(1e-3):0.001
+Epoch 3/3:  43%|████▎     | 73/168 [09:00<11:08,  7.04s/it]step:410 - train/loss:0.339 - train/lr(1e-3):0.001
+Epoch 3/3:  44%|████▍     | 74/168 [09:08<11:10,  7.14s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:411 - train/loss:0.334 - train/lr(1e-3):0.001
+Epoch 3/3:  45%|████▍     | 75/168 [09:15<11:17,  7.28s/it]step:412 - train/loss:0.309 - train/lr(1e-3):0.000
+Epoch 3/3:  45%|████▌     | 76/168 [09:23<11:11,  7.30s/it]step:413 - train/loss:0.313 - train/lr(1e-3):0.000
+Epoch 3/3:  46%|████▌     | 77/168 [09:30<10:54,  7.19s/it]step:414 - train/loss:0.308 - train/lr(1e-3):0.000
+Epoch 3/3:  46%|████▋     | 78/168 [09:37<10:41,  7.13s/it]step:415 - train/loss:0.330 - train/lr(1e-3):0.000
+Epoch 3/3:  47%|████▋     | 79/168 [09:45<10:58,  7.40s/it]step:416 - train/loss:0.358 - train/lr(1e-3):0.000
+Epoch 3/3:  48%|████▊     | 80/168 [09:51<10:32,  7.19s/it]step:417 - train/loss:0.325 - train/lr(1e-3):0.000
+Epoch 3/3:  48%|████▊     | 81/168 [09:58<10:14,  7.06s/it]step:418 - train/loss:0.318 - train/lr(1e-3):0.000
+Epoch 3/3:  49%|████▉     | 82/168 [10:05<10:11,  7.12s/it]step:419 - train/loss:0.307 - train/lr(1e-3):0.000
+Epoch 3/3:  49%|████▉     | 83/168 [10:12<10:01,  7.08s/it]step:420 - train/loss:0.334 - train/lr(1e-3):0.000
+Epoch 3/3:  50%|█████     | 84/168 [10:20<10:04,  7.20s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:421 - train/loss:0.279 - train/lr(1e-3):0.000
+Epoch 3/3:  51%|█████     | 85/168 [10:27<09:54,  7.16s/it]step:422 - train/loss:0.300 - train/lr(1e-3):0.000
+Epoch 3/3:  51%|█████     | 86/168 [10:35<10:08,  7.42s/it]step:423 - train/loss:0.333 - train/lr(1e-3):0.000
+Epoch 3/3:  52%|█████▏    | 87/168 [10:41<09:34,  7.09s/it]step:424 - train/loss:0.317 - train/lr(1e-3):0.000
+Epoch 3/3:  52%|█████▏    | 88/168 [10:50<10:01,  7.52s/it]step:425 - train/loss:0.319 - train/lr(1e-3):0.000
+Epoch 3/3:  53%|█████▎    | 89/168 [10:57<09:47,  7.44s/it]step:426 - train/loss:0.314 - train/lr(1e-3):0.000
+Epoch 3/3:  54%|█████▎    | 90/168 [11:05<09:44,  7.50s/it]step:427 - train/loss:0.295 - train/lr(1e-3):0.000
+Epoch 3/3:  54%|█████▍    | 91/168 [11:11<09:15,  7.21s/it]step:428 - train/loss:0.307 - train/lr(1e-3):0.000
+Epoch 3/3:  55%|█████▍    | 92/168 [11:18<09:00,  7.11s/it]step:429 - train/loss:0.330 - train/lr(1e-3):0.000
+Epoch 3/3:  55%|█████▌    | 93/168 [11:25<08:51,  7.09s/it]step:430 - train/loss:0.325 - train/lr(1e-3):0.000
+Epoch 3/3:  56%|█████▌    | 94/168 [11:32<08:46,  7.12s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:431 - train/loss:0.361 - train/lr(1e-3):0.000
+Epoch 3/3:  57%|█████▋    | 95/168 [11:40<08:43,  7.18s/it]step:432 - train/loss:0.332 - train/lr(1e-3):0.000
+Epoch 3/3:  57%|█████▋    | 96/168 [11:46<08:27,  7.05s/it]step:433 - train/loss:0.297 - train/lr(1e-3):0.000
+Epoch 3/3:  58%|█████▊    | 97/168 [11:53<08:10,  6.90s/it]step:434 - train/loss:0.325 - train/lr(1e-3):0.000
+Epoch 3/3:  58%|█████▊    | 98/168 [12:00<08:08,  6.98s/it]step:435 - train/loss:0.264 - train/lr(1e-3):0.000
+Epoch 3/3:  59%|█████▉    | 99/168 [12:07<08:00,  6.96s/it]step:436 - train/loss:0.296 - train/lr(1e-3):0.000
+Epoch 3/3:  60%|█████▉    | 100/168 [12:15<08:03,  7.12s/it]step:437 - train/loss:0.300 - train/lr(1e-3):0.000
+Epoch 3/3:  60%|██████    | 101/168 [12:21<07:51,  7.04s/it]step:438 - train/loss:0.307 - train/lr(1e-3):0.000
+Epoch 3/3:  61%|██████    | 102/168 [12:29<07:45,  7.05s/it]step:439 - train/loss:0.308 - train/lr(1e-3):0.000
+Epoch 3/3:  61%|██████▏   | 103/168 [12:35<07:35,  7.00s/it]step:440 - train/loss:0.337 - train/lr(1e-3):0.000
+Epoch 3/3:  62%|██████▏   | 104/168 [12:42<07:23,  6.93s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:441 - train/loss:0.316 - train/lr(1e-3):0.000
+Epoch 3/3:  62%|██████▎   | 105/168 [12:49<07:14,  6.90s/it]step:442 - train/loss:0.322 - train/lr(1e-3):0.000
+Epoch 3/3:  63%|██████▎   | 106/168 [12:56<07:16,  7.05s/it]step:443 - train/loss:0.342 - train/lr(1e-3):0.000
+Epoch 3/3:  64%|██████▎   | 107/168 [13:04<07:24,  7.28s/it]step:444 - train/loss:0.315 - train/lr(1e-3):0.000
+Epoch 3/3:  64%|██████▍   | 108/168 [13:11<07:06,  7.11s/it]step:445 - train/loss:0.282 - train/lr(1e-3):0.000
+Epoch 3/3:  65%|██████▍   | 109/168 [13:18<06:59,  7.11s/it]step:446 - train/loss:0.304 - train/lr(1e-3):0.000
+Epoch 3/3:  65%|██████▌   | 110/168 [13:24<06:41,  6.92s/it]step:447 - train/loss:0.323 - train/lr(1e-3):0.000
+Epoch 3/3:  66%|██████▌   | 111/168 [13:31<06:32,  6.89s/it]step:448 - train/loss:0.324 - train/lr(1e-3):0.000
+Epoch 3/3:  67%|██████▋   | 112/168 [13:39<06:41,  7.18s/it]step:449 - train/loss:0.317 - train/lr(1e-3):0.000
+Epoch 3/3:  67%|██████▋   | 113/168 [13:46<06:26,  7.04s/it]step:450 - train/loss:0.335 - train/lr(1e-3):0.000
+Epoch 3/3:  68%|██████▊   | 114/168 [13:53<06:25,  7.14s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:451 - train/loss:0.350 - train/lr(1e-3):0.000
+Epoch 3/3:  68%|██████▊   | 115/168 [14:00<06:17,  7.12s/it]step:452 - train/loss:0.297 - train/lr(1e-3):0.000
+Epoch 3/3:  69%|██████▉   | 116/168 [14:08<06:12,  7.17s/it]step:453 - train/loss:0.312 - train/lr(1e-3):0.000
+Epoch 3/3:  70%|██████▉   | 117/168 [14:15<06:02,  7.12s/it]step:454 - train/loss:0.287 - train/lr(1e-3):0.000
+Epoch 3/3:  70%|███████   | 118/168 [14:22<06:05,  7.30s/it]step:455 - train/loss:0.293 - train/lr(1e-3):0.000
+Epoch 3/3:  71%|███████   | 119/168 [14:30<06:01,  7.37s/it]step:456 - train/loss:0.278 - train/lr(1e-3):0.000
+Epoch 3/3:  71%|███████▏  | 120/168 [14:37<05:45,  7.20s/it]step:457 - train/loss:0.331 - train/lr(1e-3):0.000
+Epoch 3/3:  72%|███████▏  | 121/168 [14:44<05:39,  7.23s/it]step:458 - train/loss:0.383 - train/lr(1e-3):0.000
+Epoch 3/3:  73%|███████▎  | 122/168 [14:51<05:30,  7.18s/it]step:459 - train/loss:0.318 - train/lr(1e-3):0.000
+Epoch 3/3:  73%|███████▎  | 123/168 [14:58<05:24,  7.20s/it]step:460 - train/loss:0.288 - train/lr(1e-3):0.000
+Epoch 3/3:  74%|███████▍  | 124/168 [15:05<05:16,  7.19s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:461 - train/loss:0.264 - train/lr(1e-3):0.000
+Epoch 3/3:  74%|███████▍  | 125/168 [15:12<05:05,  7.11s/it]step:462 - train/loss:0.314 - train/lr(1e-3):0.000
+Epoch 3/3:  75%|███████▌  | 126/168 [15:20<04:59,  7.13s/it]step:463 - train/loss:0.402 - train/lr(1e-3):0.000
+Epoch 3/3:  76%|███████▌  | 127/168 [15:27<04:53,  7.16s/it]step:464 - train/loss:0.369 - train/lr(1e-3):0.000
+Epoch 3/3:  76%|███████▌  | 128/168 [15:34<04:43,  7.10s/it]step:465 - train/loss:0.276 - train/lr(1e-3):0.000
+Epoch 3/3:  77%|███████▋  | 129/168 [15:41<04:38,  7.14s/it]step:466 - train/loss:0.314 - train/lr(1e-3):0.000
+Epoch 3/3:  77%|███████▋  | 130/168 [15:49<04:37,  7.31s/it]step:467 - train/loss:0.300 - train/lr(1e-3):0.000
+Epoch 3/3:  78%|███████▊  | 131/168 [15:58<04:48,  7.79s/it]step:468 - train/loss:0.307 - train/lr(1e-3):0.000
+Epoch 3/3:  79%|███████▊  | 132/168 [16:05<04:37,  7.72s/it]step:469 - train/loss:0.296 - train/lr(1e-3):0.000
+Epoch 3/3:  79%|███████▉  | 133/168 [16:13<04:26,  7.62s/it]step:470 - train/loss:0.315 - train/lr(1e-3):0.000
+Epoch 3/3:  80%|███████▉  | 134/168 [16:20<04:13,  7.46s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:471 - train/loss:0.341 - train/lr(1e-3):0.000
+Epoch 3/3:  80%|████████  | 135/168 [16:28<04:13,  7.68s/it]step:472 - train/loss:0.278 - train/lr(1e-3):0.000
+Epoch 3/3:  81%|████████  | 136/168 [16:35<03:57,  7.43s/it]step:473 - train/loss:0.304 - train/lr(1e-3):0.000
+Epoch 3/3:  82%|████████▏ | 137/168 [16:42<03:45,  7.27s/it]step:474 - train/loss:0.328 - train/lr(1e-3):0.000
+Epoch 3/3:  82%|████████▏ | 138/168 [16:49<03:40,  7.34s/it]step:475 - train/loss:0.332 - train/lr(1e-3):0.000
+Epoch 3/3:  83%|████████▎ | 139/168 [16:57<03:36,  7.48s/it]step:476 - train/loss:0.293 - train/lr(1e-3):0.000
+Epoch 3/3:  83%|████████▎ | 140/168 [17:04<03:29,  7.48s/it]step:477 - train/loss:0.295 - train/lr(1e-3):0.000
+Epoch 3/3:  84%|████████▍ | 141/168 [17:12<03:24,  7.57s/it]step:478 - train/loss:0.308 - train/lr(1e-3):0.000
+Epoch 3/3:  85%|████████▍ | 142/168 [17:19<03:15,  7.50s/it]step:479 - train/loss:0.344 - train/lr(1e-3):0.000
+Epoch 3/3:  85%|████████▌ | 143/168 [17:28<03:14,  7.77s/it]step:480 - train/loss:0.288 - train/lr(1e-3):0.000
+Epoch 3/3:  86%|████████▌ | 144/168 [17:35<03:04,  7.68s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:481 - train/loss:0.298 - train/lr(1e-3):0.000
+Epoch 3/3:  86%|████████▋ | 145/168 [17:43<02:56,  7.66s/it]step:482 - train/loss:0.328 - train/lr(1e-3):0.000
+Epoch 3/3:  87%|████████▋ | 146/168 [17:50<02:45,  7.54s/it]step:483 - train/loss:0.276 - train/lr(1e-3):0.000
+Epoch 3/3:  88%|████████▊ | 147/168 [17:57<02:35,  7.42s/it]step:484 - train/loss:0.296 - train/lr(1e-3):0.000
+Epoch 3/3:  88%|████████▊ | 148/168 [18:05<02:29,  7.45s/it]step:485 - train/loss:0.328 - train/lr(1e-3):0.000
+Epoch 3/3:  89%|████████▊ | 149/168 [18:13<02:24,  7.62s/it]step:486 - train/loss:0.343 - train/lr(1e-3):0.000
+Epoch 3/3:  89%|████████▉ | 150/168 [18:20<02:12,  7.35s/it]step:487 - train/loss:0.270 - train/lr(1e-3):0.000
+Epoch 3/3:  90%|████████▉ | 151/168 [18:27<02:04,  7.30s/it]step:488 - train/loss:0.251 - train/lr(1e-3):0.000
+Epoch 3/3:  90%|█████████ | 152/168 [18:34<01:54,  7.17s/it]step:489 - train/loss:0.321 - train/lr(1e-3):0.000
+Epoch 3/3:  91%|█████████ | 153/168 [18:41<01:48,  7.22s/it]step:490 - train/loss:0.314 - train/lr(1e-3):0.000
+Epoch 3/3:  92%|█████████▏| 154/168 [18:48<01:40,  7.19s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:491 - train/loss:0.296 - train/lr(1e-3):0.000
+Epoch 3/3:  92%|█████████▏| 155/168 [18:56<01:34,  7.27s/it]step:492 - train/loss:0.299 - train/lr(1e-3):0.000
+Epoch 3/3:  93%|█████████▎| 156/168 [19:03<01:26,  7.23s/it]step:493 - train/loss:0.299 - train/lr(1e-3):0.000
+Epoch 3/3:  93%|█████████▎| 157/168 [19:09<01:17,  7.05s/it]step:494 - train/loss:0.290 - train/lr(1e-3):0.000
+Epoch 3/3:  94%|█████████▍| 158/168 [19:17<01:11,  7.13s/it]step:495 - train/loss:0.296 - train/lr(1e-3):0.000
+Epoch 3/3:  95%|█████████▍| 159/168 [19:24<01:04,  7.14s/it]step:496 - train/loss:0.263 - train/lr(1e-3):0.000
+Epoch 3/3:  95%|█████████▌| 160/168 [19:31<00:56,  7.12s/it]step:497 - train/loss:0.309 - train/lr(1e-3):0.000
+Epoch 3/3:  96%|█████████▌| 161/168 [19:38<00:49,  7.12s/it]step:498 - train/loss:0.309 - train/lr(1e-3):0.000
+Epoch 3/3:  96%|█████████▋| 162/168 [19:45<00:42,  7.04s/it]step:499 - train/loss:0.319 - train/lr(1e-3):0.000
+Epoch 3/3:  97%|█████████▋| 163/168 [19:52<00:35,  7.13s/it]step:500 - train/loss:0.297 - train/lr(1e-3):0.000
+Epoch 3/3:  98%|█████████▊| 164/168 [19:59<00:28,  7.00s/it]wandb: WARNING Artifact "run-ozi2xoeo-sftdata_samples-3OlJbQ" already exists with the same content. No new version will be created.
+step:501 - train/loss:0.330 - train/lr(1e-3):0.000
+Epoch 3/3:  98%|█████████▊| 165/168 [20:06<00:20,  6.95s/it]step:502 - train/loss:0.335 - train/lr(1e-3):0.000
+Epoch 3/3:  99%|█████████▉| 166/168 [20:13<00:14,  7.09s/it]step:503 - train/loss:0.324 - train/lr(1e-3):0.000
+Epoch 3/3:  99%|█████████▉| 167/168 [20:20<00:07,  7.06s/it]step:504 - train/loss:0.331 - train/lr(1e-3):0.000
+step:504 - val/loss:0.571
+Exception ignored in: <function ResourceTracker.__del__ at 0x14592e6567a0>
+Traceback (most recent call last):
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 80, in __del__
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 89, in _stop
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 102, in _stop_locked
+AttributeError: '_thread.RLock' object has no attribute '_recursion_count'
+[rank1]:[W920 05:40:41.971683730 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+Epoch 3/3:  99%|█████████▉| 167/168 [21:40<00:07,  7.79s/it]
+wandb: updating run metadata
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: uploading wandb-summary.json; uploading config.yaml
+wandb: uploading history steps 503-503, summary, console lines 563-563
+wandb: 
+wandb: Run history:
+wandb:     train/loss █▇▆▅▆▄▅▄▃▄▄▄▄▄▄▃▃▃▃▂▂▂▃▃▂▃▂▂▃▁▁▂▁▁▁▂▁▁▂▁
+wandb: train/lr(1e-3) ▁▃▅▅██████▇▇▇▇▇▇▆▆▅▅▄▄▄▄▄▄▄▃▃▃▃▃▂▂▂▁▁▁▁▁
+wandb:       val/loss █▁▄
+wandb: 
+wandb: Run summary:
+wandb:     train/loss 0.33137
+wandb: train/lr(1e-3) 0
+wandb:       val/loss 0.57129
+wandb: 
+wandb: 🚀 View run qwen25_7b-agentstream-episode-skill-sft-glm-self-ep3 at: https://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft/runs/ozi2xoeo
+wandb: ⭐️ View project at: https://wandb.ai/ql2505-columbia-university/agentstream-episode-skill-sft
+wandb: Synced 5 W&B file(s), 51 media file(s), 2 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260920_043532-ozi2xoeo/logs
+Exception ignored in: <function ResourceTracker.__del__ at 0x152da10168e0>
+Traceback (most recent call last):
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 80, in __del__
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 89, in _stop
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 102, in _stop_locked
+AttributeError: '_thread.RLock' object has no attribute '_recursion_count'
+[rank0]:[W920 05:40:45.776859394 ProcessGroupNCCL.cpp:1538] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+Exported SFT model to /home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct-agentstream-episode-skill-sft-v5
+AgentStream full pipeline finished.
+Stage 2: exported /home/qingyuan.liu/projects/Evolve/LLMs/Qwen2.5-7B-Instruct-agentstream-episode-skill-sft-v5
+Stage 1/2 (sft) finished Sun Sep 20 05:40:48 AM +08 2026

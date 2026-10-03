@@ -1,0 +1,601 @@
+======================================================================
+PBS Job Information
+======================================================================
+Job ID        : 69819.gaas
+Hostname      : hpc-gaas-g09
+Working dir   : /home/qingyuan.liu/projects/Evolve/SEED
+Start time    : Mon Sep 21 10:36:13 PM +08 2026
+======================================================================
+
+PBS_NODEFILE:
+hpc-gaas-g09
+
+Initial CUDA_VISIBLE_DEVICES:
+GPU-c8a90321-8a11-86bc-699f-64da9e6fbf4c,GPU-613513ed-ed89-1810-bb69-41c0f4b3a999
+
+nvidia-smi -L:
+GPU 0: NVIDIA H200 (UUID: GPU-613513ed-ed89-1810-bb69-41c0f4b3a999)
+GPU 1: NVIDIA H200 (UUID: GPU-c8a90321-8a11-86bc-699f-64da9e6fbf4c)
+
+Converted CUDA_VISIBLE_DEVICES to integer indices:
+0,1
+
+Final CUDA_VISIBLE_DEVICES:
+0,1
+
+GPU monitor log:
+.pbs_logs/69819.gaas.gpu.log
+
+======================================================================
+Environment Information
+======================================================================
+CONDA_PREFIX : /home/qingyuan.liu/.conda/envs/seed-as
+Python       : /home/qingyuan.liu/.conda/envs/seed-as/bin/python
+Python ver   : Python 3.12.0
+CUDA_HOME    : NOT_SET
+NVCC         : /home/qingyuan.liu/.conda/envs/seed-as/bin/nvcc
+
+nvcc version:
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Wed_Jan_15_19:20:09_PST_2025
+Cuda compilation tools, release 12.8, V12.8.61
+Build cuda_12.8.r12.8/compiler.35404655_0
+
+PyTorch       : 2.8.0+cu128
+Torch CUDA    : 12.8
+CUDA usable   : True
+GPU count     : 2
+GPU 0         : NVIDIA H200
+GPU 1         : NVIDIA H200
+Delta test (experiment B)
+  phase / tasks / rollouts : all / 16 per benchmark / 8 per task
+  benchmarks               : bfcl,tau2,browsecompplus (RL train tasks minus holdout ids [64, 96))
+  model                    : /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507-agentstream-episode-skill-sft-v5
+  endpoint                 : http://127.0.0.1:60001/v1,http://127.0.0.1:60002/v1 (start 2 vLLM replica(s) on GPUs 0,1, TP 1)
+  sampling                 : temperature 1.0, 512 tokens, history 3, max_steps 40, vLLM max_model_len 40960
+  output                   : /home/qingyuan.liu/projects/Evolve/SEED/outputs/delta_test_qwen3_4b_2507_v5
+Starting 2 vLLM replica(s) for /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507-agentstream-episode-skill-sft-v5
+Policy endpoint ready: http://127.0.0.1:60001/v1,http://127.0.0.1:60002/v1
+Reusing existing BrowseComp-Plus retriever at http://127.0.0.1:60100
+Log: /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/delta_test_69819.gaas.log
+2026-09-21 22:37:42,401 WARNING python-dotenv could not parse statement starting at line 34
+2026-09-21 22:37:42,401 WARNING python-dotenv could not parse statement starting at line 35
+2026-09-21 22:37:53,684 INFO [C0] 48 tasks x 8 rollouts -> /home/qingyuan.liu/projects/Evolve/SEED/outputs/delta_test_qwen3_4b_2507_v5/C0
+2026-09-21 22:37:54,275 INFO ========== baseline_rollouts: running ==========
+2026-09-21 22:37:54,275 INFO baseline_rollouts details: {"pending": 384, "existing": 0}
+2026-09-21 22:38:19,647 INFO Rollout 1/384: bfcl/multi_turn_base_21:2 success=True steps=8
+2026-09-21 22:38:20,339 INFO Rollout 2/384: bfcl/multi_turn_base_21:5 success=False steps=8
+2026-09-21 22:38:22,410 INFO Rollout 3/384: bfcl/multi_turn_base_21:4 success=False steps=9
+2026-09-21 22:38:23,374 INFO Rollout 4/384: bfcl/multi_turn_base_17:7 success=False steps=9
+2026-09-21 22:38:25,779 INFO Rollout 5/384: bfcl/multi_turn_base_21:1 success=False steps=9
+2026-09-21 22:38:26,866 INFO Rollout 6/384: bfcl/multi_turn_base_21:6 success=False steps=10
+2026-09-21 22:38:27,872 INFO Rollout 7/384: bfcl/multi_turn_base_17:2 success=False steps=11
+2026-09-21 22:38:28,341 INFO Rollout 8/384: bfcl/multi_turn_base_17:6 success=False steps=10
+2026-09-21 22:38:28,777 INFO Rollout 9/384: bfcl/multi_turn_base_17:1 success=False steps=11
+2026-09-21 22:38:29,407 INFO Rollout 10/384: bfcl/multi_turn_base_17:0 success=False steps=11
+2026-09-21 22:38:29,673 INFO Rollout 11/384: bfcl/multi_turn_base_17:4 success=False steps=10
+2026-09-21 22:38:29,962 INFO Rollout 12/384: bfcl/multi_turn_base_17:5 success=False steps=12
+2026-09-21 22:38:30,719 INFO Rollout 13/384: bfcl/multi_turn_base_21:0 success=False steps=14
+2026-09-21 22:38:30,738 INFO Rollout 14/384: bfcl/multi_turn_base_136:5 success=False steps=11
+2026-09-21 22:38:30,990 INFO Rollout 15/384: bfcl/multi_turn_base_136:1 success=False steps=11
+2026-09-21 22:38:31,547 INFO Rollout 16/384: bfcl/multi_turn_base_21:7 success=True steps=11
+2026-09-21 22:38:31,575 INFO Rollout 17/384: bfcl/multi_turn_base_136:7 success=False steps=12
+2026-09-21 22:38:32,938 INFO Rollout 18/384: bfcl/multi_turn_base_66:4 success=False steps=15
+2026-09-21 22:38:33,073 INFO Rollout 19/384: bfcl/multi_turn_base_21:3 success=False steps=14
+2026-09-21 22:38:33,281 INFO Rollout 20/384: bfcl/multi_turn_base_136:3 success=False steps=12
+2026-09-21 22:38:33,437 INFO Rollout 21/384: bfcl/multi_turn_base_136:0 success=False steps=14
+2026-09-21 22:38:33,902 INFO Rollout 22/384: bfcl/multi_turn_base_136:2 success=False steps=12
+2026-09-21 22:38:33,972 INFO Rollout 23/384: bfcl/multi_turn_base_66:5 success=False steps=14
+2026-09-21 22:38:34,165 INFO Rollout 24/384: bfcl/multi_turn_base_136:4 success=False steps=13
+2026-09-21 22:38:34,882 INFO Rollout 25/384: bfcl/multi_turn_base_66:6 success=False steps=13
+2026-09-21 22:38:35,579 INFO Rollout 26/384: bfcl/multi_turn_base_17:3 success=False steps=16
+2026-09-21 22:38:35,925 INFO Rollout 27/384: bfcl/multi_turn_base_66:0 success=False steps=14
+2026-09-21 22:38:36,323 INFO Rollout 28/384: bfcl/multi_turn_base_66:7 success=False steps=15
+2026-09-21 22:38:36,644 INFO Rollout 29/384: bfcl/multi_turn_base_66:3 success=False steps=14
+2026-09-21 22:38:37,687 INFO Rollout 30/384: bfcl/multi_turn_base_136:6 success=False steps=12
+2026-09-21 22:38:38,844 INFO Rollout 31/384: bfcl/multi_turn_base_154:4 success=False steps=13
+2026-09-21 22:38:38,974 INFO Rollout 32/384: bfcl/multi_turn_base_126:0 success=True steps=10
+2026-09-21 22:38:40,008 INFO Rollout 33/384: bfcl/multi_turn_base_126:1 success=True steps=10
+2026-09-21 22:38:40,064 INFO Rollout 34/384: bfcl/multi_turn_base_154:2 success=False steps=13
+2026-09-21 22:38:40,861 INFO Rollout 35/384: bfcl/multi_turn_base_66:2 success=False steps=16
+2026-09-21 22:38:41,006 INFO Rollout 36/384: bfcl/multi_turn_base_66:1 success=False steps=17
+2026-09-21 22:38:42,817 INFO Rollout 37/384: bfcl/multi_turn_base_97:6 success=False steps=22
+2026-09-21 22:38:43,599 INFO Rollout 38/384: bfcl/multi_turn_base_126:2 success=True steps=10
+2026-09-21 22:38:44,336 INFO Rollout 39/384: bfcl/multi_turn_base_126:4 success=True steps=10
+2026-09-21 22:38:45,144 INFO Rollout 40/384: bfcl/multi_turn_base_126:3 success=True steps=10
+2026-09-21 22:38:45,361 INFO Rollout 41/384: bfcl/multi_turn_base_126:6 success=True steps=10
+2026-09-21 22:38:45,781 INFO Rollout 42/384: bfcl/multi_turn_base_126:5 success=True steps=10
+2026-09-21 22:38:45,831 INFO Rollout 43/384: bfcl/multi_turn_base_126:7 success=True steps=10
+2026-09-21 22:38:46,205 INFO Rollout 44/384: bfcl/multi_turn_base_154:5 success=False steps=16
+2026-09-21 22:38:47,376 INFO Rollout 45/384: bfcl/multi_turn_base_182:4 success=False steps=4
+2026-09-21 22:38:47,526 INFO Rollout 46/384: bfcl/multi_turn_base_182:7 success=True steps=4
+2026-09-21 22:38:48,123 INFO Rollout 47/384: bfcl/multi_turn_base_182:1 success=True steps=5
+2026-09-21 22:38:48,401 INFO Rollout 48/384: bfcl/multi_turn_base_182:0 success=False steps=4
+2026-09-21 22:38:48,466 INFO Rollout 49/384: bfcl/multi_turn_base_182:3 success=True steps=4
+2026-09-21 22:38:48,652 INFO Rollout 50/384: bfcl/multi_turn_base_182:5 success=True steps=4
+2026-09-21 22:38:49,482 INFO Rollout 51/384: bfcl/multi_turn_base_154:3 success=False steps=15
+2026-09-21 22:38:49,744 INFO Rollout 52/384: bfcl/multi_turn_base_182:2 success=True steps=5
+2026-09-21 22:38:52,088 INFO Rollout 53/384: bfcl/multi_turn_base_97:5 success=False steps=29
+2026-09-21 22:38:52,450 INFO Rollout 54/384: bfcl/multi_turn_base_97:2 success=False steps=27
+2026-09-21 22:38:52,470 INFO Rollout 55/384: bfcl/multi_turn_base_163:4 success=False steps=7
+2026-09-21 22:38:52,863 INFO Rollout 56/384: bfcl/multi_turn_base_163:5 success=False steps=6
+2026-09-21 22:38:53,289 INFO Rollout 57/384: bfcl/multi_turn_base_163:1 success=False steps=7
+2026-09-21 22:38:53,525 INFO Rollout 58/384: bfcl/multi_turn_base_154:6 success=False steps=18
+2026-09-21 22:38:53,849 INFO Rollout 59/384: bfcl/multi_turn_base_182:6 success=True steps=5
+2026-09-21 22:38:54,022 INFO Rollout 60/384: bfcl/multi_turn_base_97:1 success=False steps=26
+2026-09-21 22:38:54,935 INFO Rollout 61/384: bfcl/multi_turn_base_163:2 success=False steps=10
+2026-09-21 22:38:54,978 INFO Rollout 62/384: bfcl/multi_turn_base_141:0 success=False steps=15
+2026-09-21 22:38:55,355 INFO Rollout 63/384: bfcl/multi_turn_base_154:1 success=False steps=17
+2026-09-21 22:38:57,026 INFO Rollout 64/384: bfcl/multi_turn_base_97:4 success=False steps=27
+2026-09-21 22:38:58,967 INFO Rollout 65/384: bfcl/multi_turn_base_97:7 success=False steps=29
+2026-09-21 22:38:59,456 INFO Rollout 66/384: bfcl/multi_turn_base_132:3 success=False steps=6
+2026-09-21 22:38:59,459 INFO Rollout 67/384: bfcl/multi_turn_base_163:3 success=False steps=8
+2026-09-21 22:38:59,615 INFO Rollout 68/384: bfcl/multi_turn_base_132:1 success=False steps=6
+2026-09-21 22:38:59,742 INFO Rollout 69/384: bfcl/multi_turn_base_132:0 success=False steps=6
+2026-09-21 22:38:59,874 INFO Rollout 70/384: bfcl/multi_turn_base_141:4 success=False steps=16
+2026-09-21 22:38:59,980 INFO Rollout 71/384: bfcl/multi_turn_base_132:2 success=False steps=6
+2026-09-21 22:39:00,098 INFO Rollout 72/384: bfcl/multi_turn_base_163:7 success=False steps=10
+2026-09-21 22:39:00,257 INFO Rollout 73/384: bfcl/multi_turn_base_97:0 success=False steps=28
+2026-09-21 22:39:00,708 INFO Rollout 74/384: bfcl/multi_turn_base_132:6 success=False steps=6
+2026-09-21 22:39:01,296 INFO Rollout 75/384: bfcl/multi_turn_base_132:5 success=False steps=6
+2026-09-21 22:39:01,301 INFO Rollout 76/384: bfcl/multi_turn_base_141:5 success=False steps=17
+2026-09-21 22:39:01,423 INFO Rollout 77/384: bfcl/multi_turn_base_50:1 success=True steps=3
+2026-09-21 22:39:01,468 INFO Rollout 78/384: bfcl/multi_turn_base_141:1 success=True steps=17
+2026-09-21 22:39:01,944 INFO Rollout 79/384: bfcl/multi_turn_base_141:2 success=True steps=15
+2026-09-21 22:39:01,981 INFO Rollout 80/384: bfcl/multi_turn_base_141:3 success=False steps=17
+2026-09-21 22:39:02,087 INFO Rollout 81/384: bfcl/multi_turn_base_50:3 success=True steps=3
+2026-09-21 22:39:02,167 INFO Rollout 82/384: bfcl/multi_turn_base_141:7 success=True steps=17
+2026-09-21 22:39:02,262 INFO Rollout 83/384: bfcl/multi_turn_base_132:4 success=False steps=6
+2026-09-21 22:39:02,488 INFO Rollout 84/384: bfcl/multi_turn_base_50:4 success=True steps=3
+2026-09-21 22:39:02,961 INFO Rollout 85/384: bfcl/multi_turn_base_50:0 success=True steps=3
+2026-09-21 22:39:03,784 INFO Rollout 86/384: bfcl/multi_turn_base_50:2 success=True steps=3
+2026-09-21 22:39:03,969 INFO Rollout 87/384: bfcl/multi_turn_base_50:6 success=True steps=3
+2026-09-21 22:39:05,192 INFO Rollout 88/384: bfcl/multi_turn_base_50:5 success=True steps=3
+2026-09-21 22:39:05,561 INFO Rollout 89/384: bfcl/multi_turn_base_154:0 success=False steps=23
+2026-09-21 22:39:05,704 INFO Rollout 90/384: bfcl/multi_turn_base_50:7 success=True steps=3
+2026-09-21 22:39:06,788 INFO Rollout 91/384: bfcl/multi_turn_base_132:7 success=False steps=9
+2026-09-21 22:39:06,994 INFO Rollout 92/384: bfcl/multi_turn_base_97:3 success=False steps=32
+2026-09-21 22:39:07,995 INFO Rollout 93/384: bfcl/multi_turn_base_163:6 success=False steps=12
+2026-09-21 22:39:08,838 INFO Rollout 94/384: bfcl/multi_turn_base_154:7 success=False steps=27
+2026-09-21 22:39:09,234 INFO Rollout 95/384: bfcl/multi_turn_base_141:6 success=True steps=16
+2026-09-21 22:39:09,669 INFO Rollout 96/384: bfcl/multi_turn_base_30:7 success=False steps=2
+2026-09-21 22:39:11,987 INFO Rollout 97/384: bfcl/multi_turn_base_163:0 success=False steps=12
+2026-09-21 22:39:12,993 INFO Rollout 98/384: bfcl/multi_turn_base_30:0 success=False steps=6
+2026-09-21 22:39:15,184 INFO Rollout 99/384: bfcl/multi_turn_base_197:2 success=False steps=14
+2026-09-21 22:39:16,514 INFO Rollout 100/384: bfcl/multi_turn_base_30:4 success=False steps=6
+2026-09-21 22:39:16,537 INFO Rollout 101/384: bfcl/multi_turn_base_6:1 success=False steps=14
+2026-09-21 22:39:18,165 INFO Rollout 102/384: bfcl/multi_turn_base_197:4 success=False steps=14
+2026-09-21 22:39:20,412 INFO Rollout 103/384: bfcl/multi_turn_base_197:5 success=False steps=13
+2026-09-21 22:39:20,416 INFO Rollout 104/384: bfcl/multi_turn_base_6:6 success=False steps=16
+2026-09-21 22:39:21,288 INFO Rollout 105/384: bfcl/multi_turn_base_197:3 success=False steps=14
+2026-09-21 22:39:22,322 INFO Rollout 106/384: bfcl/multi_turn_base_197:0 success=False steps=15
+2026-09-21 22:39:22,454 INFO Rollout 107/384: bfcl/multi_turn_base_6:0 success=False steps=19
+2026-09-21 22:39:24,148 INFO Rollout 108/384: bfcl/multi_turn_base_30:6 success=False steps=9
+2026-09-21 22:39:24,505 INFO Rollout 109/384: bfcl/multi_turn_base_129:5 success=False steps=11
+2026-09-21 22:39:24,509 INFO Rollout 110/384: bfcl/multi_turn_base_129:1 success=False steps=11
+2026-09-21 22:39:24,571 INFO Rollout 111/384: bfcl/multi_turn_base_30:3 success=False steps=11
+2026-09-21 22:39:25,773 INFO Rollout 112/384: bfcl/multi_turn_base_197:6 success=False steps=14
+2026-09-21 22:39:26,254 INFO Rollout 113/384: bfcl/multi_turn_base_129:0 success=False steps=12
+2026-09-21 22:39:26,279 INFO Rollout 114/384: bfcl/multi_turn_base_197:1 success=False steps=16
+2026-09-21 22:39:27,416 INFO Rollout 115/384: bfcl/multi_turn_base_129:3 success=False steps=12
+2026-09-21 22:39:27,770 INFO Rollout 116/384: bfcl/multi_turn_base_129:4 success=False steps=11
+2026-09-21 22:39:28,258 INFO Rollout 117/384: bfcl/multi_turn_base_6:4 success=False steps=17
+2026-09-21 22:39:28,407 INFO Rollout 118/384: bfcl/multi_turn_base_129:2 success=False steps=13
+2026-09-21 22:39:28,485 INFO Rollout 119/384: bfcl/multi_turn_base_30:2 success=False steps=13
+2026-09-21 22:39:30,041 INFO Rollout 120/384: bfcl/multi_turn_base_129:7 success=False steps=12
+2026-09-21 22:39:30,111 INFO Rollout 121/384: bfcl/multi_turn_base_129:6 success=False steps=12
+2026-09-21 22:39:30,230 INFO Rollout 122/384: bfcl/multi_turn_base_197:7 success=False steps=16
+2026-09-21 22:39:35,373 INFO Rollout 123/384: bfcl/multi_turn_base_6:7 success=False steps=23
+2026-09-21 22:39:40,447 INFO Rollout 124/384: browsecompplus/653:1 success=True steps=4
+2026-09-21 22:39:43,360 INFO Rollout 125/384: bfcl/multi_turn_base_6:3 success=False steps=25
+2026-09-21 22:39:43,432 INFO Rollout 126/384: bfcl/multi_turn_base_6:2 success=False steps=29
+2026-09-21 22:39:46,996 INFO Rollout 127/384: browsecompplus/784:3 success=False steps=10
+2026-09-21 22:39:50,538 INFO Rollout 128/384: browsecompplus/408:6 success=False steps=5
+2026-09-21 22:39:54,596 INFO Rollout 129/384: browsecompplus/968:0 success=True steps=2
+2026-09-21 22:39:57,553 INFO Rollout 130/384: browsecompplus/653:6 success=True steps=3
+2026-09-21 22:39:57,817 INFO Rollout 131/384: browsecompplus/784:0 success=True steps=7
+2026-09-21 22:39:58,946 INFO Rollout 132/384: bfcl/multi_turn_base_6:5 success=False steps=40
+2026-09-21 22:39:59,461 INFO Rollout 133/384: browsecompplus/968:1 success=True steps=3
+2026-09-21 22:40:03,281 INFO Rollout 134/384: browsecompplus/408:3 success=True steps=5
+2026-09-21 22:40:06,951 INFO Rollout 135/384: browsecompplus/968:4 success=True steps=3
+2026-09-21 22:40:09,289 INFO Rollout 136/384: browsecompplus/968:6 success=False steps=2
+2026-09-21 22:40:14,931 INFO Rollout 137/384: browsecompplus/968:5 success=True steps=3
+2026-09-21 22:40:15,651 INFO Rollout 138/384: bfcl/multi_turn_base_30:5 success=False steps=40
+2026-09-21 22:40:15,973 INFO Rollout 139/384: bfcl/multi_turn_base_30:1 success=False steps=38
+2026-09-21 22:40:16,164 INFO Rollout 140/384: browsecompplus/968:2 success=True steps=3
+2026-09-21 22:40:18,165 INFO Rollout 141/384: browsecompplus/784:4 success=True steps=13
+2026-09-21 22:40:18,751 INFO Rollout 142/384: browsecompplus/968:3 success=True steps=3
+2026-09-21 22:40:19,187 INFO Rollout 143/384: browsecompplus/968:7 success=True steps=4
+2026-09-21 22:40:30,210 INFO Rollout 144/384: browsecompplus/116:1 success=False steps=3
+2026-09-21 22:40:32,872 INFO Rollout 145/384: browsecompplus/653:2 success=True steps=11
+2026-09-21 22:40:34,012 INFO Rollout 146/384: browsecompplus/653:5 success=True steps=20
+2026-09-21 22:40:38,574 INFO Rollout 147/384: browsecompplus/1218:7 success=False steps=40
+2026-09-21 22:40:38,874 INFO Rollout 148/384: browsecompplus/784:7 success=False steps=17
+2026-09-21 22:40:43,672 INFO Rollout 149/384: browsecompplus/653:4 success=False steps=30
+2026-09-21 22:41:02,928 INFO Rollout 150/384: browsecompplus/1218:0 success=False steps=24
+2026-09-21 22:41:04,410 INFO Rollout 151/384: browsecompplus/784:5 success=True steps=24
+2026-09-21 22:41:22,456 INFO Rollout 152/384: browsecompplus/116:3 success=False steps=32
+2026-09-21 22:41:24,343 INFO Rollout 153/384: browsecompplus/116:2 success=False steps=40
+2026-09-21 22:41:25,719 INFO Rollout 154/384: browsecompplus/784:6 success=False steps=27
+2026-09-21 22:41:39,625 INFO Rollout 155/384: browsecompplus/784:2 success=False steps=40
+2026-09-21 22:41:43,542 INFO Rollout 156/384: browsecompplus/116:6 success=False steps=40
+2026-09-21 22:41:43,552 INFO Rollout 157/384: browsecompplus/116:5 success=False steps=40
+2026-09-21 22:41:48,016 INFO Rollout 158/384: browsecompplus/408:0 success=False steps=40
+2026-09-21 22:41:52,234 INFO Rollout 159/384: browsecompplus/116:0 success=False steps=40
+2026-09-21 22:41:55,899 INFO Rollout 160/384: browsecompplus/58:1 success=False steps=40
+2026-09-21 22:41:58,003 INFO Rollout 161/384: browsecompplus/1218:1 success=False steps=40
+2026-09-21 22:42:00,516 INFO Rollout 162/384: browsecompplus/408:4 success=False steps=40
+2026-09-21 22:42:00,674 INFO Rollout 163/384: browsecompplus/58:4 success=False steps=40
+2026-09-21 22:42:02,868 INFO Rollout 164/384: browsecompplus/116:7 success=False steps=40
+2026-09-21 22:42:09,860 INFO Rollout 165/384: browsecompplus/408:2 success=False steps=40
+2026-09-21 22:42:09,887 INFO Rollout 166/384: browsecompplus/653:0 success=False steps=40
+2026-09-21 22:42:12,086 INFO Rollout 167/384: browsecompplus/116:4 success=False steps=40
+2026-09-21 22:42:17,605 INFO Rollout 168/384: browsecompplus/58:2 success=False steps=40
+2026-09-21 22:42:17,649 INFO Rollout 169/384: browsecompplus/58:6 success=False steps=40
+2026-09-21 22:42:19,435 INFO Rollout 170/384: browsecompplus/58:5 success=False steps=40
+2026-09-21 22:42:24,128 INFO Rollout 171/384: browsecompplus/58:0 success=False steps=40
+2026-09-21 22:42:26,093 INFO Rollout 172/384: browsecompplus/1004:5 success=False steps=40
+2026-09-21 22:42:35,544 INFO Rollout 173/384: browsecompplus/1218:6 success=False steps=40
+2026-09-21 22:42:38,812 INFO Rollout 174/384: browsecompplus/408:5 success=False steps=40
+2026-09-21 22:42:41,248 INFO Rollout 175/384: browsecompplus/552:1 success=False steps=3
+2026-09-21 22:42:42,659 INFO Rollout 176/384: browsecompplus/1004:6 success=False steps=37
+2026-09-21 22:42:43,406 INFO Rollout 177/384: browsecompplus/201:3 success=False steps=40
+2026-09-21 22:42:44,460 INFO Rollout 178/384: browsecompplus/408:1 success=False steps=40
+2026-09-21 22:42:44,696 INFO Rollout 179/384: browsecompplus/443:7 success=True steps=9
+2026-09-21 22:42:47,031 INFO Rollout 180/384: browsecompplus/1004:3 success=False steps=40
+2026-09-21 22:42:47,231 INFO Rollout 181/384: browsecompplus/653:3 success=False steps=40
+2026-09-21 22:42:47,869 INFO Rollout 182/384: browsecompplus/1218:2 success=False steps=40
+2026-09-21 22:42:48,515 INFO Rollout 183/384: browsecompplus/443:1 success=True steps=10
+2026-09-21 22:42:49,380 INFO Rollout 184/384: browsecompplus/408:7 success=False steps=40
+2026-09-21 22:42:52,797 INFO Rollout 185/384: browsecompplus/443:3 success=True steps=5
+2026-09-21 22:42:53,687 INFO Rollout 186/384: browsecompplus/58:7 success=False steps=40
+2026-09-21 22:42:54,370 INFO Rollout 187/384: browsecompplus/784:1 success=False steps=37
+2026-09-21 22:42:59,530 INFO Rollout 188/384: browsecompplus/1218:3 success=False steps=37
+2026-09-21 22:43:01,141 INFO Rollout 189/384: browsecompplus/552:6 success=False steps=10
+2026-09-21 22:43:05,578 INFO Rollout 190/384: browsecompplus/552:3 success=False steps=10
+2026-09-21 22:43:06,067 INFO Rollout 191/384: browsecompplus/443:4 success=True steps=14
+2026-09-21 22:43:06,539 INFO Rollout 192/384: browsecompplus/443:0 success=True steps=20
+2026-09-21 22:43:12,409 INFO Rollout 193/384: browsecompplus/1218:5 success=False steps=40
+2026-09-21 22:43:14,010 INFO Rollout 194/384: browsecompplus/1004:2 success=False steps=40
+2026-09-21 22:43:14,672 INFO Rollout 195/384: browsecompplus/58:3 success=False steps=40
+2026-09-21 22:43:23,254 INFO Rollout 196/384: browsecompplus/1218:4 success=False steps=40
+2026-09-21 22:43:26,139 INFO Rollout 197/384: browsecompplus/653:7 success=False steps=40
+2026-09-21 22:43:26,551 INFO Rollout 198/384: browsecompplus/350:7 success=False steps=4
+2026-09-21 22:43:27,682 INFO Rollout 199/384: browsecompplus/443:6 success=False steps=40
+2026-09-21 22:43:28,356 INFO Rollout 200/384: browsecompplus/1004:0 success=False steps=40
+2026-09-21 22:43:28,814 INFO Rollout 201/384: browsecompplus/350:6 success=False steps=4
+2026-09-21 22:43:31,992 INFO Rollout 202/384: browsecompplus/552:5 success=False steps=40
+2026-09-21 22:43:32,054 INFO Rollout 203/384: browsecompplus/201:6 success=False steps=40
+2026-09-21 22:43:32,545 INFO Rollout 204/384: browsecompplus/201:5 success=False steps=40
+2026-09-21 22:43:32,979 INFO Rollout 205/384: browsecompplus/1004:4 success=False steps=40
+2026-09-21 22:43:35,196 INFO Rollout 206/384: browsecompplus/1004:1 success=False steps=40
+2026-09-21 22:43:37,270 INFO Rollout 207/384: browsecompplus/201:2 success=False steps=40
+2026-09-21 22:43:50,866 INFO Rollout 208/384: browsecompplus/201:4 success=False steps=40
+2026-09-21 22:43:52,665 INFO Rollout 209/384: browsecompplus/1209:7 success=False steps=3
+2026-09-21 22:43:59,403 INFO Rollout 210/384: browsecompplus/443:2 success=True steps=31
+2026-09-21 22:44:03,795 INFO Rollout 211/384: browsecompplus/201:7 success=False steps=40
+2026-09-21 22:44:07,821 INFO Rollout 212/384: browsecompplus/201:1 success=False steps=40
+2026-09-21 22:44:08,999 INFO Rollout 213/384: browsecompplus/350:2 success=False steps=16
+2026-09-21 22:44:13,137 INFO Rollout 214/384: browsecompplus/1004:7 success=False steps=40
+2026-09-21 22:44:16,737 INFO Rollout 215/384: browsecompplus/685:2 success=False steps=40
+2026-09-21 22:44:19,786 INFO Rollout 216/384: browsecompplus/685:0 success=False steps=40
+2026-09-21 22:44:22,431 INFO Rollout 217/384: browsecompplus/1209:3 success=False steps=8
+2026-09-21 22:44:23,310 INFO Rollout 218/384: browsecompplus/201:0 success=False steps=40
+2026-09-21 22:44:34,978 INFO Rollout 219/384: browsecompplus/685:7 success=False steps=40
+2026-09-21 22:44:35,057 INFO Rollout 220/384: browsecompplus/443:5 success=False steps=40
+2026-09-21 22:44:35,210 INFO Rollout 221/384: browsecompplus/1209:1 success=False steps=16
+2026-09-21 22:44:35,739 INFO Rollout 222/384: browsecompplus/350:0 success=False steps=25
+2026-09-21 22:44:40,093 INFO Rollout 223/384: browsecompplus/194:6 success=False steps=19
+2026-09-21 22:44:41,990 INFO Rollout 224/384: browsecompplus/685:5 success=False steps=40
+2026-09-21 22:44:44,077 INFO Rollout 225/384: browsecompplus/552:2 success=False steps=40
+2026-09-21 22:44:50,234 INFO Rollout 226/384: browsecompplus/194:7 success=True steps=22
+2026-09-21 22:45:03,198 INFO Rollout 227/384: browsecompplus/552:0 success=False steps=40
+2026-09-21 22:45:03,294 INFO Rollout 228/384: browsecompplus/552:4 success=False steps=40
+2026-09-21 22:45:04,098 INFO Rollout 229/384: browsecompplus/1209:0 success=False steps=40
+2026-09-21 22:45:04,584 INFO Rollout 230/384: browsecompplus/194:3 success=False steps=40
+2026-09-21 22:45:05,743 INFO Rollout 231/384: browsecompplus/194:0 success=False steps=40
+2026-09-21 22:45:06,615 INFO Rollout 232/384: browsecompplus/685:3 success=False steps=40
+2026-09-21 22:45:06,792 INFO Rollout 233/384: browsecompplus/1209:2 success=False steps=24
+2026-09-21 22:45:08,446 INFO Rollout 234/384: browsecompplus/685:4 success=False steps=40
+2026-09-21 22:45:08,516 INFO Rollout 235/384: browsecompplus/552:7 success=False steps=40
+2026-09-21 22:45:08,573 INFO Rollout 236/384: browsecompplus/350:1 success=False steps=40
+2026-09-21 22:45:13,251 INFO Rollout 237/384: tau2/7:6 success=True steps=16
+2026-09-21 22:45:19,883 INFO Rollout 238/384: tau2/37:0 success=False steps=9
+2026-09-21 22:45:21,422 INFO Rollout 239/384: browsecompplus/194:2 success=False steps=40
+2026-09-21 22:45:22,174 INFO Rollout 240/384: browsecompplus/194:4 success=False steps=40
+2026-09-21 22:45:22,341 INFO Rollout 241/384: browsecompplus/194:5 success=False steps=40
+2026-09-21 22:45:24,994 INFO Rollout 242/384: tau2/65:3 success=True steps=14
+2026-09-21 22:45:26,746 INFO Rollout 243/384: browsecompplus/1209:4 success=False steps=40
+2026-09-21 22:45:28,433 INFO Rollout 244/384: browsecompplus/685:6 success=False steps=40
+2026-09-21 22:45:29,918 INFO Rollout 245/384: browsecompplus/1209:5 success=False steps=34
+2026-09-21 22:45:30,669 INFO Rollout 246/384: browsecompplus/350:5 success=False steps=40
+2026-09-21 22:45:33,863 INFO Rollout 247/384: browsecompplus/350:4 success=False steps=40
+2026-09-21 22:45:33,957 INFO Rollout 248/384: browsecompplus/350:3 success=False steps=40
+2026-09-21 22:45:38,210 INFO Rollout 249/384: browsecompplus/1209:6 success=False steps=40
+2026-09-21 22:45:39,337 INFO Rollout 250/384: tau2/7:5 success=False steps=29
+2026-09-21 22:45:39,662 INFO Rollout 251/384: browsecompplus/685:1 success=False steps=40
+2026-09-21 22:45:40,314 INFO Rollout 252/384: tau2/37:3 success=False steps=10
+2026-09-21 22:45:42,003 INFO Rollout 253/384: browsecompplus/324:0 success=False steps=40
+2026-09-21 22:45:42,132 INFO Rollout 254/384: browsecompplus/324:3 success=False steps=40
+2026-09-21 22:45:42,919 INFO Rollout 255/384: browsecompplus/324:1 success=False steps=40
+2026-09-21 22:45:45,788 INFO Rollout 256/384: tau2/7:3 success=True steps=35
+2026-09-21 22:45:47,747 INFO Rollout 257/384: tau2/65:7 success=True steps=22
+2026-09-21 22:45:47,897 INFO Rollout 258/384: browsecompplus/324:6 success=False steps=40
+2026-09-21 22:45:48,841 INFO Rollout 259/384: tau2/65:2 success=True steps=22
+2026-09-21 22:45:50,083 INFO Rollout 260/384: browsecompplus/324:5 success=False steps=40
+2026-09-21 22:45:50,817 INFO Rollout 261/384: browsecompplus/194:1 success=False steps=40
+2026-09-21 22:45:52,762 INFO Rollout 262/384: tau2/7:1 success=False steps=37
+2026-09-21 22:45:55,583 INFO Rollout 263/384: tau2/7:2 success=False steps=40
+2026-09-21 22:45:59,089 INFO Rollout 264/384: browsecompplus/324:7 success=False steps=40
+2026-09-21 22:46:00,714 INFO Rollout 265/384: browsecompplus/324:4 success=False steps=40
+2026-09-21 22:46:02,058 INFO Rollout 266/384: tau2/37:7 success=False steps=11
+2026-09-21 22:46:02,263 INFO Rollout 267/384: tau2/37:6 success=False steps=14
+2026-09-21 22:46:05,070 INFO Rollout 268/384: tau2/7:0 success=False steps=35
+2026-09-21 22:46:05,327 INFO Rollout 269/384: tau2/37:1 success=False steps=20
+2026-09-21 22:46:08,847 INFO Rollout 270/384: tau2/37:4 success=False steps=17
+2026-09-21 22:46:10,760 INFO Rollout 271/384: tau2/57:0 success=False steps=8
+2026-09-21 22:46:15,379 INFO Rollout 272/384: tau2/57:7 success=False steps=7
+2026-09-21 22:46:16,930 INFO Rollout 273/384: tau2/7:7 success=False steps=40
+2026-09-21 22:46:22,158 INFO Rollout 274/384: browsecompplus/324:2 success=False steps=40
+2026-09-21 22:46:23,484 INFO Rollout 275/384: tau2/65:6 success=True steps=32
+2026-09-21 22:46:28,047 INFO Rollout 276/384: tau2/57:4 success=False steps=11
+2026-09-21 22:46:28,655 INFO Rollout 277/384: tau2/57:3 success=False steps=9
+2026-09-21 22:46:30,883 INFO Rollout 278/384: tau2/57:5 success=False steps=9
+2026-09-21 22:46:31,771 INFO Rollout 279/384: tau2/65:0 success=True steps=40
+2026-09-21 22:46:32,164 INFO Rollout 280/384: tau2/7:4 success=False steps=40
+2026-09-21 22:46:32,606 INFO Rollout 281/384: tau2/65:1 success=True steps=40
+2026-09-21 22:46:33,864 INFO Rollout 282/384: tau2/23:2 success=False steps=40
+2026-09-21 22:46:35,102 INFO Rollout 283/384: tau2/65:4 success=True steps=31
+2026-09-21 22:46:41,405 INFO Rollout 284/384: tau2/65:5 success=True steps=35
+2026-09-21 22:46:41,673 INFO Rollout 285/384: tau2/57:6 success=False steps=15
+2026-09-21 22:46:47,021 INFO Rollout 286/384: tau2/8:2 success=False steps=25
+2026-09-21 22:46:47,704 INFO Rollout 287/384: tau2/37:2 success=False steps=34
+2026-09-21 22:46:47,757 INFO Rollout 288/384: tau2/8:3 success=True steps=20
+2026-09-21 22:46:48,178 INFO Rollout 289/384: tau2/37:5 success=False steps=26
+2026-09-21 22:46:49,486 INFO Rollout 290/384: tau2/57:2 success=False steps=11
+2026-09-21 22:46:51,898 INFO Rollout 291/384: tau2/8:0 success=False steps=22
+2026-09-21 22:46:55,120 INFO Rollout 292/384: tau2/35:0 success=False steps=12
+2026-09-21 22:46:55,154 INFO Rollout 293/384: tau2/57:1 success=False steps=18
+2026-09-21 22:47:01,608 INFO Rollout 294/384: tau2/8:4 success=False steps=28
+2026-09-21 22:47:05,386 INFO Rollout 295/384: tau2/35:3 success=False steps=9
+2026-09-21 22:47:09,004 INFO Rollout 296/384: tau2/8:6 success=True steps=31
+2026-09-21 22:47:14,347 INFO Rollout 297/384: tau2/83:1 success=False steps=9
+2026-09-21 22:47:14,404 INFO Rollout 298/384: tau2/23:1 success=False steps=40
+2026-09-21 22:47:14,494 INFO Rollout 299/384: tau2/23:3 success=False steps=40
+2026-09-21 22:47:18,777 INFO Rollout 300/384: tau2/23:4 success=False steps=40
+2026-09-21 22:47:18,915 INFO Rollout 301/384: tau2/35:6 success=False steps=17
+2026-09-21 22:47:19,403 INFO Rollout 302/384: tau2/63:3 success=False steps=24
+2026-09-21 22:47:20,370 INFO Rollout 303/384: tau2/35:1 success=False steps=13
+2026-09-21 22:47:23,134 INFO Rollout 304/384: tau2/24:4 success=True steps=16
+2026-09-21 22:47:24,094 INFO Rollout 305/384: tau2/23:6 success=False steps=40
+2026-09-21 22:47:26,291 INFO Rollout 306/384: tau2/24:7 success=False steps=13
+2026-09-21 22:47:27,436 INFO Rollout 307/384: tau2/63:6 success=False steps=25
+2026-09-21 22:47:27,569 INFO Rollout 308/384: tau2/35:5 success=False steps=24
+2026-09-21 22:47:27,814 INFO Rollout 309/384: tau2/24:0 success=False steps=18
+2026-09-21 22:47:30,411 INFO Rollout 310/384: tau2/83:2 success=False steps=13
+2026-09-21 22:47:31,325 INFO Rollout 311/384: tau2/23:0 success=False steps=40
+2026-09-21 22:47:32,981 INFO Rollout 312/384: tau2/24:2 success=True steps=14
+2026-09-21 22:47:36,830 INFO Rollout 313/384: tau2/23:5 success=False steps=40
+2026-09-21 22:47:38,743 INFO Rollout 314/384: tau2/8:7 success=False steps=31
+2026-09-21 22:47:43,997 INFO Rollout 315/384: tau2/8:1 success=True steps=38
+2026-09-21 22:47:44,205 INFO Rollout 316/384: tau2/23:7 success=False steps=40
+2026-09-21 22:47:46,390 INFO Rollout 317/384: tau2/83:7 success=False steps=18
+2026-09-21 22:47:50,580 INFO Rollout 318/384: tau2/63:1 success=False steps=29
+2026-09-21 22:47:51,499 INFO Rollout 319/384: tau2/2:5 success=False steps=18
+2026-09-21 22:47:53,423 INFO Rollout 320/384: tau2/24:5 success=True steps=26
+2026-09-21 22:47:53,835 INFO Rollout 321/384: tau2/24:3 success=True steps=22
+2026-09-21 22:47:56,235 INFO Rollout 322/384: tau2/24:1 success=False steps=29
+2026-09-21 22:47:56,386 INFO Rollout 323/384: tau2/8:5 success=False steps=40
+2026-09-21 22:47:59,201 INFO Rollout 324/384: tau2/63:2 success=False steps=32
+2026-09-21 22:48:13,385 INFO Rollout 325/384: tau2/83:3 success=False steps=31
+2026-09-21 22:48:14,510 INFO Rollout 326/384: tau2/63:4 success=False steps=31
+2026-09-21 22:48:16,159 INFO Rollout 327/384: tau2/2:1 success=True steps=21
+2026-09-21 22:48:22,918 INFO Rollout 328/384: tau2/35:4 success=False steps=29
+2026-09-21 22:48:29,276 INFO Rollout 329/384: tau2/24:6 success=False steps=29
+2026-09-21 22:48:37,158 INFO Rollout 330/384: tau2/63:5 success=False steps=40
+2026-09-21 22:48:38,322 INFO Rollout 331/384: tau2/92:1 success=True steps=19
+2026-09-21 22:48:42,139 INFO Rollout 332/384: tau2/35:2 success=False steps=40
+2026-09-21 22:48:42,640 INFO Rollout 333/384: tau2/2:4 success=True steps=30
+2026-09-21 22:48:42,849 INFO Rollout 334/384: tau2/63:0 success=False steps=39
+2026-09-21 22:48:43,771 INFO Rollout 335/384: tau2/83:5 success=False steps=31
+2026-09-21 22:48:47,253 INFO Rollout 336/384: tau2/92:0 success=True steps=20
+2026-09-21 22:48:49,119 INFO Rollout 337/384: tau2/63:7 success=False steps=38
+2026-09-21 22:48:53,205 INFO Rollout 338/384: tau2/2:2 success=False steps=25
+2026-09-21 22:48:53,689 INFO Rollout 339/384: tau2/92:3 success=False steps=24
+2026-09-21 22:48:53,837 INFO Rollout 340/384: tau2/86:6 success=False steps=8
+2026-09-21 22:48:57,202 INFO Rollout 341/384: tau2/92:5 success=False steps=24
+2026-09-21 22:48:58,204 INFO Rollout 342/384: tau2/92:7 success=False steps=23
+2026-09-21 22:48:58,423 INFO Rollout 343/384: tau2/83:0 success=True steps=39
+2026-09-21 22:49:03,877 INFO Rollout 344/384: tau2/2:7 success=False steps=29
+2026-09-21 22:49:04,465 INFO Rollout 345/384: tau2/2:6 success=True steps=37
+2026-09-21 22:49:07,060 INFO Rollout 346/384: tau2/103:2 success=False steps=40
+2026-09-21 22:49:08,900 INFO Rollout 347/384: tau2/38:6 success=False steps=11
+2026-09-21 22:49:11,675 INFO Rollout 348/384: tau2/103:1 success=False steps=40
+2026-09-21 22:49:14,059 INFO Rollout 349/384: tau2/2:0 success=False steps=40
+2026-09-21 22:49:15,386 INFO Rollout 350/384: tau2/38:2 success=False steps=16
+2026-09-21 22:49:16,334 INFO Rollout 351/384: tau2/83:6 success=True steps=40
+2026-09-21 22:49:17,341 INFO Rollout 352/384: tau2/86:7 success=False steps=40
+2026-09-21 22:49:20,547 INFO Rollout 353/384: tau2/38:1 success=True steps=15
+2026-09-21 22:49:22,543 INFO Rollout 354/384: tau2/103:4 success=False steps=40
+2026-09-21 22:49:23,920 INFO Rollout 355/384: tau2/38:4 success=False steps=22
+2026-09-21 22:49:24,505 INFO Rollout 356/384: tau2/2:3 success=False steps=40
+2026-09-21 22:49:24,599 INFO Rollout 357/384: tau2/83:4 success=False steps=40
+2026-09-21 22:49:28,225 INFO Rollout 358/384: tau2/98:1 success=False steps=40
+2026-09-21 22:49:29,712 INFO Rollout 359/384: tau2/38:3 success=False steps=24
+2026-09-21 22:49:35,873 INFO Rollout 360/384: tau2/38:5 success=False steps=14
+2026-09-21 22:49:37,160 INFO Rollout 361/384: tau2/92:4 success=False steps=34
+2026-09-21 22:49:38,341 INFO Rollout 362/384: tau2/103:7 success=False steps=40
+2026-09-21 22:49:53,554 INFO Rollout 363/384: tau2/92:6 success=False steps=35
+2026-09-21 22:49:54,581 INFO Rollout 364/384: tau2/35:7 success=False steps=38
+2026-09-21 22:49:57,279 INFO Rollout 365/384: tau2/86:1 success=False steps=32
+2026-09-21 22:49:58,574 INFO Rollout 366/384: tau2/38:0 success=False steps=19
+2026-09-21 22:50:09,646 INFO Rollout 367/384: tau2/98:4 success=False steps=40
+2026-09-21 22:50:09,955 INFO Rollout 368/384: tau2/103:5 success=False steps=40
+2026-09-21 22:50:10,107 INFO Rollout 369/384: tau2/38:7 success=False steps=16
+2026-09-21 22:50:10,831 INFO Rollout 370/384: tau2/86:0 success=False steps=40
+2026-09-21 22:50:12,647 INFO Rollout 371/384: tau2/92:2 success=False steps=40
+2026-09-21 22:50:14,560 INFO Rollout 372/384: tau2/103:0 success=False steps=40
+2026-09-21 22:50:14,643 INFO Rollout 373/384: tau2/103:6 success=False steps=40
+2026-09-21 22:50:18,045 INFO Rollout 374/384: tau2/86:3 success=False steps=40
+2026-09-21 22:50:19,392 INFO Rollout 375/384: tau2/98:2 success=False steps=40
+2026-09-21 22:50:24,223 INFO Rollout 376/384: tau2/86:5 success=False steps=40
+2026-09-21 22:50:25,094 INFO Rollout 377/384: tau2/103:3 success=False steps=40
+2026-09-21 22:50:29,412 INFO Rollout 378/384: tau2/86:2 success=False steps=40
+2026-09-21 22:50:30,257 INFO Rollout 379/384: tau2/98:5 success=False steps=40
+2026-09-21 22:50:36,256 INFO Rollout 380/384: tau2/86:4 success=False steps=40
+2026-09-21 22:50:38,213 INFO Rollout 381/384: tau2/98:7 success=False steps=40
+2026-09-21 22:50:38,219 INFO Rollout 382/384: tau2/98:3 success=False steps=37
+2026-09-21 22:50:44,707 INFO Rollout 383/384: tau2/98:6 success=False steps=40
+2026-09-21 22:50:50,420 INFO Rollout 384/384: tau2/98:0 success=False steps=40
+2026-09-21 22:50:50,423 INFO ========== baseline_rollouts: complete ==========
+2026-09-21 22:50:50,423 INFO baseline_rollouts details: {"baseline_rollouts": 384, "successes": 75}
+2026-09-21 22:50:50,990 INFO materials: 16 mixed-outcome tasks with a reference ({'bfcl': 3, 'browsecompplus': 6, 'tau2': 7})
+2026-09-21 22:50:50,996 INFO [C2] 16 tasks x 8 rollouts -> /home/qingyuan.liu/projects/Evolve/SEED/outputs/delta_test_qwen3_4b_2507_v5/C2
+2026-09-21 22:50:51,196 INFO ========== baseline_rollouts: running ==========
+2026-09-21 22:50:51,196 INFO baseline_rollouts details: {"pending": 128, "existing": 0}
+2026-09-21 22:51:06,194 INFO Rollout 1/128: bfcl/multi_turn_base_182:4 success=True steps=4
+2026-09-21 22:51:06,311 INFO Rollout 2/128: bfcl/multi_turn_base_182:0 success=True steps=4
+2026-09-21 22:51:06,921 INFO Rollout 3/128: bfcl/multi_turn_base_182:6 success=True steps=4
+2026-09-21 22:51:07,534 INFO Rollout 4/128: bfcl/multi_turn_base_182:7 success=True steps=4
+2026-09-21 22:51:08,165 INFO Rollout 5/128: bfcl/multi_turn_base_182:1 success=True steps=4
+2026-09-21 22:51:08,220 INFO Rollout 6/128: bfcl/multi_turn_base_182:2 success=True steps=4
+2026-09-21 22:51:08,383 INFO Rollout 7/128: bfcl/multi_turn_base_182:3 success=True steps=4
+2026-09-21 22:51:09,269 INFO Rollout 8/128: bfcl/multi_turn_base_182:5 success=True steps=4
+2026-09-21 22:51:12,238 INFO Rollout 9/128: bfcl/multi_turn_base_21:1 success=False steps=8
+2026-09-21 22:51:12,601 INFO Rollout 10/128: bfcl/multi_turn_base_21:0 success=True steps=8
+2026-09-21 22:51:13,682 INFO Rollout 11/128: browsecompplus/408:6 success=True steps=2
+2026-09-21 22:51:13,728 INFO Rollout 12/128: bfcl/multi_turn_base_21:7 success=False steps=8
+2026-09-21 22:51:13,814 INFO Rollout 13/128: browsecompplus/408:0 success=True steps=2
+2026-09-21 22:51:14,270 INFO Rollout 14/128: bfcl/multi_turn_base_21:3 success=True steps=9
+2026-09-21 22:51:14,445 INFO Rollout 15/128: bfcl/multi_turn_base_21:4 success=False steps=9
+2026-09-21 22:51:14,996 INFO Rollout 16/128: browsecompplus/408:5 success=True steps=2
+2026-09-21 22:51:15,090 INFO Rollout 17/128: browsecompplus/408:1 success=True steps=2
+2026-09-21 22:51:15,142 INFO Rollout 18/128: bfcl/multi_turn_base_21:2 success=True steps=10
+2026-09-21 22:51:15,206 INFO Rollout 19/128: bfcl/multi_turn_base_141:6 success=True steps=12
+2026-09-21 22:51:15,361 INFO Rollout 20/128: browsecompplus/408:4 success=True steps=2
+2026-09-21 22:51:15,461 INFO Rollout 21/128: browsecompplus/408:3 success=True steps=2
+2026-09-21 22:51:15,628 INFO Rollout 22/128: browsecompplus/194:2 success=True steps=2
+2026-09-21 22:51:15,730 INFO Rollout 23/128: browsecompplus/194:1 success=True steps=2
+2026-09-21 22:51:15,731 INFO Rollout 24/128: browsecompplus/194:0 success=True steps=2
+2026-09-21 22:51:15,777 INFO Rollout 25/128: bfcl/multi_turn_base_141:7 success=True steps=12
+2026-09-21 22:51:15,966 INFO Rollout 26/128: browsecompplus/408:7 success=True steps=2
+2026-09-21 22:51:16,263 INFO Rollout 27/128: browsecompplus/408:2 success=True steps=3
+2026-09-21 22:51:16,459 INFO Rollout 28/128: bfcl/multi_turn_base_141:4 success=False steps=11
+2026-09-21 22:51:16,610 INFO Rollout 29/128: bfcl/multi_turn_base_21:6 success=True steps=12
+2026-09-21 22:51:17,389 INFO Rollout 30/128: bfcl/multi_turn_base_21:5 success=True steps=11
+2026-09-21 22:51:17,535 INFO Rollout 31/128: browsecompplus/443:2 success=True steps=2
+2026-09-21 22:51:17,583 INFO Rollout 32/128: browsecompplus/194:6 success=True steps=2
+2026-09-21 22:51:17,669 INFO Rollout 33/128: bfcl/multi_turn_base_141:0 success=True steps=12
+2026-09-21 22:51:18,061 INFO Rollout 34/128: browsecompplus/443:7 success=True steps=2
+2026-09-21 22:51:18,473 INFO Rollout 35/128: browsecompplus/194:3 success=True steps=2
+2026-09-21 22:51:18,901 INFO Rollout 36/128: browsecompplus/194:7 success=True steps=2
+2026-09-21 22:51:19,009 INFO Rollout 37/128: browsecompplus/443:4 success=True steps=2
+2026-09-21 22:51:19,028 INFO Rollout 38/128: bfcl/multi_turn_base_141:3 success=True steps=12
+2026-09-21 22:51:19,569 INFO Rollout 39/128: browsecompplus/443:5 success=True steps=4
+2026-09-21 22:51:19,751 INFO Rollout 40/128: browsecompplus/443:3 success=True steps=3
+2026-09-21 22:51:20,572 INFO Rollout 41/128: browsecompplus/443:0 success=True steps=3
+2026-09-21 22:51:21,645 INFO Rollout 42/128: browsecompplus/194:4 success=True steps=10
+2026-09-21 22:51:21,969 INFO Rollout 43/128: bfcl/multi_turn_base_141:5 success=False steps=14
+2026-09-21 22:51:22,987 INFO Rollout 44/128: bfcl/multi_turn_base_141:1 success=False steps=13
+2026-09-21 22:51:24,294 INFO Rollout 45/128: browsecompplus/443:6 success=True steps=3
+2026-09-21 22:51:24,320 INFO Rollout 46/128: bfcl/multi_turn_base_141:2 success=False steps=16
+2026-09-21 22:51:25,618 INFO Rollout 47/128: browsecompplus/653:6 success=True steps=1
+2026-09-21 22:51:26,648 INFO Rollout 48/128: browsecompplus/653:1 success=True steps=3
+2026-09-21 22:51:27,081 INFO Rollout 49/128: browsecompplus/653:3 success=True steps=3
+2026-09-21 22:51:27,123 INFO Rollout 50/128: browsecompplus/653:0 success=True steps=4
+2026-09-21 22:51:27,242 INFO Rollout 51/128: browsecompplus/653:2 success=True steps=3
+2026-09-21 22:51:27,442 INFO Rollout 52/128: browsecompplus/653:5 success=True steps=2
+2026-09-21 22:51:29,094 INFO Rollout 53/128: browsecompplus/443:1 success=True steps=3
+2026-09-21 22:51:29,179 INFO Rollout 54/128: browsecompplus/653:7 success=True steps=3
+2026-09-21 22:51:30,398 INFO Rollout 55/128: browsecompplus/653:4 success=True steps=4
+2026-09-21 22:51:33,005 INFO Rollout 56/128: browsecompplus/194:5 success=True steps=22
+2026-09-21 22:51:35,040 INFO Rollout 57/128: browsecompplus/968:7 success=True steps=2
+2026-09-21 22:51:35,373 INFO Rollout 58/128: browsecompplus/968:5 success=True steps=2
+2026-09-21 22:51:36,038 INFO Rollout 59/128: browsecompplus/968:1 success=True steps=2
+2026-09-21 22:51:36,518 INFO Rollout 60/128: browsecompplus/968:2 success=True steps=2
+2026-09-21 22:51:36,571 INFO Rollout 61/128: browsecompplus/968:6 success=True steps=2
+2026-09-21 22:51:36,807 INFO Rollout 62/128: browsecompplus/968:0 success=True steps=2
+2026-09-21 22:51:37,662 INFO Rollout 63/128: browsecompplus/968:4 success=True steps=2
+2026-09-21 22:51:37,733 INFO Rollout 64/128: browsecompplus/968:3 success=True steps=2
+2026-09-21 22:51:38,254 INFO Rollout 65/128: browsecompplus/784:3 success=True steps=3
+2026-09-21 22:51:40,529 INFO Rollout 66/128: tau2/2:2 success=False steps=10
+2026-09-21 22:51:46,603 INFO Rollout 67/128: browsecompplus/784:5 success=True steps=4
+2026-09-21 22:51:47,404 INFO Rollout 68/128: browsecompplus/784:6 success=True steps=4
+2026-09-21 22:51:47,447 INFO Rollout 69/128: browsecompplus/784:1 success=True steps=8
+2026-09-21 22:51:50,562 INFO Rollout 70/128: tau2/38:1 success=False steps=8
+2026-09-21 22:51:50,772 INFO Rollout 71/128: browsecompplus/784:4 success=True steps=3
+2026-09-21 22:51:50,794 INFO Rollout 72/128: browsecompplus/784:2 success=True steps=4
+2026-09-21 22:51:52,603 INFO Rollout 73/128: tau2/38:0 success=False steps=12
+2026-09-21 22:51:53,504 INFO Rollout 74/128: browsecompplus/784:7 success=True steps=7
+2026-09-21 22:51:53,629 INFO Rollout 75/128: tau2/7:6 success=False steps=4
+2026-09-21 22:51:54,758 INFO Rollout 76/128: tau2/38:6 success=False steps=9
+2026-09-21 22:51:55,855 INFO Rollout 77/128: tau2/2:0 success=True steps=10
+2026-09-21 22:51:56,134 INFO Rollout 78/128: tau2/38:7 success=False steps=10
+2026-09-21 22:51:56,933 INFO Rollout 79/128: tau2/2:3 success=True steps=11
+2026-09-21 22:51:58,704 INFO Rollout 80/128: tau2/38:5 success=False steps=11
+2026-09-21 22:52:00,760 INFO Rollout 81/128: tau2/2:7 success=True steps=14
+2026-09-21 22:52:04,138 INFO Rollout 82/128: tau2/7:4 success=False steps=7
+2026-09-21 22:52:04,335 INFO Rollout 83/128: tau2/24:6 success=True steps=10
+2026-09-21 22:52:05,917 INFO Rollout 84/128: tau2/24:4 success=True steps=9
+2026-09-21 22:52:08,042 INFO Rollout 85/128: tau2/2:1 success=True steps=16
+2026-09-21 22:52:10,813 INFO Rollout 86/128: tau2/8:4 success=True steps=15
+2026-09-21 22:52:12,718 INFO Rollout 87/128: tau2/2:6 success=False steps=14
+2026-09-21 22:52:12,854 INFO Rollout 88/128: tau2/8:3 success=True steps=10
+2026-09-21 22:52:15,461 INFO Rollout 89/128: tau2/24:2 success=True steps=13
+2026-09-21 22:52:16,367 INFO Rollout 90/128: tau2/24:5 success=True steps=11
+2026-09-21 22:52:16,643 INFO Rollout 91/128: browsecompplus/784:0 success=True steps=26
+2026-09-21 22:52:17,027 INFO Rollout 92/128: tau2/24:7 success=True steps=8
+2026-09-21 22:52:17,777 INFO Rollout 93/128: tau2/92:0 success=False steps=7
+2026-09-21 22:52:18,093 INFO Rollout 94/128: tau2/83:2 success=False steps=9
+2026-09-21 22:52:18,412 INFO Rollout 95/128: tau2/83:3 success=False steps=12
+2026-09-21 22:52:18,667 INFO Rollout 96/128: tau2/8:0 success=True steps=17
+2026-09-21 22:52:20,431 INFO Rollout 97/128: tau2/38:2 success=True steps=13
+2026-09-21 22:52:20,733 INFO Rollout 98/128: tau2/8:6 success=True steps=16
+2026-09-21 22:52:21,729 INFO Rollout 99/128: tau2/24:0 success=True steps=11
+2026-09-21 22:52:21,940 INFO Rollout 100/128: tau2/38:3 success=False steps=15
+2026-09-21 22:52:22,082 INFO Rollout 101/128: tau2/92:2 success=False steps=6
+2026-09-21 22:52:22,426 INFO Rollout 102/128: tau2/8:7 success=True steps=16
+2026-09-21 22:52:22,483 INFO Rollout 103/128: tau2/7:7 success=True steps=8
+2026-09-21 22:52:22,865 INFO Rollout 104/128: tau2/92:4 success=False steps=8
+2026-09-21 22:52:23,133 INFO Rollout 105/128: tau2/24:3 success=True steps=11
+2026-09-21 22:52:23,832 INFO Rollout 106/128: tau2/92:3 success=False steps=11
+2026-09-21 22:52:25,705 INFO Rollout 107/128: tau2/92:7 success=False steps=6
+2026-09-21 22:52:25,717 INFO Rollout 108/128: tau2/8:1 success=False steps=14
+2026-09-21 22:52:26,551 INFO Rollout 109/128: tau2/7:2 success=True steps=9
+2026-09-21 22:52:27,525 INFO Rollout 110/128: tau2/92:1 success=False steps=9
+2026-09-21 22:52:27,933 INFO Rollout 111/128: tau2/8:2 success=False steps=15
+2026-09-21 22:52:29,462 INFO Rollout 112/128: tau2/38:4 success=False steps=17
+2026-09-21 22:52:29,940 INFO Rollout 113/128: tau2/83:0 success=True steps=17
+2026-09-21 22:52:35,340 INFO Rollout 114/128: tau2/7:0 success=True steps=15
+2026-09-21 22:52:35,450 INFO Rollout 115/128: tau2/92:6 success=False steps=12
+2026-09-21 22:52:35,678 INFO Rollout 116/128: tau2/24:1 success=True steps=19
+2026-09-21 22:52:36,047 INFO Rollout 117/128: tau2/83:7 success=True steps=15
+2026-09-21 22:52:36,249 INFO Rollout 118/128: tau2/7:3 success=True steps=17
+2026-09-21 22:52:36,627 INFO Rollout 119/128: tau2/8:5 success=True steps=20
+2026-09-21 22:52:36,756 INFO Rollout 120/128: tau2/2:4 success=True steps=22
+2026-09-21 22:52:38,584 INFO Rollout 121/128: tau2/7:1 success=False steps=17
+2026-09-21 22:52:40,755 INFO Rollout 122/128: tau2/92:5 success=False steps=11
+2026-09-21 22:52:46,484 INFO Rollout 123/128: tau2/83:5 success=True steps=26
+2026-09-21 22:52:46,726 INFO Rollout 124/128: tau2/83:1 success=False steps=22
+2026-09-21 22:52:48,176 INFO Rollout 125/128: tau2/83:4 success=False steps=25
+2026-09-21 22:52:50,183 INFO Rollout 126/128: tau2/83:6 success=False steps=17
+2026-09-21 22:52:54,122 INFO Rollout 127/128: tau2/2:5 success=False steps=30
+2026-09-21 22:55:22,929 INFO Rollout 128/128: tau2/7:5 success=True steps=18
+2026-09-21 22:55:22,931 INFO ========== baseline_rollouts: complete ==========
+2026-09-21 22:55:22,931 INFO baseline_rollouts details: {"baseline_rollouts": 128, "successes": 93}
+# Offline delta test: C2 (reference solution in context) vs C0 (plain)
+
+Mixed-outcome tasks with a reference: 16; mean reference length 4689 chars, 9.4 steps.
+
+| group | tasks | success C0 | success C2 | delta | SE | up / down | steps C0 -> C2 | invalid C0 -> C2 | resp chars C0 -> C2 |
+|---|---|---|---|---|---|---|---|---|---|
+| all | 16 | 0.398 | 0.727 | +0.328 | 0.076 | 13 / 1 | 22.1 -> 8.9 | 0.040 -> 0.024 | 412 -> 514 |
+| bfcl | 3 | 0.500 | 0.708 | +0.208 | 0.110 | 2 / 0 | 10.3 -> 8.7 | 0.017 -> 0.004 | 612 -> 596 |
+| browsecompplus | 6 | 0.458 | 1.000 | +0.542 | 0.128 | 6 / 0 | 22.6 -> 3.8 | 0.067 -> 0.008 | 478 -> 576 |
+| tau2 | 7 | 0.304 | 0.500 | +0.196 | 0.098 | 5 / 1 | 26.6 -> 13.3 | 0.026 -> 0.046 | 270 -> 426 |
+
+Reading: delta within about one SE of zero = the context does not change the outcome; a positive delta with a large
+drop in response chars or steps is style imitation, not help. Compare 'all' first, then the per-benchmark rows.
+
+Stopping delta-test vLLM replica(s): 1347127 1347129

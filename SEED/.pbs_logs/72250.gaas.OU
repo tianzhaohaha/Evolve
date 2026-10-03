@@ -1,0 +1,92 @@
+======================================================================
+PBS Job Information
+======================================================================
+Job ID        : 72250.gaas
+Hostname      : hpc-gaas-g10
+Working dir   : /home/qingyuan.liu/projects/Evolve/SEED
+Start time    : Sat Sep 26 08:31:19 AM +08 2026
+======================================================================
+
+PBS_NODEFILE:
+hpc-gaas-g10
+
+Initial CUDA_VISIBLE_DEVICES:
+GPU-a53bb626-9b37-1a23-fab7-8c7dad2a32fa,GPU-22da8595-de39-f180-3731-f80e53de8506,GPU-5c2465df-35d2-2a52-4d58-f51c84ac0cc1,GPU-8f3f8d99-e165-42e1-7a4c-c3beec481807
+
+nvidia-smi -L:
+GPU 0: NVIDIA H200 (UUID: GPU-8f3f8d99-e165-42e1-7a4c-c3beec481807)
+GPU 1: NVIDIA H200 (UUID: GPU-5c2465df-35d2-2a52-4d58-f51c84ac0cc1)
+GPU 2: NVIDIA H200 (UUID: GPU-22da8595-de39-f180-3731-f80e53de8506)
+GPU 3: NVIDIA H200 (UUID: GPU-a53bb626-9b37-1a23-fab7-8c7dad2a32fa)
+
+Converted CUDA_VISIBLE_DEVICES to integer indices:
+0,1,2,3
+
+Final CUDA_VISIBLE_DEVICES:
+0,1,2,3
+
+GPU monitor log:
+.pbs_logs/72250.gaas.gpu.log
+
+======================================================================
+Environment Information
+======================================================================
+CONDA_PREFIX : /home/qingyuan.liu/.conda/envs/seed-as
+Python       : /home/qingyuan.liu/.conda/envs/seed-as/bin/python
+Python ver   : Python 3.12.0
+vllm         : /home/qingyuan.liu/.conda/envs/seed-as/bin/vllm
+CUDA_HOME    : NOT_SET
+
+PyTorch       : 2.8.0+cu128
+Torch CUDA    : 12.8
+CUDA usable   : True
+GPU count     : 4
+GPU 0         : NVIDIA H200
+GPU 1         : NVIDIA H200
+GPU 2         : NVIDIA H200
+GPU 3         : NVIDIA H200
+======================================================================
+Preflight
+======================================================================
+runner interpreter: /home/qingyuan.liu/.conda/envs/seed-as/bin/python
+python-dotenv could not parse statement starting at line 34
+python-dotenv could not parse statement starting at line 35
+runner deps ok: transformers 4.57.3 | sentence-transformers 4.1.0
+Exception ignored in: <function ResourceTracker.__del__ at 0x1472926fbf60>
+Traceback (most recent call last):
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 80, in __del__
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 89, in _stop
+  File "/home/qingyuan.liu/.conda/envs/seed-as/lib/python3.12/site-packages/multiprocess/resource_tracker.py", line 102, in _stop_locked
+AttributeError: '_thread.RLock' object has no attribute '_recursion_count'
+
+Starting browsecomp retriever on GPU 1 ...
+Starting BrowseComp-Plus retriever on device 1 at http://127.0.0.1:60100 (log: /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/browsecomp_retriever_60100.log)
+Retriever ready at http://127.0.0.1:60100 (pid 3456362; stays up after training — stop with: kill $(cat /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/browsecomp_retriever_60100.pid))
+
+Starting vLLM policy server on GPU 0 ...
+Services ready: Sat Sep 26 08:32:44 AM +08 2026
+interleaved: 192 tasks identical; first 5 = [('browsecompplus', '533'), ('tau2', '5'), ('tau2', '111'), ('tau2', '78'), ('bfcl', 'multi_turn_base_109')]
+isolated: 192 tasks identical; first 5 = [('bfcl', 'multi_turn_base_109'), ('bfcl', 'multi_turn_base_178'), ('bfcl', 'multi_turn_base_29'), ('bfcl', 'multi_turn_base_97'), ('bfcl', 'multi_turn_base_72')]
+holdout: bfcl=32, browsecompplus=32, tau2=32 identical
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours_smoke/tool_calling_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1 --run-name smoke_as_tool_calling_Qwen3-4B-Instruct-2507_interleaved_s44 --num-tasks 2 --num-holdout 1 && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours_smoke/tool_calling_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1 --run-name smoke_as_tool_calling_Qwen3-4B-Instruct-2507_interleaved_s44 --num-tasks 2 --num-holdout 1; } > outputs_ours_smoke/logs/tool_calling_qwen_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours_smoke/reasoning_bank_luna_interleaved_s44 --reasoning-effort low --run-name smoke_as_reasoning_bank_gpt-6-luna_interleaved_s44 --num-tasks 2 --num-holdout 1 && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours_smoke/reasoning_bank_luna_interleaved_s44 --reasoning-effort low --run-name smoke_as_reasoning_bank_gpt-6-luna_interleaved_s44 --num-tasks 2 --num-holdout 1; } > outputs_ours_smoke/logs/reasoning_bank_luna_interleaved.log 2>&1
+Launching 2 runs, 2 at a time (logs: outputs_ours_smoke/logs)
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours/tool_calling_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours/tool_calling_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1  ; } > outputs_ours/logs/tool_calling_qwen_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openai/Qwen3-4B-Instruct-2507 --mode isolated --output-dir outputs_ours/tool_calling_qwen_isolated_s44 --api-base http://127.0.0.1:8000/v1   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openai/Qwen3-4B-Instruct-2507 --mode isolated --output-dir outputs_ours/tool_calling_qwen_isolated_s44 --api-base http://127.0.0.1:8000/v1  ; } > outputs_ours/logs/tool_calling_qwen_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours/tool_calling_luna_interleaved_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours/tool_calling_luna_interleaved_s44 --reasoning-effort low  ; } > outputs_ours/logs/tool_calling_luna_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openrouter/openai/gpt-6-luna --mode isolated --output-dir outputs_ours/tool_calling_luna_isolated_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openrouter/openai/gpt-6-luna --mode isolated --output-dir outputs_ours/tool_calling_luna_isolated_s44 --reasoning-effort low  ; } > outputs_ours/logs/tool_calling_luna_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openrouter/deepseek/deepseek-v4.1-flash --mode interleaved --output-dir outputs_ours/tool_calling_dsflash_interleaved_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openrouter/deepseek/deepseek-v4.1-flash --mode interleaved --output-dir outputs_ours/tool_calling_dsflash_interleaved_s44 --reasoning-effort low  ; } > outputs_ours/logs/tool_calling_dsflash_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent tool_calling --model openrouter/deepseek/deepseek-v4.1-flash --mode isolated --output-dir outputs_ours/tool_calling_dsflash_isolated_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent tool_calling --model openrouter/deepseek/deepseek-v4.1-flash --mode isolated --output-dir outputs_ours/tool_calling_dsflash_isolated_s44 --reasoning-effort low  ; } > outputs_ours/logs/tool_calling_dsflash_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours/reasoning_bank_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours/reasoning_bank_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1  ; } > outputs_ours/logs/reasoning_bank_qwen_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openai/Qwen3-4B-Instruct-2507 --mode isolated --output-dir outputs_ours/reasoning_bank_qwen_isolated_s44 --api-base http://127.0.0.1:8000/v1   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openai/Qwen3-4B-Instruct-2507 --mode isolated --output-dir outputs_ours/reasoning_bank_qwen_isolated_s44 --api-base http://127.0.0.1:8000/v1  ; } > outputs_ours/logs/reasoning_bank_qwen_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours/reasoning_bank_luna_interleaved_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours/reasoning_bank_luna_interleaved_s44 --reasoning-effort low  ; } > outputs_ours/logs/reasoning_bank_luna_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openrouter/openai/gpt-6-luna --mode isolated --output-dir outputs_ours/reasoning_bank_luna_isolated_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openrouter/openai/gpt-6-luna --mode isolated --output-dir outputs_ours/reasoning_bank_luna_isolated_s44 --reasoning-effort low  ; } > outputs_ours/logs/reasoning_bank_luna_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openrouter/deepseek/deepseek-v4.1-flash --mode interleaved --output-dir outputs_ours/reasoning_bank_dsflash_interleaved_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openrouter/deepseek/deepseek-v4.1-flash --mode interleaved --output-dir outputs_ours/reasoning_bank_dsflash_interleaved_s44 --reasoning-effort low  ; } > outputs_ours/logs/reasoning_bank_dsflash_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent reasoning_bank --model openrouter/deepseek/deepseek-v4.1-flash --mode isolated --output-dir outputs_ours/reasoning_bank_dsflash_isolated_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent reasoning_bank --model openrouter/deepseek/deepseek-v4.1-flash --mode isolated --output-dir outputs_ours/reasoning_bank_dsflash_isolated_s44 --reasoning-effort low  ; } > outputs_ours/logs/reasoning_bank_dsflash_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent ace --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours/ace_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent ace --model openai/Qwen3-4B-Instruct-2507 --mode interleaved --output-dir outputs_ours/ace_qwen_interleaved_s44 --api-base http://127.0.0.1:8000/v1  ; } > outputs_ours/logs/ace_qwen_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent ace --model openai/Qwen3-4B-Instruct-2507 --mode isolated --output-dir outputs_ours/ace_qwen_isolated_s44 --api-base http://127.0.0.1:8000/v1   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent ace --model openai/Qwen3-4B-Instruct-2507 --mode isolated --output-dir outputs_ours/ace_qwen_isolated_s44 --api-base http://127.0.0.1:8000/v1  ; } > outputs_ours/logs/ace_qwen_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent ace --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours/ace_luna_interleaved_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent ace --model openrouter/openai/gpt-6-luna --mode interleaved --output-dir outputs_ours/ace_luna_interleaved_s44 --reasoning-effort low  ; } > outputs_ours/logs/ace_luna_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent ace --model openrouter/openai/gpt-6-luna --mode isolated --output-dir outputs_ours/ace_luna_isolated_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent ace --model openrouter/openai/gpt-6-luna --mode isolated --output-dir outputs_ours/ace_luna_isolated_s44 --reasoning-effort low  ; } > outputs_ours/logs/ace_luna_isolated.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent ace --model openrouter/deepseek/deepseek-v4.1-flash --mode interleaved --output-dir outputs_ours/ace_dsflash_interleaved_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent ace --model openrouter/deepseek/deepseek-v4.1-flash --mode interleaved --output-dir outputs_ours/ace_dsflash_interleaved_s44 --reasoning-effort low  ; } > outputs_ours/logs/ace_dsflash_interleaved.log 2>&1
+{ /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py online --agent ace --model openrouter/deepseek/deepseek-v4.1-flash --mode isolated --output-dir outputs_ours/ace_dsflash_isolated_s44 --reasoning-effort low   && /home/qingyuan.liu/.conda/envs/seed-as/bin/python scripts/ours/stream_ours.py holdout --agent ace --model openrouter/deepseek/deepseek-v4.1-flash --mode isolated --output-dir outputs_ours/ace_dsflash_isolated_s44 --reasoning-effort low  ; } > outputs_ours/logs/ace_dsflash_isolated.log 2>&1
+Launching 18 runs, 18 at a time (logs: outputs_ours/logs)

@@ -1,0 +1,25 @@
+============================================================
+Job ID        : 65437.gaas
+Hostname      : hpc-gaas-g08
+Working dir   : /home/qingyuan.liu/projects/Evolve/SEED
+Start time    : Tue Sep 15 04:40:21 AM +08 2026
+============================================================
+
+PBS_NODEFILE:
+hpc-gaas-g08
+
+Initial CUDA_VISIBLE_DEVICES:
+GPU-9ba8440a-7fc4-c301-19e1-7f5b2db0702c,GPU-eba6ae52-39f5-6360-0865-876d20206d62
+
+nvidia-smi:
+GPU 0: NVIDIA H200 (UUID: GPU-eba6ae52-39f5-6360-0865-876d20206d62)
+GPU 1: NVIDIA H200 (UUID: GPU-9ba8440a-7fc4-c301-19e1-7f5b2db0702c)
+
+Converted CUDA_VISIBLE_DEVICES to indices:
+0,1
+
+Final CUDA_VISIBLE_DEVICES:
+0,1
+
+GPU monitor log: .pbs_logs/65437.gaas.gpu.log
+/home/qingyuan.liu/.conda/envs/seed-as/etc/conda/activate.d/activate-gcc_linux-64.sh: line 107: SYS_SYSROOT: unbound variable

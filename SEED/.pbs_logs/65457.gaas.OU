@@ -1,0 +1,77 @@
+============================================================
+Job ID        : 65457.gaas
+Hostname      : hpc-gaas-g06
+Working dir   : /home/qingyuan.liu/projects/Evolve/SEED
+Start time    : Tue Sep 15 06:02:43 AM +08 2026
+============================================================
+
+PBS_NODEFILE:
+hpc-gaas-g06
+
+Initial CUDA_VISIBLE_DEVICES:
+GPU-268eae10-7f4e-1379-4f5a-c983ab863bfc,GPU-41bf784e-edaa-3d9e-6358-356372dfc7de
+
+nvidia-smi:
+GPU 0: NVIDIA H200 (UUID: GPU-41bf784e-edaa-3d9e-6358-356372dfc7de)
+GPU 1: NVIDIA H200 (UUID: GPU-268eae10-7f4e-1379-4f5a-c983ab863bfc)
+
+Converted CUDA_VISIBLE_DEVICES to indices:
+0,1
+
+Final CUDA_VISIBLE_DEVICES:
+0,1
+
+GPU monitor log: .pbs_logs/65457.gaas.gpu.log
+
+============================================================
+Environment information
+============================================================
+CONDA_PREFIX : /home/qingyuan.liu/.conda/envs/seed-as
+Python       : /home/qingyuan.liu/.conda/envs/seed-as/bin/python
+Python ver   : Python 3.12.0
+CUDA_HOME    : NOT_SET
+NVCC         : /home/qingyuan.liu/.conda/envs/seed-as/bin/nvcc
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2025 NVIDIA Corporation
+Built on Wed_Jan_15_19:20:09_PST_2025
+Cuda compilation tools, release 12.8, V12.8.61
+Build cuda_12.8.r12.8/compiler.35404655_0
+
+PyTorch       : 2.8.0+cu128
+Torch CUDA    : 12.8
+CUDA usable   : True
+GPU count     : 2
+GPU 0         : NVIDIA H200
+GPU 1         : NVIDIA H200
+
+============================================================
+Starting AgentStream Stage-3 Experiments
+Job ID: 65457.gaas
+Time: Tue Sep 15 06:02:48 AM +08 2026
+============================================================
+
+
+============================================================
+[Experiment 1/2] RL-only
+Start time : Tue Sep 15 06:02:48 AM +08 2026
+Log        : logs/agentstream/stage3_interleaved_rl_only_65457.gaas.log
+============================================================
+
+Running AgentStream RL_OPD
+  mode:          interleaved
+  benchmarks:    bfcl,tau2,browsecompplus
+  model:         /home/qingyuan.liu/projects/Evolve/LLMs/Qwen3-4B-Instruct-2507-agentstream-episode-skill-sft-v3
+  epochs:        144
+  stream:        profile=single_pass on_exhausted=stop track_repeat_passes=false
+  tasks:         num_tasks=96 val_tasks=16 train/step=2 x8 val_slots=auto val_repeats=2
+  actor lr:      1e-6 (0 = frozen-policy control run)
+  entropy coef:  0 (log_prob entropy calc: False)
+  OPD coef:      0
+  OPD gen coef:  0
+  Global pool:   copy
+  EMA mode:      off (tau=0.9)
+  Replay:        False (groups/step=1, capacity=16)
+  visible GPUs:  0,1
+  resume mode:   disable
+Starting BrowseComp-Plus retriever on device cpu at http://127.0.0.1:60100 (log: /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/browsecomp_retriever_60100.log)
+Retriever (pid 1312148) exited before becoming ready. See /home/qingyuan.liu/projects/Evolve/SEED/logs/agentstream/browsecomp_retriever_60100.log
