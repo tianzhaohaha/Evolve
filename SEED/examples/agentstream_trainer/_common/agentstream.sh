@@ -76,8 +76,8 @@ AS_VAL_TASKS=${AS_VAL_TASKS:-16}
 AS_VAL_SOURCE=${AS_VAL_SOURCE:-holdout}
 AS_BLOCK_PASSES=${AS_BLOCK_PASSES:-1}
 AS_ON_EXHAUSTED=${AS_ON_EXHAUSTED:-cycle}
-# Multi-pass streams: additionally record every repeat pass K as its own
-# cumulative wandb subtree online/pass<K>/* (first-pass online/* unaffected).
+# Multi-pass streams: additionally pool all passes into the wandb family multipass/*
+# (first-pass online/* unaffected).
 AS_TRACK_REPEAT_PASSES=${AS_TRACK_REPEAT_PASSES:-false}
 if [[ -z "${AS_BENCHMARK_KWARGS_JSON:-}" ]]; then
     AS_BENCHMARK_KWARGS_JSON='{}'

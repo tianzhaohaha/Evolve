@@ -73,7 +73,7 @@ export AS_MAX_STEPS="$AGENTSTREAM_MAX_STEPS"
 # Stream profile knobs come from agentstream_full.env (AGENTSTREAM_RL_STREAM_PROFILE):
 #   cycle -> multi-pass RL (Run B); stop -> strict single-pass online RL (Run A).
 export AS_ON_EXHAUSTED="${AGENTSTREAM_RL_ON_EXHAUSTED:-cycle}"
-# true -> also log per-pass cumulative curves online/pass<K>/* on repeat passes.
+# true -> also log the pooled multi-pass curves multipass/* (all passes + sliding window).
 export AS_TRACK_REPEAT_PASSES="${AGENTSTREAM_RL_TRACK_REPEAT_PASSES:-false}"
 export AS_VAL_REPEATS="${AGENTSTREAM_RL_VAL_REPEATS:-1}"
 export VAL_BEFORE_TRAIN="${AGENTSTREAM_RL_VAL_BEFORE_TRAIN:-False}"

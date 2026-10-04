@@ -185,10 +185,11 @@ class AgentStreamConfig:
     # --- online metrics -------------------------------------------------------
     online_metrics_enable: bool = True
     online_metrics_path: str = ""  # defaults to <trainer.default_local_dir>/agentstream_online_metrics.jsonl
-    # Multi-pass streams (on_exhausted=cycle): also give every repeat pass K its
-    # own cumulative curves (wandb ``online/pass<K>/...``, same subtree layout
-    # as the first-pass ``online/...``). Off = first pass only, the AgentStream
-    # online-protocol semantics; the first-pass metrics never change either way.
+    # Multi-pass streams (on_exhausted=cycle): also pool the episodes of all
+    # passes into one wandb family ``multipass/...`` (cumulative averages over
+    # every pass + a sliding window over the latest stream cycle). Off = first
+    # pass only, the AgentStream online-protocol semantics; the first-pass
+    # ``online/...`` metrics never change either way.
     online_track_repeat_passes: bool = False
 
     # --- validation stream ------------------------------------------------------

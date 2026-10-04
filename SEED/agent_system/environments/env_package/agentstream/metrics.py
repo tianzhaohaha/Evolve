@@ -20,10 +20,11 @@ episode with cumulative averages, so results are directly comparable with
 AgentStream harness outputs. Rows for repeat passes (pass_idx > 0) are
 recorded with ``first_pass=false`` and excluded from the cumulative averages,
 matching the single-pass semantics of the AgentStream online protocol. With
-``track_repeat_passes`` enabled (multi-pass streams) every repeat pass K
-additionally maintains its own independent accumulators, exposed by
-``snapshot()`` as an ``online/pass<K>/...`` subtree mirroring the first-pass
-keys; the first-pass metrics themselves are unaffected by the switch.
+``track_repeat_passes`` enabled (multi-pass streams) the episodes of every
+pass are additionally pooled into one ``multipass/...`` family (see
+``snapshot()``): cumulative averages over all passes plus a sliding window over
+the most recent stream cycle. The first-pass ``online/...`` metrics are
+unaffected by the switch.
 
 Two estimators of the per-pass score are maintained side by side:
 
@@ -58,8 +59,8 @@ import logging
 import os
 import threading
 import time
-from collections import defaultdict
-from typing import Any, Dict, Optional, Set, Tuple
+from collections import defaultdict, deque
+from typing import Any, Deque, Dict, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ class OnlineMetricsRecorder:
         group_n: int = 1,
         restore_up_to_step: Optional[int] = None,
         track_repeat_passes: bool = False,
+        window_episodes: int = 0,
     ) -> None:
         self.path = os.path.abspath(os.path.expanduser(path))
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -125,13 +127,23 @@ class OnlineMetricsRecorder:
         self._lock = threading.Lock()
         self._episode_counter = 0
 
-        # Cumulative accumulators keyed by pass index. Each pass keeps the two
-        # estimators described above: [0] all attempts (group_n per task),
-        # [1] one attempt per task (first copy of each group). Pass 0 is the
-        # AgentStream online metric; entries for pass >= 1 are only created
-        # when ``track_repeat_passes`` is on.
-        self._passes: Dict[int, Tuple[_CumulativeStats, _CumulativeStats]] = defaultdict(
-            lambda: (_CumulativeStats(), _CumulativeStats())
+        # Each accumulator pair keeps the two estimators described above:
+        # [0] all attempts (group_n per task), [1] one attempt per task (first
+        # copy of each group). ``_first`` is the AgentStream online metric (pass
+        # 0 only); ``_pooled`` covers every pass (``multipass/*``) and is only
+        # fed when ``track_repeat_passes`` is on, as is the window, which holds
+        # the most recent ``window_episodes`` episodes (<= 0 disables it) as
+        # (score, success).
+        self._first: Tuple[_CumulativeStats, _CumulativeStats] = (
+            _CumulativeStats(),
+            _CumulativeStats(),
+        )
+        self._pooled: Tuple[_CumulativeStats, _CumulativeStats] = (
+            _CumulativeStats(),
+            _CumulativeStats(),
+        )
+        self._window: Optional[Deque[Tuple[float, bool]]] = (
+            deque(maxlen=int(window_episodes)) if int(window_episodes) > 0 else None
         )
 
         self._env_errors: Dict[str, int] = defaultdict(int)  # per benchmark
@@ -157,7 +169,7 @@ class OnlineMetricsRecorder:
         success: bool,
         env_error: bool = False,
     ) -> bool:
-        """Fold one episode into the accumulators of its pass.
+        """Fold one episode into the first-pass and/or pooled accumulators.
 
         Returns False (and changes nothing) for a duplicate key, which only
         happens when steps are replayed after a resume. Environment failures
@@ -171,10 +183,16 @@ class OnlineMetricsRecorder:
         if env_error:
             self._env_errors[slug] += 1
             return True
-        stats_all, stats_single = self._passes[int(pass_idx)]
-        stats_all.add(slug, score, success)
-        if int(rollout_slot) % self.group_n == 0:
-            stats_single.add(slug, score, success)
+        first_attempt = int(rollout_slot) % self.group_n == 0
+        targets = [self._first] if int(pass_idx) == 0 else []
+        if self.track_repeat_passes:
+            targets.append(self._pooled)
+            if self._window is not None:
+                self._window.append((score, success))
+        for stats_all, stats_single in targets:
+            stats_all.add(slug, score, success)
+            if first_attempt:
+                stats_single.add(slug, score, success)
         return True
 
     def _restore_from_file(self, up_to_step: int) -> None:
@@ -225,7 +243,7 @@ class OnlineMetricsRecorder:
                 up_to_step,
                 self.path,
                 skipped_after_ckpt,
-                self._passes[0][0].avg_score(),
+                self._first[0].avg_score(),
             )
 
     # --------------------------------------------------------------- public
@@ -262,7 +280,7 @@ class OnlineMetricsRecorder:
             # Row-level cumulative fields keep their historical meaning: the
             # first-pass (AgentStream online) estimate, whatever pass the row
             # itself belongs to.
-            fp_all, fp_single = self._passes[0]
+            fp_all, fp_single = self._first
             row = {
                 **self.run_meta,
                 "episode_index": self._episode_counter,
@@ -304,25 +322,51 @@ class OnlineMetricsRecorder:
             online/env_error_episodes  and  online/<bm>/env_error_episodes
                                                    environment failures (excluded above)
 
-        With ``track_repeat_passes`` the same subtree is emitted once more per
-        repeat pass under ``online/pass<K>/`` (``episodes`` instead of
-        ``first_pass_episodes``), so the K-th encounter of the stream gets
-        directly comparable cumulative curves.
+        With ``track_repeat_passes`` the episodes of all passes (the first one
+        included) are also pooled into::
 
-        Benchmarks (and passes) with no episode yet are omitted, so the curves
-        start when the stream first reaches them.
+            multipass/global/cumulative_avg_score        all passes, all attempts
+            multipass/global/cumulative_success_rate
+            multipass/global/episodes
+            multipass/global/single/cumulative_*         one attempt per task
+            multipass/<bm>/...  and  multipass/<bm>/single/...   per benchmark
+                                                         (only once the stream holds
+                                                         more than one benchmark)
+            multipass/global/window_avg_score            most recent stream cycle
+            multipass/global/window_success_rate         (``window_episodes`` episodes)
+            multipass/global/window_episodes
+
+        The cumulative curves react slowly once many passes have been seen, so
+        the window tracks the current policy. Until a full cycle has been seen
+        the window simply covers everything so far.
+
+        Benchmarks with no episode yet are omitted, so the curves start when
+        the stream first reaches them.
         """
         with self._lock:
             out: Dict[str, float] = {}
-            for pass_idx in sorted(self._passes):
-                stats_all, stats_single = self._passes[pass_idx]
-                base = "online/" if pass_idx == 0 else f"online/pass{pass_idx}/"
-                n_key = "first_pass_episodes" if pass_idx == 0 else "episodes"
-                stats_all.emit(out, base, n_key)
-                stats_single.emit(out, f"{base}single/", n_key)
-                for slug in sorted(stats_all.bm_num):
-                    stats_all.emit(out, f"{base}{slug}/", n_key, slug)
-                    stats_single.emit(out, f"{base}{slug}/single/", n_key, slug)
+            stats_all, stats_single = self._first
+            stats_all.emit(out, "online/", "first_pass_episodes")
+            stats_single.emit(out, "online/single/", "first_pass_episodes")
+            for slug in sorted(stats_all.bm_num):
+                stats_all.emit(out, f"online/{slug}/", "first_pass_episodes", slug)
+                stats_single.emit(out, f"online/{slug}/single/", "first_pass_episodes", slug)
+            if self.track_repeat_passes:
+                pooled_all, pooled_single = self._pooled
+                pooled_all.emit(out, "multipass/global/", "episodes")
+                pooled_single.emit(out, "multipass/global/single/", "episodes")
+                # with a single benchmark the per-benchmark curves would duplicate global
+                if len(pooled_all.bm_num) > 1:
+                    for slug in sorted(pooled_all.bm_num):
+                        pooled_all.emit(out, f"multipass/{slug}/", "episodes", slug)
+                        pooled_single.emit(out, f"multipass/{slug}/single/", "episodes", slug)
+                if self._window:
+                    n = len(self._window)
+                    out["multipass/global/window_avg_score"] = sum(sc for sc, _ in self._window) / n
+                    out["multipass/global/window_success_rate"] = (
+                        sum(1.0 for _, ok in self._window if ok) / n
+                    )
+                    out["multipass/global/window_episodes"] = float(n)
             if self._env_errors:
                 out["online/env_error_episodes"] = float(sum(self._env_errors.values()))
                 for slug, n in sorted(self._env_errors.items()):

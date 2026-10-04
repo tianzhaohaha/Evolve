@@ -240,7 +240,8 @@ class AgentStreamEnvironmentManager(EnvironmentManagerBase):
 
     def online_metrics_snapshot(self) -> Dict[str, float]:
         """AgentStream cumulative averages for wandb (train phase only): first
-        pass, plus per-pass subtrees when the recorder tracks repeat passes."""
+        pass, plus the pooled ``multipass/*`` metrics when the recorder tracks
+        repeat passes."""
         if self.recorder is None:
             return {}
         return self.recorder.snapshot()

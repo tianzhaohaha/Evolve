@@ -4682,7 +4682,8 @@ class RayPPOTrainer:
                                                                 is_train=True,
                                                                 )
                         # AgentStream online-protocol metrics: first-pass cumulative
-                        # averages (all attempts + one attempt per task), see
+                        # averages (all attempts + one attempt per task) and, for
+                        # multi-pass runs, the pooled multipass/* metrics, see
                         # agent_system/environments/env_package/agentstream/metrics.py.
                         online_snapshot = getattr(self.envs, "online_metrics_snapshot", None)
                         if callable(online_snapshot):

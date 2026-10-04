@@ -155,6 +155,8 @@ def make_agentstream_envs(
             group_n=group_n,
             restore_up_to_step=restore_up_to_step,
             track_repeat_passes=cfg.online_track_repeat_passes,
+            # sliding window = one full cycle of the stream (all rollout copies)
+            window_episodes=scheduler.stream_length * group_n if cfg.online_track_repeat_passes else 0,
             run_meta={
                 "experiment": experiment_name,
                 "protocol": cfg.protocol,
