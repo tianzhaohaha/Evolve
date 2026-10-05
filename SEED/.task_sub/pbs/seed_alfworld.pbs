@@ -232,6 +232,11 @@ fi
 ## re-submitting the same job after a walltime kill continues where it stopped.
 
 export STAGE="${STAGE:-all}"
+## METHOD=seed (default) | grpo_sft: RL objective of Stage 2, both from the same SFT checkpoint.
+## grpo_sft = SEED without the OPD loss / skill analysis, own experiment name and checkpoint dir:
+##
+##   qsub -N grpo_sft_alfworld -v STAGE=rl,METHOD=grpo_sft .task_sub/pbs/seed_alfworld.pbs
+export METHOD="${METHOD:-seed}"
 export N_GPUS=2
 
 bash examples/seed_trainer/run_alfworld_seed_repro.sh
