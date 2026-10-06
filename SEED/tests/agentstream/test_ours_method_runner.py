@@ -20,7 +20,8 @@ VERSION = re.search(r"AGENTSTREAM_RUN_VERSION=\$\{AGENTSTREAM_RUN_VERSION:-(\w+)
 # job id, model, mode, experiment prefix (the baseline suite's naming: <method>_<model tag>_..._b10_steps<N>)
 SETTINGS = [("S1", "Qwen3-4B-Instruct-2507", "isolated", f"ours_qwen3_4b_2507_agentstream_{VERSION}_n64_single_pass_b10_steps7"),
             ("S2", "Qwen2.5-7B-Instruct", "interleaved", f"ours_qwen25_7b_agentstream_{VERSION}_n64_single_pass_b10_steps20"),
-            ("S3", "Qwen2.5-7B-Instruct", "isolated", f"ours_qwen25_7b_agentstream_{VERSION}_n64_single_pass_b10_steps7")]
+            ("S3", "Qwen2.5-7B-Instruct", "isolated", f"ours_qwen25_7b_agentstream_{VERSION}_n64_single_pass_b10_steps7"),
+            ("S4", "Qwen3-4B-Instruct-2507", "interleaved", f"ours_qwen3_4b_2507_agentstream_{VERSION}_n64_single_pass_b10_steps20")]
 METHOD = {  # the E5 configuration every run must carry
     "AGENTSTREAM_SEED_OPD_LOSS_COEF": "0.01", "AGENTSTREAM_SEED_OPD_GEN_LOSS_COEF": "0",
     "AGENTSTREAM_SEED_SUCCESS_ONLY": "True", "AGENTSTREAM_SEED_OPD_NORM_MODE": "response", "AGENTSTREAM_SEED_TRAJ_GAP_GATE": "True",
@@ -63,11 +64,11 @@ class OursMethodRunnerTests(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.capture.read_text().splitlines()]
 
-    def test_suite_runs_the_three_settings_with_the_method_switches(self):
+    def test_suite_runs_the_four_settings_with_the_method_switches(self):
         result = self.run_script("run_ours_suite.sh")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.calls()
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         for call, (job, model, mode, prefix) in zip(calls, SETTINGS):
             argv, env = call["argv"], call["env"]
             self.assertEqual(argv, [mode, "trainer.resume_mode=auto"], job)
@@ -99,7 +100,7 @@ class OursMethodRunnerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             calls = self.calls()
             self.assertEqual([c["argv"][0] for c in calls], modes, script)
-            self.assertEqual(result.stdout.count("[SKIP]"), 3 - len(modes), script)
+            self.assertEqual(result.stdout.count("[SKIP]"), 4 - len(modes), script)
         self.assertEqual([c["env"]["AGENTSTREAM_BASE_MODEL_NAME"] for c in calls], ["Qwen2.5-7B-Instruct"])  # node2 = S3
         self.capture.unlink()
         self.run_script("run_ours_suite_node1.sh", OURS_JOBS="S2")  # the environment still wins

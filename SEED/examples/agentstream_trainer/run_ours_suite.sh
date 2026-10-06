@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Our method (run_ours_method.sh = arm E5 of run_ours_debug.sh) on the other model / stream settings of the
 # baseline suite: one setting per entry, the stream parameters and experiment names of run_baseline_suite.sh,
-# so every run lines up with its baselines on wandb (ours_<model>_..._<mode>_online_s44[_<benchmark>]).
+# so every run lines up with its baselines on wandb (ours_<model>_..._<mode>_online_s<seed>[_<benchmark>]).
 #   S1  Qwen3-4B-Instruct-2507, isolated    -> 3 runs of 7 steps (one per benchmark)
 #   S2  Qwen2.5-7B-Instruct,    interleaved -> 1 run of 20 steps
 #   S3  Qwen2.5-7B-Instruct,    isolated    -> 3 runs of 7 steps
-# The 4B interleaved run of the method is job 71186's E5, continued to 20 steps by run_ours_final.sh (F1).
+#   S4  Qwen3-4B-Instruct-2507, interleaved -> 1 run of 20 steps (the s44 run is job 71186's E5 continued by
+#                                              run_ours_final.sh F1; a new stream seed runs it from scratch here)
+# A new stream seed is AGENTSTREAM_STREAM_SEED=<n> in the environment (e.g. .task_sub/pbs/seed45_node*.pbs).
 #
 # Usage: bash examples/agentstream_trainer/run_ours_suite.sh [--dry-run]
-#   OURS_JOBS=S2 bash ...          # subset (default S1,S2,S3; the settings are independent)
-# Two nodes: run_ours_suite_node1.sh = S1,S2 (~27-31 h) and run_ours_suite_node2.sh = S3 (~17-21 h).
+#   OURS_JOBS=S2 bash ...          # subset (default S1,S2,S3,S4; the settings are independent)
+# Two nodes: run_ours_suite_node1.sh = S1,S2 (~27-31 h) and run_ours_suite_node2.sh = S3 (~17-21 h); S4 (~10 h) has no wrapper.
 #   OURS_SAVE_FREQ=10 bash ...     # checkpoint every N steps (default 0 = none; a 7B checkpoint is ~91 GB, a 4B
 #                                  # one ~48 GB, and an isolated setting keeps one per benchmark run)
 # Model path and step counts derive from the model name and agentstream_full.env (interleaved 20, isolated
@@ -19,7 +21,7 @@
 # isolated setting is completed by rerunning it with AGENTSTREAM_BENCHMARKS=<missing benchmark> (its runs
 # keep their names: the isolated step count does not depend on the benchmark list); do not narrow the
 # benchmarks of an interleaved setting, that changes the stream. Time: S1 ~11 h (31 min/step at 4B),
-# S2 ~16-20 h, S3 ~17-21 h -> walltime >= 24 h (S3: 30 h). Activate Conda in the caller.
+# S2 ~16-20 h, S3 ~17-21 h, S4 ~10 h -> walltime >= 24 h (S3: 30 h). Activate Conda in the caller.
 
 set -eo pipefail
 
@@ -56,8 +58,9 @@ JOBS=(
     "S1|Qwen3-4B-Instruct-2507|isolated"
     "S2|Qwen2.5-7B-Instruct|interleaved"
     "S3|Qwen2.5-7B-Instruct|isolated"
+    "S4|Qwen3-4B-Instruct-2507|interleaved"
 )
-OURS_JOBS="${OURS_JOBS:-S1,S2,S3}"
+OURS_JOBS="${OURS_JOBS:-S1,S2,S3,S4}"
 RUN_ID="${PBS_JOBID:-$(date +%Y%m%d_%H%M%S)}"
 LOG_DIR="$PROJECT_ROOT/logs/agentstream"
 mkdir -p "$LOG_DIR"
@@ -87,7 +90,7 @@ run_setting() {  # <job spec>
     NAMES+=("$id $model $mode")
     echo ""
     echo "======================================================================"
-    echo "[Setting] $id $model / $mode   experiment=${prefix}_${mode}_online_s44   start $(date)"
+    echo "[Setting] $id $model / $mode   experiment=${prefix}_${mode}_online_s${AGENTSTREAM_STREAM_SEED:-44}   start $(date)"
     echo "Log: $log"
     echo "======================================================================"
     set +e

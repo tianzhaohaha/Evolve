@@ -5,7 +5,7 @@
 ## =============================================================================
 
 ## Job name
-#PBS -N as_stage12
+#PBS -N s45_node3
 
 ## Project funding code
 #PBS -P gs_ccds_wangwy
@@ -13,11 +13,11 @@
 ## Queue
 #PBS -q gpu_as
 
-## Stage 1 (5 domains x ~100 tasks x 8 rollouts + GLM annotation) and Stage 2 (SFT, 2 epochs)
-#PBS -l walltime=48:00:00
+## Maximum walltime for the ENTIRE job
+#PBS -l walltime=72:00:00
 
-## 1 node, 48 CPUs, 4 GPUs: four vLLM replicas for Stage 1, four SFT ranks for Stage 2
-#PBS -l select=1:ncpus=24:ngpus=2
+## 1 node, 24 CPUs, 2 GPUs
+#PBS -l select=1:ncpus=48:ngpus=2
 
 ## Merge stderr into stdout
 #PBS -j oe
@@ -63,7 +63,6 @@ echo "Job ID        : ${PBS_JOBID}"
 echo "Hostname      : $(hostname)"
 echo "Working dir   : $(pwd)"
 echo "Start time    : $(date)"
-echo "CPUs (cgroup) : $(nproc)"
 echo "======================================================================"
 
 echo ""
@@ -88,8 +87,15 @@ echo ""
 ## Fix CUDA_VISIBLE_DEVICES
 ## =============================================================================
 ##
-## PBS may expose GPUs using UUIDs (GPU-xxxx,...); vLLM / torchrun expect
-## integer indices, so convert the list into contiguous indices.
+## PBS may expose GPUs using UUIDs:
+##
+##   GPU-xxxx,GPU-yyyy
+##
+## Some of our training / torchrun code expects integer indices:
+##
+##   0,1
+##
+## Therefore convert the PBS-provided UUID list into contiguous indices.
 ##
 
 if echo "${CUDA_VISIBLE_DEVICES:-}" | grep -q "GPU-"; then
@@ -105,7 +111,7 @@ if echo "${CUDA_VISIBLE_DEVICES:-}" | grep -q "GPU-"; then
 fi
 
 ## Fallback if PBS does not set CUDA_VISIBLE_DEVICES.
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 
 echo ""
 echo "Final CUDA_VISIBLE_DEVICES:"
@@ -145,7 +151,11 @@ echo "${GPU_MONITOR_LOG}"
 ## Prepare Conda Environment
 ## =============================================================================
 ##
-## Do NOT use `module load anaconda/2025`: on this cluster it pulls in system CUDA 13.1.
+## Do NOT use:
+##
+##   module load anaconda/2025
+##
+## because on this cluster it pulled in system CUDA 13.1.
 ##
 
 eval "$(/usr/local/anaconda2025/bin/conda shell.bash hook)"
@@ -190,20 +200,48 @@ if not torch.cuda.is_available():
 
 if torch.cuda.device_count() != 2:
     raise RuntimeError(
-        f"Expected 4 GPUs, but PyTorch sees {torch.cuda.device_count()}."
+        f"Expected 2 GPUs, but PyTorch sees {torch.cuda.device_count()}."
     )
 PY
 
 
 ## =============================================================================
-## Stage 1 (hindsight-skill SFT data) + Stage 2 (SFT training and export)
+## Stage-3 Experiments: stream seed 45, node 3
 ## =============================================================================
 ##
-## run_stage12.sh pins Stage 1/2 to GPUs 0-3 regardless of .env, starts the
-## BrowseComp retriever on CPU, checks the Stage-1 metrics before Stage 2 and
-## exports the SFT checkpoint every Stage-3 run starts from.
-## Use `prepare` or `sft` instead of `all` to run one stage only.
-export STAGE12_NGPUS=2
+## ROUND=1 is the first submission (seed, ~58 h). When it has finished, resubmit this file with
+##   qsub -v ROUND=2 ...   (or edit ROUND below)   for the remaining runs (opsd_base + rlsd_base on 4B, ~42 h; a shorter walltime is enough).
+## Nothing is checkpointed, so a run killed by the walltime restarts from scratch: keep each round
+## well inside the walltime. Hours are estimates from the suites' timings (4B: 31 min/step).
+## Runs: baselines via run_baseline_suite.sh (*_base: raw backbone; seed: the shared SFT checkpoint).
 
-AGENTSTREAM_BASE_MODEL_NAME=Qwen3-1.;7..B \
-    bash examples/agentstream_trainer/run_stage12.sh prepare
+## New stream seed: changes the domain order / interleaving only (task set and holdout stay fixed).
+## Do not use 42 (no reshuffle). 44 = the earlier runs.
+export AGENTSTREAM_STREAM_SEED=45
+## Holdout validation every 10 steps; the last step is always validated (a 7-step isolated run only at step 7).
+export AGENTSTREAM_RL_TEST_FREQ=10
+ROUND="${ROUND:-1}"
+
+BASE=examples/agentstream_trainer/run_baseline_suite.sh
+M4=Qwen3-4B-Instruct-2507
+M7=Qwen2.5-7B-Instruct
+
+failed=0
+run() { "$@" || { echo "[FAILED] $*"; failed=1; }; }   # a failed run does not stop the next one
+
+case "$ROUND" in
+1)
+    run env AGENTSTREAM_BASE_MODEL_NAME=$M4 STREAM_MODE=interleaved BASELINES=seed bash $BASE   # 4B interleaved (~10 h)
+    run env AGENTSTREAM_BASE_MODEL_NAME=$M4 STREAM_MODE=isolated BASELINES=seed bash $BASE   # 4B isolated (~11 h)
+    run env AGENTSTREAM_BASE_MODEL_NAME=$M7 STREAM_MODE=interleaved BASELINES=seed bash $BASE   # 7B interleaved (~18 h)
+    run env AGENTSTREAM_BASE_MODEL_NAME=$M7 STREAM_MODE=isolated BASELINES=seed bash $BASE   # 7B isolated (~19 h)
+    ;;
+2)
+    run env AGENTSTREAM_BASE_MODEL_NAME=$M4 STREAM_MODE=interleaved BASELINES=opsd_base,rlsd_base bash $BASE   # 4B interleaved (~10 h each)
+    run env AGENTSTREAM_BASE_MODEL_NAME=$M4 STREAM_MODE=isolated BASELINES=opsd_base,rlsd_base bash $BASE   # 4B isolated (~11 h each)
+    ;;
+*)
+    echo "ROUND must be 1 or 2, got '$ROUND'"; exit 2 ;;
+esac
+
+exit "$failed"
