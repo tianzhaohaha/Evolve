@@ -218,7 +218,7 @@ PY
 
 ## New stream seed: changes the domain order / interleaving only (task set and holdout stay fixed).
 ## Do not use 42 (no reshuffle). 44 = the earlier runs.
-export AGENTSTREAM_STREAM_SEED=45
+export AGENTSTREAM_STREAM_SEED=46
 ## Holdout validation every 10 steps; the last step is always validated (a 7-step isolated run only at step 7).
 export AGENTSTREAM_RL_TEST_FREQ=10
 ROUND="${ROUND:-1}"
